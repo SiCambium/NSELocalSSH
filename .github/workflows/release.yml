@@ -1,0 +1,102 @@
+name: Release builds
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  portable:
+    name: Portable server (all platforms)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - run: sh scripts/build-portable.sh "${GITHUB_REF_NAME}"
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${GITHUB_REF_NAME}" build/* --clobber
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          name: nse-status-portable
+          path: build/*
+
+  macos-app:
+    name: Desktop app (macOS universal)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - run: sh scripts/build-macos-app.sh
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${GITHUB_REF_NAME}" build/NSE-Status-macOS-universal.zip --clobber
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          name: nse-app-macos
+          path: build/NSE-Status-macOS-universal.zip
+
+  windows-app:
+    name: Desktop app (Windows amd64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: Ensure a C++ toolchain is available (webview.cc needs g++)
+        run: choco install mingw -y --no-progress
+      - name: Build
+        env:
+          CGO_ENABLED: '1'
+        run: go build -ldflags "-H windowsgui -s -w" -o build/NSE-Status-windows-amd64.exe ./cmd/nse-app
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${env:GITHUB_REF_NAME}" build/NSE-Status-windows-amd64.exe --clobber
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          name: nse-app-windows
+          path: build/NSE-Status-windows-amd64.exe
+
+  linux-app:
+    name: Desktop app (Linux amd64, GTK)
+    # Pinned to 22.04: 24.04 dropped the libwebkit2gtk-4.0-dev package
+    # that webview_go's Linux build (#cgo pkg-config: ... webkit2gtk-4.0)
+    # depends on.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev pkg-config
+      - name: Build
+        env:
+          CGO_ENABLED: '1'
+        run: go build -ldflags "-s -w" -o build/NSE-Status-linux-amd64 ./cmd/nse-app
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${GITHUB_REF_NAME}" build/NSE-Status-linux-amd64 --clobber
+      - uses: actions/upload-artifact@v4
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        with:
+          name: nse-app-linux
+          path: build/NSE-Status-linux-amd64
