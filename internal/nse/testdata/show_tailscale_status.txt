@@ -1,0 +1,12 @@
+show tailscale status
+100.93.196.62    nse-caravan                simon@  linux    -                                                   
+100.97.45.120    bones                      simon@  windows  -                                                   
+100.76.237.6     g11-8                      simon@  windows  offline, last seen 23d ago                          
+100.124.59.26    homeassistant              simon@  linux    -                                                   
+100.84.4.14      ipad-pro-12-9-gen-5        simon@  iOS      offline, last seen 31d ago                          
+100.125.188.6    iphone-13-pro-max          katie@  iOS      idle, tx 348 rx 500                                 
+100.121.249.125  iphone-15-pro-max          simon@  iOS      offline, last seen 16m ago                          
+100.74.68.125    nse-site2sietailscaletest  simon@  linux    idle; offers exit node; offline, last seen 10d ago  
+100.98.239.71    nse4khome                  simon@  linux    idle; offers exit node, tx 90048 rx 12016           
+100.106.64.124   ubuntu-4gb-hel1-1          simon@  linux    idle; offers exit node                              
+NSE-Caravan(config)# 

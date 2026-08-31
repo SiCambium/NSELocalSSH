@@ -1,0 +1,11 @@
+show dhcp-pool 1
+
+Pool Status: UP
+Pool Interface: br0.1
+Allocated leases: 221
+Pool usage: 1
+Pool leases:
+
+ MAC                IP               Hostname                         Expires on          
+ bc:a9:93:0d:89:62  172.21.1.30      XV3-8Caravan2                    2026-08-29 22:50:49 
+NSE-Caravan(config)# 

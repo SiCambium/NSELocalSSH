@@ -1,0 +1,3 @@
+show vpn-sessions wireguard
+Unable to process JSON response: {}
+NSE-Caravan(config)# 

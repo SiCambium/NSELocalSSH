@@ -1,0 +1,62 @@
+show config
+!
+interface eth 1
+ type wan
+ wan-name wan1
+ ip address dhcp
+ exit
+!
+interface eth 3
+ type lan
+ switchport mode access
+ switchport access vlan 1
+ no shutdown
+ exit
+!
+interface eth 5
+ type lan
+ switchport mode trunk
+ switchport trunk native vlan 1
+ switchport trunk allowed vlan 1,30,100,200
+ no shutdown
+ exit
+!
+interface vlan 1
+ management-access all
+ ip address 172.21.0.1 255.255.0.0
+ exit
+!
+interface vlan 30
+ ip address 172.22.0.1 255.255.0.0
+ exit
+!
+interface vlan 100
+ ip address 172.23.0.1 255.255.0.0
+ exit
+!
+interface vlan 200
+ ip address 10.200.0.1 255.255.255.0
+ exit
+!
+ip dhcp server authoritative
+ip dhcp pool 1
+ address-range 172.21.1.30 172.21.1.250
+ default-router 172.21.0.1
+ dns-server 172.21.0.1
+ lease 0 2 0
+ network 172.21.0.0 255.255.0.0
+ bind bc:a9:93:0d:89:62 172.21.1.10
+ bind 00:11:22:33:44:55 172.21.1.11 camera-porch
+ exit
+!
+ip dhcp pool 3
+ address-range 172.23.1.10 172.23.1.200
+ default-router 172.23.0.1
+ dns-server 172.23.0.1 1.1.1.1
+ domain-name home.lan
+ lease 1 0 0
+ network 172.23.0.0 255.255.0.0
+ hardware-address aa:bb:cc:dd:ee:ff 172.23.1.5
+ exit
+!
+NSE-Caravan(config)#

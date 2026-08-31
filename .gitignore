@@ -1,0 +1,22 @@
+# Raw SSH session dumps may contain secrets
+cli_dump/
+
+.env
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+/nse-status
+/nse-app
+/cmd/nse-status/nse-status
+/cmd/nse-app/nse-app
+/dist/
+profiles.json
+prefs.json
+known_hosts.json
+known_hosts
+
+# Superseded Python prototype, kept on disk but not part of this repo
+gui/
+tests/
+.pytest_cache/

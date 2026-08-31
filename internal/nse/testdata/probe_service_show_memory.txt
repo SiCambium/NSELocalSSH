@@ -1,0 +1,54 @@
+service show memory
+              total        used        free      shared  buff/cache   available
+Mem:        3901040      411364     3242416       34460      247260     3316156
+Swap:             0           0           0
+MemTotal:        3901040 kB
+MemFree:         3242416 kB
+MemAvailable:    3316156 kB
+Buffers:            2872 kB
+Cached:           229372 kB
+SwapCached:            0 kB
+Active:           106668 kB
+Inactive:         460744 kB
+Active(anon):      29464 kB
+Inactive(anon):   340168 kB
+Active(file):      77204 kB
+Inactive(file):   120576 kB
+Unevictable:           4 kB
+Mlocked:               0 kB
+SwapTotal:             0 kB
+SwapFree:              0 kB
+Dirty:                 0 kB
+Writeback:             0 kB
+AnonPages:        335188 kB
+Mapped:           116380 kB
+Shmem:             34460 kB
+KReclaimable:      15016 kB
+Slab:              43264 kB
+SReclaimable:      15016 kB
+SUnreclaim:        28248 kB
+KernelStack:        3504 kB
+PageTables:         2820 kB
+NFS_Unstable:          0 kB
+Bounce:                0 kB
+WritebackTmp:          0 kB
+CommitLimit:     1950520 kB
+Committed_AS:    1617320 kB
+VmallocTotal:   259653632 kB
+VmallocUsed:        5224 kB
+VmallocChunk:          0 kB
+Percpu:             1648 kB
+AnonHugePages:         0 kB
+ShmemHugePages:        0 kB
+ShmemPmdMapped:        0 kB
+FileHugePages:         0 kB
+FilePmdMapped:         0 kB
+CmaTotal:          16384 kB
+CmaFree:           14824 kB
+HugePages_Total:       0
+HugePages_Free:        0
+HugePages_Rsvd:        0
+HugePages_Surp:        0
+Hugepagesize:       2048 kB
+Hugetlb:               0 kB
+NSE-Caravan(config)# 

@@ -1,0 +1,25 @@
+show config filter
+!
+
+!
+filter  global-filter
+  stateful
+  application-control
+  filter precedence 1
+     unique_id 1
+     rule-name rule_1
+     layer3-filter deny proto any 192.168.20.0/255.255.255.0 any 172.21.0.0/255.255.0.0 any in  
+     exit
+  filter precedence 2
+     unique_id 2
+     rule-name rule_2
+     layer3-filter deny proto any 192.168.20.0/255.255.255.0 any 172.23.0.0/255.255.0.0 any in  
+     exit
+  filter precedence 3
+     unique_id 3
+     rule-name rule_3
+     layer3-filter deny proto any 192.168.20.0/255.255.255.0 any 172.18.0.0/255.255.0.0 any in  
+     exit
+!
+!
+NSE-Caravan(config)# 

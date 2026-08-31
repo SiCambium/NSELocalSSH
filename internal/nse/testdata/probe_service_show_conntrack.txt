@@ -1,0 +1,6 @@
+service show conntrack
+Total Conntrack Limit: 262144
+Total Conntrack Usage: 240
+conntrack v1.4.7 (conntrack-tools): 157 flow entries have been shown.
+Total NAT Usage: 157
+NSE-Caravan(config)#

@@ -1,0 +1,558 @@
+{
+  "admin_password": "REDACTED",
+  "admin_password_type": "REDACTED",
+  "auto_vpn": true,
+  "dhcp_authoritative": true,
+  "dns-adware-malware-block": false,
+  "dns-porn-block": false,
+  "dns-social-block": false,
+  "dns_filters": {
+    "configuration": {
+      "filter_mode": "filtering"
+    },
+    "policies": [
+      {
+        "deny_all_sources": true,
+        "deny_categories": [
+          "Malware Sites",
+          "Spyware and Adware",
+          "SPAM URLs",
+          "Bot Nets",
+          "Keyloggers and Monitoring",
+          "Phishing and Other Frauds"
+        ],
+        "name": "Ad_Blocking",
+        "safe_search_mode": "disabled"
+      }
+    ]
+  },
+  "dns_override": false,
+  "dns_server": "enable",
+  "dos_protection_icmp_frag": true,
+  "dos_protection_ip_spoof": true,
+  "dos_protection_ip_spoof_log": true,
+  "dos_protection_smurf_attack": true,
+  "feature_license": {
+    "device_fingerprint": true,
+    "dns_filter": true,
+    "geoip_firewall": true,
+    "high_availability": true,
+    "port_scan": true,
+    "tailscale": true
+  },
+  "filter_config": [
+    {
+      "filter_rule": {
+        "action": "deny",
+        "dest": "172.21.0.0",
+        "dest_mask": "255.255.0.0",
+        "dport": "any",
+        "id": 1,
+        "proto": "any",
+        "sport": "any",
+        "src": "192.168.20.0",
+        "src_mask": "255.255.255.0",
+        "type": "layer3-filter"
+      },
+      "name": "rule_1"
+    },
+    {
+      "filter_rule": {
+        "action": "deny",
+        "dest": "172.23.0.0",
+        "dest_mask": "255.255.0.0",
+        "dport": "any",
+        "id": 2,
+        "proto": "any",
+        "sport": "any",
+        "src": "192.168.20.0",
+        "src_mask": "255.255.255.0",
+        "type": "layer3-filter"
+      },
+      "name": "rule_2"
+    },
+    {
+      "filter_rule": {
+        "action": "deny",
+        "dest": "172.18.0.0",
+        "dest_mask": "255.255.0.0",
+        "dport": "any",
+        "id": 3,
+        "proto": "any",
+        "sport": "any",
+        "src": "192.168.20.0",
+        "src_mask": "255.255.255.0",
+        "type": "layer3-filter"
+      },
+      "name": "rule_3"
+    }
+  ],
+  "high_availability": {
+    "interface": "6",
+    "mode": "disable",
+    "role": "primary"
+  },
+  "interface_eth3_access_vlan": 1,
+  "interface_eth3_mode": "access",
+  "interface_eth3_phy_advertise": "auto",
+  "interface_eth3_phy_duplex": "full",
+  "interface_eth3_phy_speed": "auto",
+  "interface_eth3_shutdown": false,
+  "interface_eth4_access_vlan": 1,
+  "interface_eth4_mode": "access",
+  "interface_eth4_phy_advertise": "auto",
+  "interface_eth4_phy_duplex": "full",
+  "interface_eth4_phy_speed": "auto",
+  "interface_eth4_shutdown": false,
+  "interface_eth5_access_vlan": 2000,
+  "interface_eth5_allowed_vlan": "1,30,100,200",
+  "interface_eth5_lldp_pba": false,
+  "interface_eth5_lldp_pba_msg_auth": false,
+  "interface_eth5_mode": "trunk",
+  "interface_eth5_native_vlan": 1,
+  "interface_eth5_phy_advertise": "auto",
+  "interface_eth5_phy_duplex": "full",
+  "interface_eth5_phy_speed": "auto",
+  "interface_eth5_shutdown": false,
+  "interface_eth5_tag_native": "disable",
+  "interface_eth5_type": "lan",
+  "interface_eth6_access_vlan": 2000,
+  "interface_eth6_allowed_vlan": "1,30,100,200",
+  "interface_eth6_mode": "trunk",
+  "interface_eth6_native_vlan": 1,
+  "interface_eth6_phy_advertise": "auto",
+  "interface_eth6_phy_duplex": "full",
+  "interface_eth6_phy_speed": "auto",
+  "interface_eth6_shutdown": false,
+  "interface_eth6_tag_native": "disable",
+  "ips": true,
+  "ips_auto_update": true,
+  "ips_mode": "prevention",
+  "ips_oinkcode": "REDACTED",
+  "ips_rule_set": "balanced",
+  "ips_rule_type": "snort-vrt",
+  "ips_update_interval": "12-hours",
+  "l2tp_client_vpn": true,
+  "lan_interfaces": [
+    {
+      "dhcp_pool_config": {
+        "dhcp_options": [],
+        "dhcp_pool_bind_list": [],
+        "dhcp_pool_enable": true,
+        "dhcp_pool_end_address": "172.21.1.250",
+        "dhcp_pool_lease_time_day": 0,
+        "dhcp_pool_lease_time_hour": 2,
+        "dhcp_pool_lease_time_minute": 0,
+        "dhcp_pool_primary_dns_server": "172.21.0.1",
+        "dhcp_pool_start_address": "172.21.1.30"
+      },
+      "ip_addr": "172.21.0.1",
+      "ip_mode": "static",
+      "management_access": "enable",
+      "name": "native",
+      "port_scan": true,
+      "rate_limit_rules": {
+        "rate_limit": "disable"
+      },
+      "subnet_mask": "255.255.0.0",
+      "vlan_id": 1
+    },
+    {
+      "dhcp_pool_config": {
+        "dhcp_options": [],
+        "dhcp_pool_bind_list": [],
+        "dhcp_pool_enable": true,
+        "dhcp_pool_end_address": "192.168.21.250",
+        "dhcp_pool_lease_time_day": 0,
+        "dhcp_pool_lease_time_hour": 2,
+        "dhcp_pool_lease_time_minute": 0,
+        "dhcp_pool_primary_dns_server": "192.168.21.1",
+        "dhcp_pool_start_address": "192.168.21.30"
+      },
+      "ip_addr": "192.168.21.1",
+      "ip_mode": "static",
+      "management_access": "enable",
+      "name": "Guest",
+      "port_scan": true,
+      "rate_limit_rules": {
+        "rate_limit": "disable"
+      },
+      "subnet_mask": "255.255.255.0",
+      "vlan_id": 30
+    },
+    {
+      "dhcp_pool_config": {
+        "dhcp_options": [],
+        "dhcp_pool_bind_list": [],
+        "dhcp_pool_domain_name": "Workgroup",
+        "dhcp_pool_enable": true,
+        "dhcp_pool_end_address": "172.23.1.253",
+        "dhcp_pool_lease_time_day": 0,
+        "dhcp_pool_lease_time_hour": 2,
+        "dhcp_pool_lease_time_minute": 0,
+        "dhcp_pool_primary_dns_server": "172.23.0.1",
+        "dhcp_pool_secondary_dns_server": "1.1.1.2",
+        "dhcp_pool_start_address": "172.23.1.30"
+      },
+      "ip_addr": "172.23.0.1",
+      "ip_mode": "static",
+      "management_access": "enable",
+      "name": "VLAN 100",
+      "port_scan": true,
+      "rate_limit_rules": {
+        "rate_limit": "disable"
+      },
+      "subnet_mask": "255.255.0.0",
+      "vlan_id": 100
+    },
+    {
+      "dhcp_pool_config": {
+        "dhcp_options": [],
+        "dhcp_pool_bind_list": [],
+        "dhcp_pool_enable": true,
+        "dhcp_pool_end_address": "172.16.1.254",
+        "dhcp_pool_lease_time_day": 0,
+        "dhcp_pool_lease_time_hour": 2,
+        "dhcp_pool_lease_time_minute": 0,
+        "dhcp_pool_primary_dns_server": "172.16.0.1",
+        "dhcp_pool_start_address": "172.16.1.20"
+      },
+      "ip_addr": "172.16.0.1",
+      "ip_mode": "static",
+      "management_access": "enable",
+      "name": "200",
+      "port_scan": true,
+      "rate_limit_rules": {
+        "rate_limit": "disable"
+      },
+      "subnet_mask": "255.255.0.0",
+      "vlan_id": 200
+    }
+  ],
+  "learn_dns_servers_from_dhcp": false,
+  "logging_syslog_dnsmasq": false,
+  "logging_syslog_sev": "5",
+  "management_ssh": false,
+  "name_server": [
+    {
+      "server_ip": "1.1.1.2"
+    },
+    {
+      "server_ip": "8.8.8.8"
+    }
+  ],
+  "ntp_server": [
+    {
+      "server_address": "time.google.com"
+    }
+  ],
+  "radius_client_list": [
+    {
+      "address": "172.22.0.0",
+      "id": 1,
+      "name": "Demo1",
+      "netmask": "16",
+      "secret": "REDACTED"
+    }
+  ],
+  "radius_server_users": [],
+  "site_to_site": false,
+  "snort_vrt_rule_category": [
+    {
+      "category": "app-detect"
+    },
+    {
+      "category": "indicator-compromise"
+    },
+    {
+      "category": "indicator-obfuscation"
+    },
+    {
+      "category": "indicator-scan"
+    },
+    {
+      "category": "indicator-shellcode"
+    },
+    {
+      "category": "malware-backdoor"
+    },
+    {
+      "category": "malware-cnc"
+    },
+    {
+      "category": "malware-other"
+    },
+    {
+      "category": "malware-tools"
+    },
+    {
+      "category": "browser-chrome"
+    },
+    {
+      "category": "browser-firefox"
+    },
+    {
+      "category": "browser-ie"
+    },
+    {
+      "category": "browser-other"
+    },
+    {
+      "category": "browser-plugins"
+    },
+    {
+      "category": "browser-webkit"
+    },
+    {
+      "category": "community"
+    },
+    {
+      "category": "content-replace"
+    },
+    {
+      "category": "policy-multimedia"
+    },
+    {
+      "category": "policy-other"
+    },
+    {
+      "category": "policy-social"
+    },
+    {
+      "category": "policy-spam"
+    },
+    {
+      "category": "protocol-dns"
+    },
+    {
+      "category": "protocol-finger"
+    },
+    {
+      "category": "protocol-ftp"
+    },
+    {
+      "category": "protocol-icmp"
+    },
+    {
+      "category": "protocol-imap"
+    },
+    {
+      "category": "protocol-nntp"
+    },
+    {
+      "category": "protocol-other"
+    },
+    {
+      "category": "protocol-pop"
+    },
+    {
+      "category": "protocol-rpc"
+    },
+    {
+      "category": "protocol-scada"
+    },
+    {
+      "category": "protocol-services"
+    },
+    {
+      "category": "protocol-snmp"
+    },
+    {
+      "category": "protocol-telnet"
+    },
+    {
+      "category": "protocol-tftp"
+    },
+    {
+      "category": "protocol-voip"
+    },
+    {
+      "category": "netbios"
+    },
+    {
+      "category": "x11"
+    },
+    {
+      "category": "exploit-kit"
+    },
+    {
+      "category": "file-executable"
+    },
+    {
+      "category": "file-flash"
+    },
+    {
+      "category": "file-identify"
+    },
+    {
+      "category": "file-image"
+    },
+    {
+      "category": "file-java"
+    },
+    {
+      "category": "file-multimedia"
+    },
+    {
+      "category": "file-office"
+    },
+    {
+      "category": "file-other"
+    },
+    {
+      "category": "file-pdf"
+    },
+    {
+      "category": "os-linux"
+    },
+    {
+      "category": "os-mobile"
+    },
+    {
+      "category": "os-other"
+    },
+    {
+      "category": "os-solaris"
+    },
+    {
+      "category": "os-windows"
+    },
+    {
+      "category": "server-mail"
+    },
+    {
+      "category": "server-mssql"
+    },
+    {
+      "category": "server-mysql"
+    },
+    {
+      "category": "server-iis"
+    },
+    {
+      "category": "server-oracle"
+    },
+    {
+      "category": "server-other"
+    },
+    {
+      "category": "server-samba"
+    },
+    {
+      "category": "server-webapp"
+    },
+    {
+      "category": "sql"
+    },
+    {
+      "category": "pua-adware"
+    },
+    {
+      "category": "pua-other"
+    },
+    {
+      "category": "pua-p2p"
+    },
+    {
+      "category": "pua-toolbars"
+    }
+  ],
+  "syslog_server": [
+    {
+      "server_ip": "172.22.0.9",
+      "server_port": "514"
+    }
+  ],
+  "system_name": "NSE-Caravan",
+  "tailscale": {
+    "accept_routes": true,
+    "advertise_routes": "172.21.0.0/16,172.23.0.0/16",
+    "auth_key": "*masked*",
+    "enable": true
+  },
+  "tz_name": "Europe/London",
+  "vpn_server_address_range": "172.22.200.10-172.22.200.30",
+  "vpn_server_interface": "wan1",
+  "vpn_server_mfa": true,
+  "vpn_server_shared_secret": "REDACTED",
+  "wan_interfaces": [
+    {
+      "bandwidth_config": {
+        "downlink_bandwidth": "200",
+        "uplink_bandwidth": "40"
+      },
+      "dyndns_config": {
+        "dyndns_mode": "disable",
+        "provider": "noip",
+        "server_name": "dynupdate.no-ip.com"
+      },
+      "failover_policy_state": false,
+      "ip_mode": "dynamic",
+      "lan_intf": "eth1",
+      "load_balance_config": {
+        "lb_mode": "shared",
+        "lb_monitor-hosts": [
+          "8.8.8.8",
+          "1.1.1.1"
+        ],
+        "lb_num-hosts-fail-interface-down": "1",
+        "lb_ping-failure-detect-time": "5",
+        "lb_ping-interval": "2",
+        "lb_ping-timeout": "2",
+        "lb_traffic-share-percentage": "95"
+      },
+      "name": "wan1",
+      "source_nat": "enable",
+      "spare_ip_mode": "dynamic",
+      "speedtest": false,
+      "starlink_dish_grpc_reflection_ip": "192.168.1.1",
+      "starlink_dish_grpc_reflection_port": "9000",
+      "starlink_dish_ip": "192.168.100.1",
+      "starlink_dish_mode": "router",
+      "starlink_dish_port": "9200",
+      "starlink_enable": true,
+      "stateful": true,
+      "traffic_shaping": "disable",
+      "vlan": ""
+    },
+    {
+      "bandwidth_config": {
+        "downlink_bandwidth": "10",
+        "uplink_bandwidth": "10"
+      },
+      "dyndns_config": {
+        "dyndns_mode": "disable",
+        "provider": "noip"
+      },
+      "failover_policy_state": false,
+      "ip_mode": "dynamic",
+      "lan_intf": "eth2",
+      "load_balance_config": {
+        "lb_mode": "shared",
+        "lb_monitor-hosts": [
+          "8.8.8.8",
+          "1.1.1.1"
+        ],
+        "lb_num-hosts-fail-interface-down": "1",
+        "lb_ping-failure-detect-time": "5",
+        "lb_ping-interval": "2",
+        "lb_ping-timeout": "2",
+        "lb_traffic-share-percentage": "5"
+      },
+      "name": "wan2",
+      "source_nat": "enable",
+      "spare_ip_mode": "dynamic",
+      "speedtest": false,
+      "starlink_enable": false,
+      "stateful": true,
+      "traffic_shaping": "disable",
+      "vlan": ""
+    }
+  ],
+  "wg_rw_vpn_server_listen_port": "51820",
+  "wg_rw_vpn_server_offline_interval": "5",
+  "wg_server_network": "10.255.252.1/24",
+  "wg_split_tunnel": true,
+  "wg_split_tunnel_ip_subnets": "172.22.0.0/16,10.255.252.1/32",
+  "wg_vpn_server_mode": false
+}

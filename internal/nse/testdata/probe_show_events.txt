@@ -1,0 +1,20 @@
+show events
+Aug 29 22:20:58 SYSTEM-5-USER-SESSION-END User session [5059] ended for [admin] from [172.23.1.36:63082] [ssh] duration [63] seconds [Reason: logout]
+Aug 29 22:18:52 SYSTEM-5-USER-SESSION-END User session [5041] ended for [admin] from [172.23.1.36:62979] [ssh] duration [71] seconds [Reason: logout]
+Aug 29 22:17:18 SYSTEM-5-USER-SESSION-END User session [5036] ended for [admin] from [172.23.1.36:62966] [ssh] duration [3] seconds [Reason: logout]
+Aug 29 22:15:23 SYSTEM-5-USER-SESSION-END User session [4956] ended for [admin] from [172.23.1.36:62736] [ssh] duration [300] seconds [Reason: timeout]
+Aug 29 17:48:54 IPS-3-RULESET-UPDATE-FAILED IPS ruleset update failed
+Aug 29 17:48:51 IPS-3-RULESET-UPDATE-FAILED IPS ruleset update failed
+Aug 19 15:40:12 WANLB-4-LINK-UP WAN interface [wan1] up
+Aug 19 15:40:11 WANLB-6-MONITOR-HOST-REACHABLE Monitor host [1.1.1.1] reachable via WAN interface [wan1]
+Aug 19 15:40:11 WANLB-6-MONITOR-HOST-REACHABLE Monitor host [8.8.8.8] reachable via WAN interface [wan1]
+Aug 19 15:39:20 WANLB-3-LINK-DOWN WAN interface [wan1] down
+Aug 19 15:39:20 WANLB-3-LINK-DOWN WAN interface [wan2] down
+Aug 19 15:39:20 WANLB-3-MONITOR-HOST-UNREACHABLE Monitor host [1.1.1.1] unreachable via WAN interface [wan2]
+Aug 19 15:39:20 WANLB-3-MONITOR-HOST-UNREACHABLE Monitor host [1.1.1.1] unreachable via WAN interface [wan1]
+Aug 19 15:39:20 WANLB-3-MONITOR-HOST-UNREACHABLE Monitor host [8.8.8.8] unreachable via WAN interface [wan1]
+Aug 19 15:39:20 WANLB-3-MONITOR-HOST-UNREACHABLE Monitor host [8.8.8.8] unreachable via WAN interface [wan2]
+Aug 19 15:39:10 WANLB-4-LINK-UP WAN interface [wan2] up
+Aug 19 15:39:10 WANLB-4-LINK-UP WAN interface [wan1] up
+Aug 19 15:39:05 SYSTEM-5-REBOOT-REASON System reboot completed [DEV_REBOOT_POWER_CYCLE] at [2026-08-19 15:39:02] triggered by [AP]
+NSE-Caravan(config)# 

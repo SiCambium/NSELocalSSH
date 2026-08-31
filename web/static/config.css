@@ -1,0 +1,144 @@
+/* Configuration page: section nav, per-row Edit buttons, the shared
+   modal, license-gating banners, and safe-apply outcome states. Reuses
+   the color tokens and .grid/.stat/.table-wrap/.warn/.muted conventions
+   already defined in style.css. */
+
+.config-nav {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  width: fit-content;
+  margin-bottom: 20px;
+}
+.config-nav button {
+  background: transparent;
+  color: var(--muted);
+  border: 0;
+  padding: 8px 18px;
+  cursor: pointer;
+  border-radius: 7px;
+}
+.config-nav button.active { background: #24303c; color: var(--text); }
+
+.row-edit {
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.row-edit:hover { border-color: var(--accent); }
+
+.badge-on { color: var(--up); }
+.badge-off { color: var(--muted); }
+
+.license-gated { position: relative; }
+.license-gated-control { opacity: 0.5; pointer-events: none; }
+.license-banner {
+  color: var(--warn);
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+
+.apply-ok { color: var(--up); }
+.apply-error { color: var(--down); }
+.apply-provisional p { color: var(--warn); margin: 0 0 8px; }
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  padding: 20px 24px;
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.modal-header h2 { margin: 0; font-size: 16px; }
+.modal-close {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.modal-close:hover { color: var(--text); }
+.modal-body h3 {
+  margin: 4px 0 12px;
+  font-size: 13px;
+  color: var(--text);
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+}
+.modal-body label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 14px;
+}
+.modal-body input[type="text"],
+.modal-body input[type="number"],
+.modal-body select {
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  font: inherit;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.modal-body input:focus,
+.modal-body select:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+.modal-body .check-row { max-width: none; }
+.modal-error {
+  color: var(--down);
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.modal-cancel {
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 8px 16px;
+  cursor: pointer;
+}
+.modal-save {
+  background: #1b3d3d;
+  color: var(--text);
+  border: 1px solid var(--accent);
+  padding: 8px 16px;
+  cursor: pointer;
+}
+.modal-save:disabled { opacity: 0.6; cursor: default; }

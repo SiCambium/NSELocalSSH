@@ -1,0 +1,15 @@
+show management
+ Remote Management
+   Config    : Enabled
+   URL       : -
+   Status    : Connected to cloud.cambiumnetworks.com (cnmaestro)
+   Cambium-ID: 
+   Account-ID: SIMONSHOME
+   Auth-Token: Available, https://sas.nse.cambiumnetworks.com
+ GUI
+   HTTP      : Enabled
+   HTTPS     : Enabled
+ Command Line
+   Telnet    : Disabled
+   SSH       : Enabled
+NSE-Caravan(config)# 

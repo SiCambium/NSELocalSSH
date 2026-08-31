@@ -1,0 +1,30 @@
+show lldp neighbors
+-------------------------------------------------------------------------------
+LLDP neighbors:
+-------------------------------------------------------------------------------
+Interface:    ETH6, via: LLDP, RID: 1, Time: 0 day, 04:31:38
+  Chassis:     
+    ChassisID:    local bc:a9:93:0d:89:62
+    SysName:      XV3-8Caravan2
+    SysDescr:     Cambium Networks WiFi AP Model:XV3-8X00A00-EU, ESN:BCA9930D8962 Ver:7.1.2-r9, BKVer:7.1.1-r5, D:4.182, Reg:ETSI
+    MgmtIP:       192.168.21.30
+    MgmtIface:    20
+    MgmtIP:       172.21.1.30
+    MgmtIface:    19
+    MgmtIP:       172.23.1.30
+    MgmtIface:    21
+    MgmtIP:       fe80::bea9:93ff:fe0d:8962
+    MgmtIface:    21
+    MgmtIP:       fe80::bea9:93ff:fe0d:8962
+    MgmtIface:    20
+    MgmtIP:       fe80::bea9:93ff:fe0d:8962
+    MgmtIface:    19
+    Capability:   Bridge, on
+    Capability:   Router, on
+    Capability:   Wlan, on
+  Port:        
+    PortID:       mac bc:a9:93:0d:89:62
+    PortDescr:    eth0
+    TTL:          120
+-------------------------------------------------------------------------------
+NSE-Caravan(config)# 

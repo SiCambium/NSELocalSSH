@@ -1,0 +1,298 @@
+show config
+!
+management https port 443
+no management radius-auth
+management ssh idle-timeout 300
+management user admin password $crypt$0$REDACTED_FOR_TESTDATA
+management http
+no management telnet
+management https
+management ssh
+management cambium-remote
+management cambium-remote validate-server-cert
+management http port 80
+led
+no poe-out
+system hw-reset
+!
+interface eth 1
+ type wan
+ wan-name wan1
+ ip nat inside 
+ load-balance mode shared
+ load-balance monitor-hosts 8.8.8.8,1.1.1.1
+ load-balance num-hosts-fail-interface-down 1
+ load-balance ping failure-detect-time 5
+ load-balance ping interval 2
+ load-balance ping timeout 2
+ load-balance traffic-share-percentage 95
+ uplink-bandwidth Mbps 40
+ downlink-bandwidth Mbps 200
+ dynamic-dns service-id 1
+ starlink
+ starlink dish-mode router
+ starlink dish-ip 192.168.100.1
+ starlink dish-port 9200
+ starlink dish-grpc-reflection-ip 192.168.1.1
+ starlink dish-grpc-reflection-port 9000
+ ip address dhcp
+!
+interface eth 2
+ type wan
+ wan-name wan2
+ ip nat inside 
+ load-balance mode shared
+ load-balance monitor-hosts 8.8.8.8,1.1.1.1
+ load-balance num-hosts-fail-interface-down 1
+ load-balance ping failure-detect-time 5
+ load-balance ping interval 2
+ load-balance ping timeout 2
+ load-balance traffic-share-percentage 5
+ uplink-bandwidth Mbps 10
+ downlink-bandwidth Mbps 10
+ dynamic-dns service-id 2
+ ip address dhcp
+!
+interface eth 3
+ type lan
+ switchport mode access
+ switchport access vlan 1
+ no shutdown 
+!
+interface eth 4
+ type lan
+ switchport mode access
+ switchport access vlan 1
+ no shutdown 
+!
+interface eth 5
+ type lan
+ switchport mode trunk
+ switchport trunk native vlan 1
+ switchport trunk allowed vlan 1,30,100,200
+ no shutdown 
+!
+interface eth 6
+ type lan
+ switchport mode trunk
+ switchport trunk native vlan 1
+ switchport trunk allowed vlan 1,30,100,200
+ no shutdown 
+!
+interface vlan 1
+ management-access all
+ ip address 172.21.0.1 255.255.0.0
+!
+interface vlan 30
+ management-access all
+ ip address 192.168.21.1 255.255.255.0
+!
+interface vlan 100
+ management-access all
+ ip address 172.23.0.1 255.255.0.0
+!
+interface vlan 200
+ management-access all
+ ip address 172.16.0.1 255.255.0.0
+!
+ntp server time.google.com 
+ip dhcp server authoritative
+ip dhcp pool 1
+ address-range 172.21.1.30 172.21.1.250 
+ default-router 172.21.0.1
+ dns-server 172.21.0.1 
+ lease 0 2 0
+ network 172.21.0.0 255.255.0.0 
+!
+ip dhcp pool 2
+ address-range 192.168.21.30 192.168.21.250 
+ default-router 192.168.21.1
+ dns-server 192.168.21.1 
+ lease 0 2 0
+ network 192.168.21.0 255.255.255.0 
+!
+ip dhcp pool 3
+ address-range 172.23.1.30 172.23.1.253 
+ default-router 172.23.0.1
+ dns-server 172.23.0.1 1.1.1.2
+ domain-name Workgroup
+ lease 0 2 0
+ network 172.23.0.0 255.255.0.0 
+!
+ip dhcp pool 4
+ address-range 172.16.1.20 172.16.1.254 
+ default-router 172.16.0.1
+ dns-server 172.16.0.1 
+ lease 0 2 0
+ network 172.16.0.0 255.255.0.0 
+!
+
+ip dns server
+ip name-server 1.1.1.2 
+ip name-server 8.8.8.8 
+ip dns dynamic services-list 1
+ provider noip
+ server-name dynupdate.no-ip.com
+!
+ip dns dynamic services-list 2
+ provider noip
+!
+
+timezone Europe/London
+hostname NSE-Caravan
+no snmp-server
+!
+intrusion-prevention
+intrusion-prevention mode prevention
+intrusion-prevention rule-set balanced
+intrusion-prevention rule-type snort-vrt
+intrusion-prevention oinkcode REDACTED_FOR_TESTDATA
+intrusion-prevention auto-update
+intrusion-prevention auto-update interval 12-hours
+intrusion-prevention rule-type snort-vrt rule-category snort3-app-detect
+intrusion-prevention rule-type snort-vrt rule-category snort3-indicator-compromise
+intrusion-prevention rule-type snort-vrt rule-category snort3-indicator-obfuscation
+intrusion-prevention rule-type snort-vrt rule-category snort3-indicator-scan
+intrusion-prevention rule-type snort-vrt rule-category snort3-indicator-shellcode
+intrusion-prevention rule-type snort-vrt rule-category snort3-malware-backdoor
+intrusion-prevention rule-type snort-vrt rule-category snort3-malware-cnc
+intrusion-prevention rule-type snort-vrt rule-category snort3-malware-other
+intrusion-prevention rule-type snort-vrt rule-category snort3-malware-tools
+intrusion-prevention rule-type snort-vrt rule-category snort3-browser-chrome
+intrusion-prevention rule-type snort-vrt rule-category snort3-browser-firefox
+intrusion-prevention rule-type snort-vrt rule-category snort3-browser-ie
+intrusion-prevention rule-type snort-vrt rule-category snort3-browser-other
+intrusion-prevention rule-type snort-vrt rule-category snort3-browser-plugins
+intrusion-prevention rule-type snort-vrt rule-category snort3-browser-webkit
+intrusion-prevention rule-type snort-vrt rule-category snort3-content-replace
+intrusion-prevention rule-type snort-vrt rule-category snort3-policy-multimedia
+intrusion-prevention rule-type snort-vrt rule-category snort3-policy-other
+intrusion-prevention rule-type snort-vrt rule-category snort3-policy-social
+intrusion-prevention rule-type snort-vrt rule-category snort3-policy-spam
+intrusion-prevention rule-type snort-vrt rule-category snort3-protocol-dns
+intrusion-prevention rule-type snort-vrt rule-category snort3-protocol-finger
+intrusion-prevention rule-type snort-vrt rule-category snort3-protocol-ftp
+intrusion-prevention rule-type snort-vrt rule-category snort3-protocol-icmp
+intrusion-prevention rule-type snort-vrt rule-category snort3-protocol-imap
+intrusion-prevention rule-type snort-vrt rule-category snort3-protocol-nntp
+intrusion-prevention rule-type snort-vrt rule-category snort3-protocol-other
+intrusion-prevention rule-type snort-vrt rule-category snort3-protocol-pop
+intrusion-prevention rule-type snort-vrt rule-category snort3-protocol-rpc
+intrusion-prevention rule-type snort-vrt rule-category snort3-protocol-scada
+intrusion-prevention rule-type snort-vrt rule-category snort3-protocol-services
+intrusion-prevention rule-type snort-vrt rule-category snort3-protocol-snmp
+intrusion-prevention rule-type snort-vrt rule-category snort3-protocol-telnet
+intrusion-prevention rule-type snort-vrt rule-category snort3-protocol-tftp
+intrusion-prevention rule-type snort-vrt rule-category snort3-protocol-voip
+intrusion-prevention rule-type snort-vrt rule-category snort3-netbios
+intrusion-prevention rule-type snort-vrt rule-category snort3-x11
+intrusion-prevention rule-type snort-vrt rule-category snort3-exploit-kit
+intrusion-prevention rule-type snort-vrt rule-category snort3-file-executable
+intrusion-prevention rule-type snort-vrt rule-category snort3-file-flash
+intrusion-prevention rule-type snort-vrt rule-category snort3-file-identify
+intrusion-prevention rule-type snort-vrt rule-category snort3-file-image
+intrusion-prevention rule-type snort-vrt rule-category snort3-file-java
+intrusion-prevention rule-type snort-vrt rule-category snort3-file-multimedia
+intrusion-prevention rule-type snort-vrt rule-category snort3-file-office
+intrusion-prevention rule-type snort-vrt rule-category snort3-file-other
+intrusion-prevention rule-type snort-vrt rule-category snort3-file-pdf
+intrusion-prevention rule-type snort-vrt rule-category snort3-os-linux
+intrusion-prevention rule-type snort-vrt rule-category snort3-os-mobile
+intrusion-prevention rule-type snort-vrt rule-category snort3-os-other
+intrusion-prevention rule-type snort-vrt rule-category snort3-os-solaris
+intrusion-prevention rule-type snort-vrt rule-category snort3-os-windows
+intrusion-prevention rule-type snort-vrt rule-category snort3-server-mail
+intrusion-prevention rule-type snort-vrt rule-category snort3-server-mssql
+intrusion-prevention rule-type snort-vrt rule-category snort3-server-mysql
+intrusion-prevention rule-type snort-vrt rule-category snort3-server-iis
+intrusion-prevention rule-type snort-vrt rule-category snort3-server-oracle
+intrusion-prevention rule-type snort-vrt rule-category snort3-server-other
+intrusion-prevention rule-type snort-vrt rule-category snort3-server-samba
+intrusion-prevention rule-type snort-vrt rule-category snort3-server-webapp
+intrusion-prevention rule-type snort-vrt rule-category snort3-sql
+intrusion-prevention rule-type snort-vrt rule-category snort3-pua-adware
+intrusion-prevention rule-type snort-vrt rule-category snort3-pua-other
+intrusion-prevention rule-type snort-vrt rule-category snort3-pua-p2p
+intrusion-prevention rule-type snort-vrt rule-category snort3-pua-toolbars
+!
+!
+dns-server
+ filter-mode filtering
+ dns-filter policy 1
+    name Ad_Blocking
+    safe-search disabled
+    deny-sources all
+    deny-categories malware-sites
+    deny-categories spyware-and-adware
+    deny-categories spam-urls
+    deny-categories bot-nets
+    deny-categories keyloggers-and-monitoring
+    deny-categories phishing-and-other-frauds
+    exit
+ no dns-override
+!
+vpn-server
+ interface wan1
+ shared-secret REDACTED_FOR_TESTDATA
+ address-range 172.22.200.10 172.22.200.30 
+ mfa
+ exit
+!
+tailscale
+tailscale auth-key REDACTED_FOR_TESTDATA
+tailscale accept-routes
+tailscale advertise-routes 172.21.0.0/16,172.23.0.0/16
+radius-server mode enable
+radius-server client-list 1
+ name Demo1
+ secret REDACTED_FOR_TESTDATA
+ address 172.22.0.0
+ prefix-length 16
+!
+high-availability role primary 
+high-availability port eth6 
+high-availability 
+!
+firewall dos-protection ip-spoof
+firewall dos-protection ip-spoof-log
+firewall dos-protection smurf-attack
+firewall dos-protection icmp-frag
+!
+ip gw-source-precedence static 1
+ip gw-source-precedence dhcpc 2
+ip gw-source-precedence pppoe 3
+ipv6 gw-source-precedence static 1
+ipv6 gw-source-precedence auto-config/dhcpc 2
+
+!
+filter  global-filter
+  stateful
+  application-control
+  filter precedence 1
+     unique_id 1
+     rule-name rule_1
+     layer3-filter deny proto any 192.168.20.0/255.255.255.0 any 172.21.0.0/255.255.0.0 any in  
+     exit
+  filter precedence 2
+     unique_id 2
+     rule-name rule_2
+     layer3-filter deny proto any 192.168.20.0/255.255.255.0 any 172.23.0.0/255.255.0.0 any in  
+     exit
+  filter precedence 3
+     unique_id 3
+     rule-name rule_3
+     layer3-filter deny proto any 192.168.20.0/255.255.255.0 any 172.18.0.0/255.255.0.0 any in  
+     exit
+!
+lldp
+lldp tx-interval 30
+lldp pba
+lldp pba-auth-key REDACTED_FOR_TESTDATA
+power policy sufficient
+power lldp policy auto
+power alerts policy yes
+power bootloop enabled
+logging host 172.22.0.9 514
+logging syslog 5
+!
+NSE-Caravan(config)# 

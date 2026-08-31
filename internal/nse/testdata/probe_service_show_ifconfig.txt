@@ -1,0 +1,114 @@
+service show ifconfig
+br0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
+        ether 30:cb:c7:70:41:32  txqueuelen 1000  (Ethernet)
+        RX packets 5784995  bytes 2722801671 (2.5 GiB)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 11423394  bytes 14671341829 (13.6 GiB)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+
+br1: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
+        ether 6a:b0:d7:a8:e8:92  txqueuelen 1000  (Ethernet)
+        RX packets 0  bytes 0 (0.0 B)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 11  bytes 1234 (1.2 KiB)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+
+br0.1: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
+        inet 172.21.0.1  netmask 255.255.0.0  broadcast 172.21.255.255
+        ether 30:cb:c7:70:41:32  txqueuelen 1000  (Ethernet)
+        RX packets 8510  bytes 3900791 (3.7 MiB)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 63043  bytes 4042509 (3.8 MiB)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+
+br0.30: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
+        inet 192.168.21.1  netmask 255.255.255.0  broadcast 192.168.21.255
+        ether 30:cb:c7:70:41:32  txqueuelen 1000  (Ethernet)
+        RX packets 1027  bytes 51382 (50.1 KiB)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 59182  bytes 3556448 (3.3 MiB)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+
+br0.100: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
+        inet 172.23.0.1  netmask 255.255.0.0  broadcast 172.23.255.255
+        ether 30:cb:c7:70:41:32  txqueuelen 1000  (Ethernet)
+        RX packets 5775458  bytes 2718849498 (2.5 GiB)
+        RX errors 0  dropped 103  overruns 0  frame 0
+        TX packets 11242716  bytes 14660235236 (13.6 GiB)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+
+br0.200: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
+        inet 172.16.0.1  netmask 255.255.0.0  broadcast 172.16.255.255
+        ether 30:cb:c7:70:41:32  txqueuelen 1000  (Ethernet)
+        RX packets 0  bytes 0 (0.0 B)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 58443  bytes 3506580 (3.3 MiB)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+
+eth0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
+        inet 192.168.1.171  netmask 255.255.255.0  broadcast 0.0.0.0
+        ether 30:cb:c7:70:41:30  txqueuelen 1000  (Ethernet)
+        RX packets 14042350  bytes 14641279725 (13.6 GiB)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 6152220  bytes 2989623468 (2.7 GiB)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+        device memory 0x1ae4000-1ae4fff  
+
+eth1: flags=4099<UP,BROADCAST,MULTICAST>  mtu 1500
+        ether 30:cb:c7:70:41:31  txqueuelen 1000  (Ethernet)
+        RX packets 0  bytes 0 (0.0 B)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 0  bytes 0 (0.0 B)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+        device memory 0x1ae6000-1ae6fff  
+
+eth2: flags=4099<UP,BROADCAST,MULTICAST>  mtu 1500
+        ether 30:cb:c7:70:41:32  txqueuelen 1000  (Ethernet)
+        RX packets 0  bytes 0 (0.0 B)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 0  bytes 0 (0.0 B)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+        device memory 0x1ae0000-1ae0fff  
+
+eth3: flags=4099<UP,BROADCAST,MULTICAST>  mtu 1500
+        ether 30:cb:c7:70:41:33  txqueuelen 1000  (Ethernet)
+        RX packets 0  bytes 0 (0.0 B)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 0  bytes 0 (0.0 B)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+        device memory 0x1ae2000-1ae2fff  
+
+eth4: flags=4099<UP,BROADCAST,MULTICAST>  mtu 1500
+        ether 30:cb:c7:70:41:34  txqueuelen 1000  (Ethernet)
+        RX packets 0  bytes 0 (0.0 B)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 0  bytes 0 (0.0 B)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+        device memory 0x1ae8000-1ae8fff  
+
+eth5: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
+        ether 30:cb:c7:70:41:35  txqueuelen 1000  (Ethernet)
+        RX packets 6130694  bytes 2764484395 (2.5 GiB)
+        RX errors 120  dropped 2423  overruns 0  frame 0
+        TX packets 14358330  bytes 14921737301 (13.8 GiB)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+        device memory 0x1aea000-1aeafff  
+
+lo: flags=73<UP,LOOPBACK,RUNNING>  mtu 65536
+        inet 127.0.0.1  netmask 255.0.0.0
+        inet6 ::1  prefixlen 128  scopeid 0x10<host>
+        loop  txqueuelen 1000  (Local Loopback)
+        RX packets 26887  bytes 11074415 (10.5 MiB)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 26887  bytes 11074415 (10.5 MiB)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+
+ts-host: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
+        inet 172.31.255.1  netmask 255.255.255.252  broadcast 0.0.0.0
+        ether fe:e3:75:2d:d3:c9  txqueuelen 1000  (Ethernet)
+        RX packets 69188  bytes 7224139 (6.8 MiB)
+        RX errors 0  dropped 0  overruns 0  frame 0
+        TX packets 62006  bytes 5897587 (5.6 MiB)
+        TX errors 0  dropped 0 overruns 0  carrier 0  collisions 0
+
+NSE-Caravan(config)# 

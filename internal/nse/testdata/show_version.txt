@@ -1,0 +1,11 @@
+show version
+NSE-Caravan NSE 3000 
+Regulatory domain ROW
+Software version 2.3-r6
+Build date 2026-07-14T07:10:21+00:00
+Device-Agent version 4.183
+Serial number GHZC00QWGFHX
+Copyright (c) 2014-2026 Cambium Networks, Inc.
+System is up 0 days, 04 hours 35 minutes
+Device MAC address is 30-CB-C7-70-41-30
+NSE-Caravan(config)# 

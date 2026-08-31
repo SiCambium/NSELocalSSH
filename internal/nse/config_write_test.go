@@ -1,0 +1,520 @@
+package nse
+
+import "testing"
+
+func TestNetworkAddress(t *testing.T) {
+	cases := []struct {
+		ip, mask, want string
+	}{
+		{"172.21.0.1", "255.255.0.0", "172.21.0.0"},
+		{"192.168.21.1", "255.255.255.0", "192.168.21.0"},
+		{"10.5.130.7", "255.255.255.192", "10.5.130.0"},
+		{"172.16.0.1", "255.255.0.0", "172.16.0.0"},
+	}
+	for _, c := range cases {
+		got, err := NetworkAddress(c.ip, c.mask)
+		if err != nil {
+			t.Fatalf("NetworkAddress(%q, %q) error: %v", c.ip, c.mask, err)
+		}
+		if got != c.want {
+			t.Errorf("NetworkAddress(%q, %q) = %q, want %q", c.ip, c.mask, got, c.want)
+		}
+	}
+}
+
+func TestNetworkAddressRejectsInvalid(t *testing.T) {
+	if _, err := NetworkAddress("not-an-ip", "255.255.255.0"); err == nil {
+		t.Fatal("expected error for invalid IP")
+	}
+	if _, err := NetworkAddress("172.21.0.1", "not-a-mask"); err == nil {
+		t.Fatal("expected error for invalid mask")
+	}
+}
+
+func TestDHCPPoolLinesIncludesOptionalDomain(t *testing.T) {
+	lines := DHCPPoolLines(DHCPScope{
+		StartIP: "172.23.1.30", EndIP: "172.23.1.253",
+		Router: "172.23.0.1", DNS: "172.23.0.1", Domain: "Workgroup",
+		LeaseDays: 0, LeaseHours: 2, LeaseMins: 0,
+		NetworkIP: "172.23.0.0", NetworkMask: "255.255.0.0",
+	})
+	want := []string{
+		"address-range 172.23.1.30 172.23.1.253",
+		"default-router 172.23.0.1",
+		"dns-server 172.23.0.1",
+		"domain-name Workgroup",
+		"lease 0 2 0",
+		"network 172.23.0.0 255.255.0.0",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("DHCPPoolLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestDHCPPoolLinesIncludesOptions(t *testing.T) {
+	lines := DHCPPoolLines(DHCPScope{
+		StartIP: "172.21.1.30", EndIP: "172.21.1.250",
+		Router: "172.21.0.1", DNS: "172.21.0.1",
+		LeaseDays: 0, LeaseHours: 2, LeaseMins: 0,
+		NetworkIP: "172.21.0.0", NetworkMask: "255.255.0.0",
+		Options: []DHCPOption{{Code: 6, Value: "10.110.12.111"}, {Code: 15, Value: "example.local"}},
+	})
+	last2 := lines[len(lines)-2:]
+	want := []string{"dhcp-option 6 10.110.12.111", "dhcp-option 15 example.local"}
+	for i := range want {
+		if last2[i] != want[i] {
+			t.Errorf("option line %d = %q, want %q", i, last2[i], want[i])
+		}
+	}
+}
+
+func TestWANEnableLinesNegatesAccessSwitchport(t *testing.T) {
+	lines := WANEnableLines("wan3", PortVLAN{Interface: "eth3", Mode: "access", AccessVLAN: "1"})
+	want := []string{
+		"no switchport access vlan 1",
+		"no switchport mode access",
+		"type wan",
+		"wan-name wan3",
+		"ip address dhcp",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("WANEnableLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestWANEnableLinesNegatesTrunkSwitchport(t *testing.T) {
+	lines := WANEnableLines("wan4", PortVLAN{Interface: "eth5", Mode: "trunk", NativeVLAN: "1", AllowedVLANs: "1,30,100"})
+	want := []string{
+		"no switchport trunk allowed vlan 1,30,100",
+		"no switchport trunk native vlan 1",
+		"no switchport mode trunk",
+		"type wan",
+		"wan-name wan4",
+		"ip address dhcp",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("WANEnableLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestWANEnableLinesNoNegationForFreshPort(t *testing.T) {
+	lines := WANEnableLines("wan3", PortVLAN{})
+	want := []string{"type wan", "wan-name wan3", "ip address dhcp"}
+	if len(lines) != len(want) {
+		t.Fatalf("WANEnableLines() = %v, want %v", lines, want)
+	}
+}
+
+func TestWANPromoteLinesUsesGivenIPModeLeaves(t *testing.T) {
+	lines := WANPromoteLines("wan2", PortVLAN{Interface: "eth4", Mode: "access", AccessVLAN: "1"}, []string{"ip address 203.0.113.5 255.255.255.0", "default-gateway 203.0.113.1 4"})
+	want := []string{
+		"no switchport access vlan 1",
+		"no switchport mode access",
+		"type wan",
+		"wan-name wan2",
+		"ip address 203.0.113.5 255.255.255.0",
+		"default-gateway 203.0.113.1 4",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("WANPromoteLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestWANRevertToLANLines(t *testing.T) {
+	lines := WANRevertToLANLines("1")
+	want := []string{
+		"no pppoe-server enable",
+		"load-balance mode disabled",
+		"type lan",
+		"switchport mode access",
+		"switchport access vlan 1",
+		"no shutdown",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("WANRevertToLANLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestLANPortAccessLinesNegatesTrunkFirst(t *testing.T) {
+	lines := LANPortAccessLines(PortVLAN{Interface: "eth5", Mode: "trunk", NativeVLAN: "1", AllowedVLANs: "1,30"}, "30")
+	want := []string{
+		"no switchport trunk allowed vlan 1,30",
+		"no switchport trunk native vlan 1",
+		"no switchport mode trunk",
+		"switchport mode access",
+		"switchport access vlan 30",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("LANPortAccessLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestLANPortTrunkLinesNegatesAccessFirst(t *testing.T) {
+	lines := LANPortTrunkLines(PortVLAN{Interface: "eth3", Mode: "access", AccessVLAN: "1"}, "1", "1,30,100")
+	want := []string{
+		"no switchport access vlan 1",
+		"no switchport mode access",
+		"switchport mode trunk",
+		"switchport trunk native vlan 1",
+		"switchport trunk allowed vlan 1,30,100",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("LANPortTrunkLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestLANPortAccessLinesNoNegationForFreshPort(t *testing.T) {
+	lines := LANPortAccessLines(PortVLAN{}, "1")
+	want := []string{"switchport mode access", "switchport access vlan 1"}
+	if len(lines) != len(want) {
+		t.Fatalf("LANPortAccessLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestLANPortShutdownLine(t *testing.T) {
+	if got, want := LANPortShutdownLine(true), "no shutdown"; got != want {
+		t.Errorf("LANPortShutdownLine(true) = %q, want %q", got, want)
+	}
+	if got, want := LANPortShutdownLine(false), "shutdown"; got != want {
+		t.Errorf("LANPortShutdownLine(false) = %q, want %q", got, want)
+	}
+}
+
+func TestManagementLineBuilders(t *testing.T) {
+	if got, want := HostnameLine("NSE-Caravan"), "hostname NSE-Caravan"; got != want {
+		t.Errorf("HostnameLine() = %q, want %q", got, want)
+	}
+	if got, want := TimezoneLine("Europe/London"), "timezone Europe/London"; got != want {
+		t.Errorf("TimezoneLine() = %q, want %q", got, want)
+	}
+	if got, want := NTPServerLine("time.google.com"), "ntp server time.google.com"; got != want {
+		t.Errorf("NTPServerLine() = %q, want %q", got, want)
+	}
+	lines := SyslogHostLines("172.22.0.9", "514", 5)
+	want := []string{"logging host 172.22.0.9 514", "logging syslog 5"}
+	if len(lines) != len(want) {
+		t.Fatalf("SyslogHostLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestDNSLineBuilders(t *testing.T) {
+	if got, want := DNSFilterModeLine("filtering"), "filter-mode filtering"; got != want {
+		t.Errorf("DNSFilterModeLine() = %q, want %q", got, want)
+	}
+	if got, want := DNSOverrideLine(false), "no dns-override"; got != want {
+		t.Errorf("DNSOverrideLine(false) = %q, want %q", got, want)
+	}
+	if got, want := DNSOverrideLine(true), "dns-override"; got != want {
+		t.Errorf("DNSOverrideLine(true) = %q, want %q", got, want)
+	}
+	if got, want := DNSServerLine(true), "ip dns server"; got != want {
+		t.Errorf("DNSServerLine(true) = %q, want %q", got, want)
+	}
+	if got, want := DNSServerLine(false), "no ip dns server"; got != want {
+		t.Errorf("DNSServerLine(false) = %q, want %q", got, want)
+	}
+}
+
+func TestNameServerLinesDiffsCurrentAndDesired(t *testing.T) {
+	lines := NameServerLines([]string{"1.1.1.2", "8.8.8.8"}, []string{"8.8.8.8", "9.9.9.9"})
+	want := []string{"no ip name-server 1.1.1.2", "ip name-server 9.9.9.9"}
+	if len(lines) != len(want) {
+		t.Fatalf("NameServerLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestNameServerLinesNoChange(t *testing.T) {
+	lines := NameServerLines([]string{"1.1.1.2"}, []string{"1.1.1.2"})
+	if len(lines) != 0 {
+		t.Fatalf("expected no lines for identical lists, got %v", lines)
+	}
+}
+
+func TestIPSLineBuilders(t *testing.T) {
+	if got, want := IPSEnableLine(true), "intrusion-prevention"; got != want {
+		t.Errorf("IPSEnableLine(true) = %q, want %q", got, want)
+	}
+	if got, want := IPSEnableLine(false), "no intrusion-prevention"; got != want {
+		t.Errorf("IPSEnableLine(false) = %q, want %q", got, want)
+	}
+	if got, want := IPSModeLine("prevention"), "intrusion-prevention mode prevention"; got != want {
+		t.Errorf("IPSModeLine() = %q, want %q", got, want)
+	}
+	if got, want := IPSRuleSetLine("balanced"), "intrusion-prevention rule-set balanced"; got != want {
+		t.Errorf("IPSRuleSetLine() = %q, want %q", got, want)
+	}
+	if got, want := IPSRuleTypeLine("snort-vrt"), "intrusion-prevention rule-type snort-vrt"; got != want {
+		t.Errorf("IPSRuleTypeLine() = %q, want %q", got, want)
+	}
+	if got, want := IPSAutoUpdateLine(true), "intrusion-prevention auto-update"; got != want {
+		t.Errorf("IPSAutoUpdateLine(true) = %q, want %q", got, want)
+	}
+	if got, want := IPSAutoUpdateIntervalLine("12-hours"), "intrusion-prevention auto-update interval 12-hours"; got != want {
+		t.Errorf("IPSAutoUpdateIntervalLine() = %q, want %q", got, want)
+	}
+}
+
+func TestVPNLineBuilders(t *testing.T) {
+	if got, want := TailscaleEnableLine(true), "tailscale"; got != want {
+		t.Errorf("TailscaleEnableLine(true) = %q, want %q", got, want)
+	}
+	if got, want := TailscaleEnableLine(false), "no tailscale"; got != want {
+		t.Errorf("TailscaleEnableLine(false) = %q, want %q", got, want)
+	}
+	if got, want := TailscaleAcceptRoutesLine(true), "tailscale accept-routes"; got != want {
+		t.Errorf("TailscaleAcceptRoutesLine(true) = %q, want %q", got, want)
+	}
+	if got, want := TailscaleAdvertiseRoutesLine([]string{"172.21.0.0/16", "172.23.0.0/16"}), "tailscale advertise-routes 172.21.0.0/16,172.23.0.0/16"; got != want {
+		t.Errorf("TailscaleAdvertiseRoutesLine() = %q, want %q", got, want)
+	}
+	if got, want := SiteToSiteEnableLine(true), "site-to-site-vpn"; got != want {
+		t.Errorf("SiteToSiteEnableLine(true) = %q, want %q", got, want)
+	}
+	if got, want := RADIUSModeLine(true), "radius-server mode enable"; got != want {
+		t.Errorf("RADIUSModeLine(true) = %q, want %q", got, want)
+	}
+	lines := BuildRADIUSClientLines(1, RADIUSClientLines("Demo1", "s3cret", "172.22.0.0", 16))
+	want := []string{
+		"radius-server client-list 1",
+		"name Demo1",
+		"secret s3cret",
+		"address 172.22.0.0",
+		"prefix-length 16",
+		"exit",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("BuildRADIUSClientLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestDOSProtectionLineBuilders(t *testing.T) {
+	if got, want := DOSProtectionIPSpoofLine(true), "firewall dos-protection ip-spoof"; got != want {
+		t.Errorf("DOSProtectionIPSpoofLine(true) = %q, want %q", got, want)
+	}
+	if got, want := DOSProtectionIPSpoofLine(false), "no firewall dos-protection ip-spoof"; got != want {
+		t.Errorf("DOSProtectionIPSpoofLine(false) = %q, want %q", got, want)
+	}
+	if got, want := DOSProtectionIPSpoofLogLine(true), "firewall dos-protection ip-spoof-log"; got != want {
+		t.Errorf("DOSProtectionIPSpoofLogLine(true) = %q, want %q", got, want)
+	}
+	if got, want := DOSProtectionSmurfLine(true), "firewall dos-protection smurf-attack"; got != want {
+		t.Errorf("DOSProtectionSmurfLine(true) = %q, want %q", got, want)
+	}
+	if got, want := DOSProtectionICMPFragLine(true), "firewall dos-protection icmp-frag"; got != want {
+		t.Errorf("DOSProtectionICMPFragLine(true) = %q, want %q", got, want)
+	}
+}
+
+func TestUserGroupLineBuilders(t *testing.T) {
+	lines := BuildUserGroupLines(64, []string{UserGroupNameLine("ProbeUG"), UserGroupSourceSubnetLine("10.99.0.0/24")})
+	want := []string{"group 64", "name ProbeUG", "source-subnet 10.99.0.0/24", "exit"}
+	if len(lines) != len(want) {
+		t.Fatalf("BuildUserGroupLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+	if got, want := UserGroupDeleteLine(64), "no group 64"; got != want {
+		t.Errorf("UserGroupDeleteLine() = %q, want %q", got, want)
+	}
+}
+
+func TestIPGroupLineBuilders(t *testing.T) {
+	lines := BuildIPGroupLines(1, []string{IPGroupNameLine("ProbeIG"), IPGroupAddressLine("192.168.50.0/24")})
+	want := []string{"ip group 1", "name ProbeIG", "address 192.168.50.0/24", "exit"}
+	if len(lines) != len(want) {
+		t.Fatalf("BuildIPGroupLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+	if got, want := IPGroupDeleteLine(1), "no ip group 1"; got != want {
+		t.Errorf("IPGroupDeleteLine() = %q, want %q", got, want)
+	}
+}
+
+func TestAppGroupLineBuilders(t *testing.T) {
+	lines := BuildAppGroupLines(16, []string{AppGroupNameLine("ProbeAG"), AppGroupApplicationLine("instagram")})
+	want := []string{"application-group 16", "name ProbeAG", "application instagram", "exit"}
+	if len(lines) != len(want) {
+		t.Fatalf("BuildAppGroupLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+	if got, want := AppGroupDeleteLine(16), "no application-group 16"; got != want {
+		t.Errorf("AppGroupDeleteLine() = %q, want %q", got, want)
+	}
+	if got, want := AppGroupCategoryLine("app-detect"), "category app-detect"; got != want {
+		t.Errorf("AppGroupCategoryLine() = %q, want %q", got, want)
+	}
+}
+
+func TestPPPoEEnableLinesFullConfig(t *testing.T) {
+	lines := PPPoEEnableLines(PPPoEConfig{
+		User: "isp-user", Password: "isp-pass", MTU: 1492, MSSClamp: true,
+		ACName: "AC1", ServiceName: "SVC1",
+	})
+	want := []string{
+		"pppoe-server enable",
+		"pppoe-server user isp-user",
+		"pppoe-server password isp-pass",
+		"pppoe-server mtu 1492",
+		"pppoe-server tcp-mss-clamp",
+		"pppoe-server ac-name AC1",
+		"pppoe-server service-name SVC1",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("PPPoEEnableLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestPPPoEEnableLinesOmitsOptionalFields(t *testing.T) {
+	lines := PPPoEEnableLines(PPPoEConfig{User: "u", Password: "p", MTU: 1400})
+	want := []string{
+		"pppoe-server enable",
+		"pppoe-server user u",
+		"pppoe-server password p",
+		"pppoe-server mtu 1400",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("PPPoEEnableLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestPPPoEModeLinesResetsIPAddress(t *testing.T) {
+	lines := PPPoEModeLines(PPPoEConfig{User: "u", Password: "p", MTU: 1492})
+	want := []string{
+		"pppoe-server enable",
+		"pppoe-server user u",
+		"pppoe-server password p",
+		"pppoe-server mtu 1492",
+		"ip address dhcp",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("PPPoEModeLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestPPPoEDisableLine(t *testing.T) {
+	if got, want := PPPoEDisableLine(), "no pppoe-server enable"; got != want {
+		t.Errorf("PPPoEDisableLine() = %q, want %q", got, want)
+	}
+}
+
+func TestConnectionHealthLineBuilders(t *testing.T) {
+	if got, want := WANNumHostsFailLine(1), "load-balance num-hosts-fail-interface-down 1"; got != want {
+		t.Errorf("WANNumHostsFailLine() = %q, want %q", got, want)
+	}
+	if got, want := WANPingFailureDetectTimeLine(5), "load-balance ping failure-detect-time 5"; got != want {
+		t.Errorf("WANPingFailureDetectTimeLine() = %q, want %q", got, want)
+	}
+	if got, want := WANPingIntervalLine(2), "load-balance ping interval 2"; got != want {
+		t.Errorf("WANPingIntervalLine() = %q, want %q", got, want)
+	}
+	if got, want := WANPingTimeoutLine(2), "load-balance ping timeout 2"; got != want {
+		t.Errorf("WANPingTimeoutLine() = %q, want %q", got, want)
+	}
+}
+
+func TestDeviceAccessPingLine(t *testing.T) {
+	if got, want := DeviceAccessPingLine(true), "device-access allowed-service ping"; got != want {
+		t.Errorf("DeviceAccessPingLine(true) = %q, want %q", got, want)
+	}
+	if got, want := DeviceAccessPingLine(false), "no device-access allowed-service ping"; got != want {
+		t.Errorf("DeviceAccessPingLine(false) = %q, want %q", got, want)
+	}
+}
+
+func TestDHCPPoolLinesOmitsEmptyDomain(t *testing.T) {
+	lines := DHCPPoolLines(DHCPScope{
+		StartIP: "172.21.1.30", EndIP: "172.21.1.250",
+		Router: "172.21.0.1", DNS: "172.21.0.1",
+		LeaseDays: 0, LeaseHours: 2, LeaseMins: 0,
+		NetworkIP: "172.21.0.0", NetworkMask: "255.255.0.0",
+	})
+	for _, l := range lines {
+		if l == "domain-name " {
+			t.Fatalf("should not emit an empty domain-name line: %v", lines)
+		}
+	}
+	if len(lines) != 5 {
+		t.Fatalf("expected 5 lines without domain, got %d: %v", len(lines), lines)
+	}
+}

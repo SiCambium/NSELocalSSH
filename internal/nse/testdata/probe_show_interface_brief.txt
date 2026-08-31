@@ -1,0 +1,9 @@
+show interface brief
+ INTERFACE     MAC                STATUS       SPEED      DUPLEX ADVERTISING
+ eth1          30-CB-C7-70-41-30  UP           1000M      FULL   10,100,1000 
+ eth2          30-CB-C7-70-41-31  DOWN         N/A        N/A    N/A         
+ eth3          30-CB-C7-70-41-32  DOWN         N/A        N/A    N/A         
+ eth4          30-CB-C7-70-41-33  DOWN         N/A        N/A    N/A         
+ eth5          30-CB-C7-70-41-34  DOWN         N/A        N/A    N/A         
+ eth6          30-CB-C7-70-41-35  UP           1000M      FULL   10,100,1000 
+NSE-Caravan(config)# 

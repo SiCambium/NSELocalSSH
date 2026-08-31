@@ -1,0 +1,16 @@
+show conntrack
+    
+Connection Track Entries:
+
+==========================================================================================================================================
+
+
+==========================================================================================================================================
+
+Protocol | TTL | Origin_Src | Origin_Dst | Origin_Src_Port | Origin_Dst_Port | TX_packets | TX_bytes | RX_packets | RX_bytes | Nated_IP | Nated_Port | TCP_State | Direction | Application | Host Name 
+TCP | 3590 | 172.23.1.36 | 34.238.200.39 | 56345 | 443 | 24 | 5835 | 24 | 9386 | 192.168.1.171 | 56345 | ESTABLISHED | LAN TO WAN | amazon_aws |  
+UDP | 29 | 172.31.255.2 | 172.237.61.197 | 51878 | 3478 | 1 | 68 | 1 | 60 |  | 0 | N/A | UNKNOWN | icmp |  
+TCP | 3599 | 172.23.1.36 | 34.192.78.162 | 56445 | 443 | 194 | 57039 | 188 | 21232 | 192.168.1.171 | 56445 | ESTABLISHED | LAN TO WAN | amazon_aws | laptop 
+UDP | 26 | 172.23.1.36 | 172.23.0.1 | 52738 | 53 | 1 | 73 | 1 | 89 |  | 0 | N/A | LAN TO LAN | dns |  
+TCP | 88 | 172.23.1.38 | 1.0.0.2 | 53620 | 443 | 36 | 6410 | 56 | 16362 | 192.168.1.171 | 53620 | TIME_WAIT | LAN TO WAN | doh |  
+NSE-Caravan(config)#

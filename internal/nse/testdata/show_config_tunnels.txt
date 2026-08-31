@@ -1,0 +1,27 @@
+show config
+!
+interface eth 1
+ type wan
+ wan-name wan1
+ ip nat inside
+ starlink
+ starlink dish-mode router
+ starlink dish-ip 192.168.100.1
+ starlink dish-port 9200
+ starlink dish-grpc-reflection-ip 192.168.1.1
+ starlink dish-grpc-reflection-port 9000
+ ip address dhcp
+!
+vpn-server
+ interface wan1
+ shared-secret $crypt$1$REDACTED
+ address-range 172.22.200.10 172.22.200.30
+ mfa
+ exit
+!
+tailscale
+tailscale auth-key $crypt$1$REDACTED
+tailscale accept-routes
+tailscale advertise-routes 172.21.0.0/16,172.23.0.0/16
+!
+NSE-Caravan(config)# 

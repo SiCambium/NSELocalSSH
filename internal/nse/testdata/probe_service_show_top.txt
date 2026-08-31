@@ -1,0 +1,52 @@
+service show top
+[H[JMem: 742732K used, 3158308K free, 60436K shrd, 3004K buff, 255740K cached
+CPU:   0% usr   2% sys   0% nic  97% idle   0% io   0% irq   0% sirq
+Load average: 0.08 0.04 0.01 3/217 22658
+[7m  PID  PPID USER     STAT   VSZ %VSZ %CPU COMMAND[m
+ 1305     1 root     S    1403m  36%   1% /usr/sbin/goavc --instance 1 --dpiFullQueue 50 --dpiCacheQueue 51 --dpiNetlinkReceiveBufferSize 32 --dpiNetlinkQueueSize 20000 --dpiCacheNetlinkReceiveBufferS
+22658 22656 root     R     1904   0%   1% /usr/bin/top -n1
+ 1310     1 root     S    1402m  36%   0% /usr/bin/utm -f
+ 2039     1 root     S    1333m  34%   0% tailscaled --tun=tailscale0 --state=/mnt/flash/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock
+ 1314     1 root     S    1255m  32%   0% /usr/bin/connectedclients -f
+16877     1 root     S    1245m  32%   0% /usr/bin/godns -c /var/run/etc/godns.conf
+ 1309     1 root     S    1244m  32%   0% /usr/bin/wanlb -f
+ 1304     1 root     S     577m  15%   0% /usr/sbin/infrad -d
+ 1991     1 root     S    51740   1%   0% /usr/sbin/radiusd -f -l /var/log/radiusd.log
+22656 22653 root     S    22904   1%   0% -clish
+ 1478     1 root     S    22452   1%   0% /usr/bin/redis-server 127.0.0.1:6379
+ 1303     1 root     S    20976   1%   0% /usr/sbin/scmd -d
+ 1612     1 root     S    11204   0%   0% /usr/sbin/device-agent -d2
+ 1989     1 root     S     7852   0%   0% /usr/sbin/dhcpd -cf /var/run/etc/dhcp/dhcpd.conf -lf /var/lib/dhcp/leases/dhcpd.leases -f br0.1 br0.30 br0.100 br0.200
+ 1971  1959 root     S     7644   0%   0% /usr/sbin/lighttpd -D -f /etc/lighttpd/lighttpd.conf
+ 1972  1959 root     S     7644   0%   0% /usr/sbin/lighttpd -D -f /etc/lighttpd/lighttpd.conf
+ 1959     1 root     S     7588   0%   0% /usr/sbin/lighttpd -D -f /etc/lighttpd/lighttpd.conf
+ 2167  2164 root     S     6392   0%   0% /usr/libexec/ipsec/charon
+ 1115     1 root     S     6272   0%   0% /usr/sbin/rngd -r /dev/hwrng
+  325     1 root     S     6240   0%   0% /sbin/udevd -d
+ 2164     1 root     S     2044   0%   0% /usr/libexec/ipsec/starter --daemon charon --nofork
+ 1308     1 root     S     1896   0%   0% /usr/sbin/crond -c /etc/cron/crontabs -f
+ 1613     1 root     S     1892   0%   0% /sbin/syslogd -n -T 1
+ 1960     1 root     S     1892   0%   0% /usr/sbin/ntpd -n -g -d
+ 1961     1 root     S     1888   0%   0% /sbin/udhcpc -i eth1 -x hostname:NSE-Caravan -V Cambium-UTM -p /var/run/udhcpc.eth1.pid -f
+    1     0 root     S     1888   0%   0% init
+ 1111     1 root     S     1888   0%   0% /sbin/klogd -n
+ 1962     1 root     S     1888   0%   0% /sbin/udhcpc -i eth0 -x hostname:NSE-Caravan -V Cambium-UTM -p /var/run/udhcpc.eth0.pid -f
+ 1317     1 root     S     1888   0%   0% /sbin/getty -L ttyS1 115200 vt100
+ 1316     1 root     S     1888   0%   0% /sbin/getty -L ttyS0 115200 vt100
+ 1307     1 root     S     1824   0%   0% /usr/sbin/lldpd -d -H 0 -M 1 -C br0 -I eth* -i -k -l
+ 1301     1 root     S     1592   0%   0% /usr/sbin/sysmond -d
+22653  1608 root     S     1392   0%   0% /usr/sbin/dropbear -F -I 300 -w -2 9
+ 1608     1 root     S     1260   0%   0% /usr/sbin/dropbear -F -I 300 -w
+ 2232     1 root     S     1016   0%   0% xl2tpd -p /var/run/xl2tpd.pid
+  306     2 root     S      204   0%   0% bpfilter_umh
+   14     2 root     IW       0   0%   0% [rcu_preempt]
+11378     2 root     IW       0   0%   0% [kworker/1:2-eve]
+21073     2 root     IW       0   0%   0% [kworker/0:0-eve]
+19574     2 root     IW       0   0%   0% [kworker/2:2-eve]
+19925     2 root     IW       0   0%   0% [kworker/3:0-eve]
+  309     2 root     IW<      0   0%   0% [kworker/3:1H-ev]
+   98     2 root     IW<      0   0%   0% [kworker/2:1H-ev]
+   24     2 root     SW       0   0%   0% [ksoftirqd/2]
+   19     2 root     SW       0   0%   0% [ksoftirqd/1]
+   13     2 root     SW       0   0%   0% [ksoftirqd/0]
+NSE-Caravan(config)# 

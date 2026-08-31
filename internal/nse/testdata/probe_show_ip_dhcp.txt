@@ -1,0 +1,17 @@
+show ip dhcp
+
+Interface Name : ETH1
+----------------------
+siaddr=192.168.1.1
+ip=192.168.1.171
+opt61=0130cbc7704130
+domain=lan
+dns=192.168.1.1
+router=192.168.1.1
+serverid=192.168.1.1
+lease=3600
+opt59=00000a8c
+opt58=00000384
+mask=24
+subnet=255.255.255.0
+NSE-Caravan(config)# 
