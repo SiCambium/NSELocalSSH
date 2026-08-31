@@ -11,6 +11,7 @@ __pycache__/
 /cmd/nse-status/nse-status
 /cmd/nse-app/nse-app
 /dist/
+/build/
 profiles.json
 prefs.json
 known_hosts.json
