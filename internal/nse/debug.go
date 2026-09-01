@@ -64,6 +64,7 @@ func debugCommands() []DebugCommand {
 		sec("show-lldp-detail", "show lldp neighbors detail", "Neighbors", "show lldp neighbors detail", "", 0, false, false, DebugArgNone),
 		sec("show-lldp-ifaces", "show lldp interfaces", "Neighbors", "show lldp interfaces", "", 0, false, false, DebugArgNone),
 		sec("show-lldp", "show lldp neighbors", "Neighbors", "show lldp neighbors", "", 0, false, false, DebugArgNone),
+		sec("show-connected-clients", "show connected-clients", "Neighbors", "show connected-clients", "Per-host device fingerprint: type/brand/OS.", 0, false, false, DebugArgNone),
 
 		sec("show-ipv6-route", "show ipv6 route", "Routing", "show ipv6 route", "Often empty if IPv6 is unused.", 0, false, false, DebugArgNone),
 		sec("show-route", "show route", "Routing", "show route", "", 0, false, false, DebugArgNone),
@@ -79,6 +80,7 @@ func debugCommands() []DebugCommand {
 
 		sec("show-filter", "show filter", "Firewall", "show filter", "", 0, false, false, DebugArgNone),
 		sec("show-filter-global", "show filter global-filter", "Firewall", "show filter global-filter", "", 0, false, false, DebugArgNone),
+		sec("show-counters-outbound-firewall", "show counters outbound_firewall", "Firewall", "show counters outbound_firewall", "Per-rule hit counters — RuleId/Name/Comment/Packets/Bytes.", 0, false, false, DebugArgNone),
 		sec("show-config-filter", "show config filter", "Firewall", "show config filter", "", 0, false, false, DebugArgNone),
 
 		sec("show-ip-dhcp", "show ip dhcp", "DHCP", "show ip dhcp", "WAN DHCP client lease.", 0, false, false, DebugArgNone),

@@ -3,6 +3,7 @@ package nse
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -407,6 +408,116 @@ func NameServerLines(current, desired []string) []string {
 	return lines
 }
 
+// DNSLocalHostLine builds a "local-host <domain> <ip>" leaf for a static
+// DNS override inside the dns-server submode. The "local-host" command
+// name is CONFIRMED (NSE AI CLI research citing the design doc's
+// "dns_server_local_hosts" key); the <domain> <ip> argument order is
+// BEST-GUESS, inferred from the sibling "safe-search <domain> <ip>" leaf's
+// confirmed order — if it's backwards, the device rejects the whole
+// change and nothing is applied.
+func DNSLocalHostLine(domain, ip string) string {
+	return "local-host " + domain + " " + ip
+}
+
+// DNSLocalHostDeleteLine follows this device's established no-prefix
+// deletion convention; UNCONFIRMED for this specific leaf.
+func DNSLocalHostDeleteLine(domain, ip string) string {
+	return "no local-host " + domain + " " + ip
+}
+
+// DNSForwardZoneLine builds a "forward-zone <domain> <server-ip>" leaf for
+// conditional DNS forwarding inside the dns-server submode. Same
+// confirmation level as DNSLocalHostLine: command name confirmed, argument
+// order best-guess.
+func DNSForwardZoneLine(domain, server string) string {
+	return "forward-zone " + domain + " " + server
+}
+
+// DNSForwardZoneDeleteLine follows this device's established no-prefix
+// deletion convention; UNCONFIRMED for this specific leaf.
+func DNSForwardZoneDeleteLine(domain, server string) string {
+	return "no forward-zone " + domain + " " + server
+}
+
+// DNSOverrideBypassGroupLine references an IP Group that bypasses the
+// "Block external DNS servers" override (dns-override). CONFIRMED syntax
+// from NSE AI CLI research citing the design doc's
+// "dns_server_override_bypass_list" key.
+func DNSOverrideBypassGroupLine(groupName string) string {
+	return "dns-override bypass-list ip-group " + groupName
+}
+
+// DNSOverrideBypassGroupDeleteLine follows this device's established
+// no-prefix deletion convention; UNCONFIRMED for this specific leaf.
+func DNSOverrideBypassGroupDeleteLine(groupName string) string {
+	return "no dns-override bypass-list ip-group " + groupName
+}
+
+// BuildDNSFilterPolicyLines wraps leaf lines in the "dns-filter policy <N>
+// ... exit" envelope, nested inside the dns-server submode. CONFIRMED
+// structure from a live capture of this exact device's own "Ad_Blocking"
+// policy (name/safe-search/deny-sources/deny-categories leaves, closed by
+// "exit").
+func BuildDNSFilterPolicyLines(id int, leaves []string) []string {
+	out := []string{fmt.Sprintf("dns-filter policy %d", id)}
+	out = append(out, leaves...)
+	return append(out, "exit")
+}
+
+// DNSFilterPolicyDeleteLine follows this device's established no-prefix
+// deletion convention (confirmed for "no group <N>" / "no ip group <N>" /
+// "no application-group <N>"); UNCONFIRMED for this specific leaf.
+func DNSFilterPolicyDeleteLine(id int) string {
+	return fmt.Sprintf("no dns-filter policy %d", id)
+}
+
+func DNSFilterPolicyNameLine(name string) string { return "name " + name }
+
+// DNSFilterPolicySafeSearchLine's "disabled" value is CONFIRMED from a
+// live capture; "enabled" is BEST-GUESS, inferred as the natural opposite
+// value for the same leaf (the device's own capture only ever showed it
+// turned off).
+func DNSFilterPolicySafeSearchLine(enable bool) string {
+	if enable {
+		return "safe-search enabled"
+	}
+	return "safe-search disabled"
+}
+
+// DNSFilterPolicyDenySourcesAllLine is CONFIRMED from a live capture
+// ("deny-sources all").
+func DNSFilterPolicyDenySourcesAllLine() string { return "deny-sources all" }
+
+// DNSFilterPolicyDenySourcesGroupLine is BEST-GUESS, by analogy with
+// filter rules' confirmed "allowed-sources user-group <name>" leaf —
+// cnMaestro's DNS Filter Policies table offers "All" or "User Group" as
+// the source scope, and only "all" has been observed live for this leaf.
+func DNSFilterPolicyDenySourcesGroupLine(groupName string) string {
+	return "deny-sources user-group " + groupName
+}
+
+// DNSFilterPolicyDenyCategoryLine is CONFIRMED from a live capture — a
+// real policy on this device repeats one "deny-categories <category>"
+// line per category (malware-sites, spyware-and-adware, spam-urls,
+// bot-nets, keyloggers-and-monitoring, phishing-and-other-frauds are the
+// six categories actually observed; other category names are accepted
+// as free text since the device's full category vocabulary isn't
+// enumerated anywhere in the CLI reference).
+func DNSFilterPolicyDenyCategoryLine(category string) string {
+	return "deny-categories " + category
+}
+
+// DNSFilterPolicyMaxIndex is an UNCONFIRMED, conservative ceiling for
+// `dns-filter policy <N>` — no live capture or CLI reference entry gives
+// an explicit limit for this specific list. Chosen to match the other
+// confirmed 16-entry indexed lists (ip group, application-group) rather
+// than risk testing higher. Unlike WAN/management edits, a rejected or
+// out-of-range index here can't cause a device lockout (dns-filter
+// policies don't touch the management/WAN path) — worst case is a CLI
+// parser hiccup on the current SSH session, which the client already
+// recovers from by reconnecting.
+const DNSFilterPolicyMaxIndex = 16
+
 // IPSEnableLine toggles intrusion-prevention as a whole. CONFIRMED bare
 // top-level keyword; the negated form follows this device's established
 // no-prefix convention but is UNCONFIRMED.
@@ -423,17 +534,39 @@ func IPSModeLine(mode string) string {
 	return "intrusion-prevention mode " + mode
 }
 
-// IPSRuleSetLine sets the Snort rule set (e.g. "balanced"). CONFIRMED
-// top-level line form; the set of valid values beyond "balanced" is
-// unconfirmed.
+// IPSRuleSetLine sets the Snort rule tweak tier. CONFIRMED top-level line
+// form and CONFIRMED value "balanced" (real live capture); "connectivity"
+// and "security" are inferred 1:1 from cnMaestro's own 3-option "Rules"
+// dropdown and NSE AI CLI research describing this as a direct
+// pass-through value (not independently captured on the wire for those
+// two, but low-risk to offer since a wrong value is simply rejected by
+// the device rather than partially applied).
 func IPSRuleSetLine(ruleSet string) string {
 	return "intrusion-prevention rule-set " + ruleSet
 }
 
-// IPSRuleTypeLine sets the rule type (e.g. "snort-vrt"). CONFIRMED
-// top-level line form.
+// IPSRuleTypeLine sets the rule type. CONFIRMED top-level line form and
+// CONFIRMED values (via NSE AI CLI research, matching cnMaestro's own
+// rule-type dropdown 1:1): "snort-community", "snort-vrt", "et-open"
+// (cnMaestro label "emerging-threats open"), "et-pro" (cnMaestro label
+// "emerging-threats pro") — the cnMaestro labels are display text only,
+// not the real CLI values. snort-vrt and et-pro require an oinkcode (see
+// IPSOinkcodeLine); snort-community and et-open don't. Changing rule-type
+// triggers a fresh rule download and likely discards the previously
+// selected category list (unconfirmed exactly what happens to it, but
+// confirmed that categories are scoped per rule-type).
 func IPSRuleTypeLine(ruleType string) string {
 	return "intrusion-prevention rule-type " + ruleType
+}
+
+// IPSOinkcodeLine sets the oinkcode used to authenticate Snort VRT /
+// Emerging Threats Pro rule downloads. CONFIRMED CLI line
+// ("intrusion-prevention oinkcode <code>") from NSE3000-CLI-REFERENCE.md
+// and a real (redacted) capture. The code itself is a secret and is never
+// read back or logged anywhere in this app — this is a write-only field,
+// the same pattern already used for the PPPoE password.
+func IPSOinkcodeLine(code string) string {
+	return "intrusion-prevention oinkcode " + code
 }
 
 // IPSAutoUpdateLine toggles automatic rule updates. CONFIRMED bare
@@ -521,9 +654,21 @@ func BuildRADIUSClientLines(id int, leaves []string) []string {
 	return out
 }
 
+// RADIUSClientDeleteLine follows this device's established no-prefix
+// deletion convention. BEST-GUESS (high confidence) per NSE AI CLI
+// research: no live capture shows "no radius-server client-list <N>", but
+// this exact pattern ("no <command> <index>") is confirmed for every
+// other indexed list on this device (group, ip group, application-group).
+func RADIUSClientDeleteLine(id int) string {
+	return fmt.Sprintf("no radius-server client-list %d", id)
+}
+
 // RADIUSClientLines builds the leaf lines for one RADIUS client entry.
 // CONFIRMED field names and format from a real capture (name, secret,
-// address, prefix-length — a bare integer, not a dotted mask).
+// address, prefix-length — a bare integer, not a dotted mask). Editing an
+// existing client re-sends this same block at its existing index: the NSE
+// CLI is confirmed idempotent (re-issuing a config command overwrites the
+// previous leaf value, no separate edit mode) per NSE AI CLI research.
 func RADIUSClientLines(name, secret, address string, prefixLength int) []string {
 	return []string{
 		"name " + name,
@@ -781,4 +926,195 @@ func LANPortShutdownLine(enable bool) string {
 		return "no shutdown"
 	}
 	return "shutdown"
+}
+
+// LANPortSpeedLine forces a LAN port's link speed. CONFIRMED leaf and
+// enum from the CLI reference tree: "speed" takes exactly 10|100|auto —
+// notably not 1000, unlike the separate advertise leaf below. Validate
+// against LANPortSpeedValues before calling.
+func LANPortSpeedLine(speed string) string {
+	return "speed " + speed
+}
+
+// LANPortSpeedValues is the CONFIRMED enum for LANPortSpeedLine.
+var LANPortSpeedValues = []string{"10", "100", "auto"}
+
+// LANPortDuplexLine forces a LAN port's duplex mode. CONFIRMED leaf and
+// enum from the CLI reference tree: "duplex" takes exactly full|half —
+// there is no "auto" duplex value (unlike speed/advertise).
+func LANPortDuplexLine(duplex string) string {
+	return "duplex " + duplex
+}
+
+// LANPortDuplexValues is the CONFIRMED enum for LANPortDuplexLine.
+var LANPortDuplexValues = []string{"full", "half"}
+
+// LANPortAdvertiseLine sets what a LAN port advertises during
+// auto-negotiation. CONFIRMED leaf and enum from the CLI reference tree:
+// "advertise" takes 10|100|1000|auto — this is the one place gigabit is
+// selectable; the forced "speed" leaf above does not offer 1000.
+func LANPortAdvertiseLine(val string) string {
+	return "advertise " + val
+}
+
+// LANPortAdvertiseValues is the CONFIRMED enum for LANPortAdvertiseLine.
+var LANPortAdvertiseValues = []string{"10", "100", "1000", "auto"}
+
+// --- Outbound filter rules (firewall) --------------------------------
+//
+// CONFIRMED live on this device (2026-08-31): both creating a rule and
+// deleting one by precedence work exactly as below, and deleting a rule
+// does NOT renumber the ones after it — precedence gaps persist. There is
+// no confirmed way to reorder a rule in place or overwrite an
+// already-occupied precedence slot, so every edit (add, delete, move up/
+// down) is implemented the same way: delete every existing rule and
+// recreate the full list in the new order at fresh consecutive precedence
+// numbers starting at 1. This is built entirely from the two confirmed
+// primitives below, so it never needs to guess at in-place renumbering or
+// slot-overwrite behavior.
+
+// FilterRuleLayer3Line builds a "layer3-filter ..." line from structured
+// fields. CONFIRMED format and field order from a real live capture
+// ("layer3-filter deny proto any SRC/MASK SPORT DST/MASK DPORT in").
+// "deny" is the only action value ever captured; "allow" is untested but
+// safe to offer since ReplaceFilterRulesLines is applied as one sequence
+// through the safe-apply path — a rejected line fails the whole change
+// cleanly rather than partially applying. src/dst are as described on
+// FilterRuleContent.
+func FilterRuleLayer3Line(action, protocol, src, srcPort, dst, dstPort string) string {
+	return "layer3-filter " + FilterRuleContent(action, protocol, src, srcPort, dst, dstPort)
+}
+
+// FilterAddrSpec formats an IP/mask pair into the token FilterRuleContent
+// expects for a plain address-based source or destination.
+func FilterAddrSpec(addr, mask string) string {
+	return addr + "/" + mask
+}
+
+// FilterRuleContent builds just the fields portion of a layer3-filter
+// line, without the leading "layer3-filter " keyword — this is the form
+// stored in FilterRule.Rule (see parsers.go's ParseConfigFilter) and
+// reused verbatim by ReplaceFilterRulesLines when recreating a rule.
+// src and dst are each either an "IP/MASK" pair (see FilterAddrSpec) or a
+// bare group name: CONFIRMED via a real v2.3 capture that a previously
+// created User Group or IP Group's name can be used directly in the
+// address slot in place of an IP/mask pair, e.g. "layer3-filter deny
+// proto any Enterprise-Users any Guest any in" where Enterprise-Users and
+// Guest are group names, not IPs — the two forms occupy the exact same
+// position and are otherwise indistinguishable to this line builder.
+func FilterRuleContent(action, protocol, src, srcPort, dst, dstPort string) string {
+	return fmt.Sprintf("%s proto %s %s %s %s %s in", action, protocol, src, srcPort, dst, dstPort)
+}
+
+// FilterRuleDeleteLine is the CONFIRMED (live-tested) line to remove one
+// rule by precedence, issued inside "filter global-filter".
+func FilterRuleDeleteLine(precedence int) string {
+	return fmt.Sprintf("no filter precedence %d", precedence)
+}
+
+// BuildFilterRuleCreateLines returns the leaves for one rule inside
+// "filter global-filter". CONFIRMED order/syntax from a real capture.
+// unique_id always mirrors precedence — every real capture observed (the
+// device's original 3 rules, plus 2 live-tested additions) has unique_id
+// equal to precedence; there's no evidence they're ever meant to diverge.
+// contentLine is the match leaf (e.g. "layer3-filter ..." or
+// "application-group deny <name>"); extraLines are appended verbatim
+// before "exit" (e.g. a preserved "allowed-sources user-group <name>").
+func BuildFilterRuleCreateLines(precedence int, ruleName, contentLine string, extraLines ...string) []string {
+	lines := []string{
+		fmt.Sprintf("filter precedence %d", precedence),
+		fmt.Sprintf("unique_id %d", precedence),
+		"rule-name " + ruleName,
+		contentLine,
+	}
+	lines = append(lines, extraLines...)
+	return append(lines, "exit")
+}
+
+// FilterRuleApplicationGroupLine builds an "application-group <action>
+// <name>" match leaf, referencing a previously-created Application
+// Group. CONFIRMED syntax and "deny" action from a real v2.3 capture
+// (`application-group deny instagram`); "allow" is untested but offered
+// for the same reason "allow" is offered on layer3-filter — the whole
+// change is one safe-apply sequence, so a rejected value fails cleanly.
+func FilterRuleApplicationGroupLine(action, groupName string) string {
+	return "application-group " + action + " " + groupName
+}
+
+// FilterRuleCategoryControlLine builds a "category-control <category>
+// <action>" match leaf for DPI-category-based filtering. CONFIRMED
+// syntax from a real v2.3 capture, but only the "deny-takeover" action
+// value was actually observed there (and that capture's own context
+// suggests deny-takeover may be a failover-policy-specific variant, not
+// this table's plain block/allow). "deny"/"allow" are offered here as
+// the natural fit for a plain outbound filter rule, by analogy with
+// every other rule kind in this table — unconfirmed, but safe-apply
+// protected the same way "allow" already is elsewhere in this file.
+func FilterRuleCategoryControlLine(category, action string) string {
+	return "category-control " + category + " " + action
+}
+
+// BuildFilterGlobalFilterLines wraps leaf lines in the confirmed
+// "filter global-filter ... exit" envelope. Leaves "stateful" and
+// "application-control" (separate top-level toggles inside this block)
+// alone — this never touches them, so they persist unchanged.
+func BuildFilterGlobalFilterLines(leaves []string) []string {
+	out := append([]string{"filter global-filter"}, leaves...)
+	return append(out, "exit")
+}
+
+// ReplaceFilterRulesLines returns the full sequence to delete every rule
+// in current and recreate newOrder at fresh consecutive precedence
+// numbers starting at 1, preserving each rule's name and raw
+// layer3-filter line exactly. See the package-level note above for why
+// every edit goes through a full delete-and-recreate rather than
+// in-place renumbering.
+func ReplaceFilterRulesLines(current []FilterRule, newOrder []FilterRule) []string {
+	var leaves []string
+	for _, r := range current {
+		precedence, _ := strconv.Atoi(r.Precedence)
+		leaves = append(leaves, FilterRuleDeleteLine(precedence))
+	}
+	for i, r := range newOrder {
+		leaves = append(leaves, BuildFilterRuleCreateLines(i+1, r.Name, r.FullLine(), r.Extra...)...)
+	}
+	return BuildFilterGlobalFilterLines(leaves)
+}
+
+// --- GEO IP filtering --------------------------------------------------
+//
+// CONFIRMED via NSE AI CLI research (2026-08-31) from the CLI reference
+// tree and design docs — not from a live capture, since this device has
+// never had GEO IP filtering configured. direction is "inbound"
+// (cnMaestro's "WAN to LAN Filters") or "outbound" ("LAN to WAN
+// Filters"); mode is "allow" (cnMaestro "Allow Only (Deny by default)"),
+// "block" ("Deny Only (Allow by default)"), or "none".
+
+// GeoIPModeLine sets the GEO IP filtering mode for one direction.
+func GeoIPModeLine(direction, mode string) string {
+	return fmt.Sprintf("firewall geo-ip-restrictions %s mode %s", direction, mode)
+}
+
+// GeoIPCountriesLine sets the full country list for one direction in one
+// line — CONFIRMED as a whole-value set (not additive), matching every
+// other single-line list setting already confirmed elsewhere in this
+// CLI (e.g. WAN monitor-hosts). Countries are ISO 3166-1 alpha-2 codes.
+func GeoIPCountriesLine(direction string, countries []string) string {
+	return fmt.Sprintf("firewall geo-ip-restrictions %s countries %s", direction, strings.Join(countries, ","))
+}
+
+// GeoIPExceptionAddLine adds one always-allowed IP range exception for
+// one direction. CONFIRMED line form; repeatable — each call adds one
+// more range rather than replacing the list.
+func GeoIPExceptionAddLine(direction, startIP, endIP string) string {
+	return fmt.Sprintf("firewall geo-ip-allowlist %s address-range start-address end-address %s %s", direction, startIP, endIP)
+}
+
+// GeoIPExceptionDeleteLine removes one exception by its exact start/end
+// pair. UNCONFIRMED negation form (follows this CLI's established
+// no-prefix convention for a fully self-contained, non-indexed leaf
+// line); applied through the safe-apply path so a rejection fails
+// cleanly rather than partially applying.
+func GeoIPExceptionDeleteLine(direction, startIP, endIP string) string {
+	return "no " + GeoIPExceptionAddLine(direction, startIP, endIP)
 }

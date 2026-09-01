@@ -26,8 +26,53 @@ type Server struct {
 	wanPortSet map[string]bool
 	wanPortAt  time.Time
 
+	threatMu    sync.Mutex
+	threatCache ThreatSummary
+	threatAt    time.Time
+
 	applierOnce sync.Once
 	applier     *SafeApplier
+
+	ipOrgCacheOnce sync.Once
+	ipOrgCache     *ipOrgCache
+}
+
+// ThreatSummary is the small, secret-free subset of Threat Protection
+// state shown on the Overview tab — deliberately just the fields already
+// exposed read-only by /api/config/threat, no oinkcode or category list.
+type ThreatSummary struct {
+	Enabled        bool   `json:"enabled"`
+	Mode           string `json:"mode"`
+	RuleType       string `json:"rule_type"`
+	RuleSet        string `json:"rule_set"`
+	AutoUpdate     bool   `json:"auto_update"`
+	UpdateInterval string `json:"update_interval"`
+}
+
+// threatSummary is cached for 30s for the same reason as wanPorts(): the
+// Overview tab polls every few seconds, and this data rarely changes.
+// Returns the last-known value (zero value if never fetched successfully)
+// on failure so a transient error doesn't blank the dashboard.
+func (s *Server) threatSummary() ThreatSummary {
+	s.threatMu.Lock()
+	defer s.threatMu.Unlock()
+	if time.Since(s.threatAt) < 30*time.Second {
+		return s.threatCache
+	}
+	cfg, err := FetchCloudConfig(s.Client, 10*time.Second)
+	if err != nil {
+		return s.threatCache
+	}
+	s.threatCache = ThreatSummary{
+		Enabled:        cfg.IPS,
+		Mode:           cfg.IPSMode,
+		RuleType:       cfg.IPSRuleType,
+		RuleSet:        cfg.IPSRuleSet,
+		AutoUpdate:     cfg.IPSAutoUpdate,
+		UpdateInterval: cfg.IPSUpdateInterval,
+	}
+	s.threatAt = time.Now()
+	return s.threatCache
 }
 
 // wanPorts returns the set of CLI port names ("eth1") currently configured
@@ -187,14 +232,15 @@ func (s *Server) handleOverview(w http.ResponseWriter, _ *http.Request) {
 	ifaces := ParseIfconfig(ifc, s.wanPorts())
 	rates, sampled, intervalMs := s.withRates(ifaces)
 	writeJSON(w, map[string]any{
-		"version":         ParseVersion(ver),
-		"clock":           ParseClock(clock),
-		"remote":          ParseRemote(remote).Summary,
-		"memory":          ParseMemory(mem),
-		"cpu":             ParseTop(top),
-		"wan_throughput":  wanThroughput(rates),
-		"rates_ready":     sampled,
-		"sample_interval": intervalMs,
+		"version":           ParseVersion(ver),
+		"clock":             ParseClock(clock),
+		"remote":            ParseRemote(remote).Summary,
+		"memory":            ParseMemory(mem),
+		"cpu":               ParseTop(top),
+		"wan_throughput":    wanThroughput(rates),
+		"rates_ready":       sampled,
+		"sample_interval":   intervalMs,
+		"threat_protection": s.threatSummary(),
 	})
 }
 
@@ -266,7 +312,8 @@ func (s *Server) handleConntrack(w http.ResponseWriter, _ *http.Request) {
 	if !ok {
 		return
 	}
-	live := ReadPrefs(s.prefsFile()).LiveConntrack
+	prefs := ReadPrefs(s.prefsFile())
+	live := prefs.LiveConntrack
 	parsed := []ConntrackFlow{}
 	if live {
 		flows, ok := s.cli(w, "show conntrack", 30*time.Second)
@@ -279,9 +326,10 @@ func (s *Server) handleConntrack(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 	writeJSON(w, map[string]any{
-		"summary":      ParseConntrack(summary),
-		"flows":        parsed,
-		"live_enabled": live,
+		"summary":           ParseConntrack(summary),
+		"flows":             parsed,
+		"live_enabled":      live,
+		"ip_lookup_enabled": prefs.IPLookup,
 	})
 }
 
@@ -387,6 +435,16 @@ func (s *Server) handleNeighbors(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+func (s *Server) handleDevices(w http.ResponseWriter, _ *http.Request) {
+	raw, ok := s.cli(w, "show connected-clients", 20*time.Second)
+	if !ok {
+		return
+	}
+	writeJSON(w, map[string]any{
+		"clients": orEmpty(ParseConnectedClients(raw)),
+	})
+}
+
 func (s *Server) handleTraffic(w http.ResponseWriter, _ *http.Request) {
 	apps, ok := s.cli(w, "show application-statistics by-application", 30*time.Second)
 	if !ok {
@@ -396,19 +454,9 @@ func (s *Server) handleTraffic(w http.ResponseWriter, _ *http.Request) {
 	if !ok {
 		return
 	}
-	counters, ok := s.cli(w, "show filter global-filter", 20*time.Second)
-	if !ok {
-		return
-	}
-	rules, ok := s.cli(w, "show config filter", 20*time.Second)
-	if !ok {
-		return
-	}
 	writeJSON(w, map[string]any{
-		"by_application":  ParseAppStats(apps),
-		"by_category":     ParseAppStats(cats),
-		"filter_counters": ParseFilterCounters(counters),
-		"filter_rules":    ParseConfigFilter(rules),
+		"by_application": ParseAppStats(apps),
+		"by_category":    ParseAppStats(cats),
 	})
 }
 
@@ -426,10 +474,6 @@ func (s *Server) handleTunnels(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	cfg := ParseTunnelConfig(cfgRaw)
-	ts, ok := s.cli(w, "show tailscale status", 20*time.Second)
-	if !ok {
-		return
-	}
 	wg, ok := s.cli(w, "show vpn-sessions wireguard", 20*time.Second)
 	if !ok {
 		return
@@ -462,11 +506,43 @@ func (s *Server) handleTunnels(w http.ResponseWriter, _ *http.Request) {
 	wgS.Kind, l2S.Kind, ipS.Kind = "wireguard", "l2tp", "ipsec"
 	writeJSON(w, map[string]any{
 		"config":        cfg,
-		"tailscale":     ParseTailscaleStatus(ts),
 		"vpn":           []VPNSessions{wgS, l2S, ipS},
 		"starlink_ping": ParsePing(pingRaw),
 		"interfaces":    ParseInterfaceBrief(ifaces),
 		"wan_dhcp":      ParseIPDHCP(dhcp),
+	})
+}
+
+// handleTailscale serves Tailscale/Tailnet status on its own tab,
+// split out from handleTunnels per the user's request to keep it
+// separate from the client-VPN/Starlink "VPN" tab.
+func (s *Server) handleTailscale(w http.ResponseWriter, _ *http.Request) {
+	cfgRaw, ok := s.cli(w, "show config", 25*time.Second)
+	if !ok {
+		return
+	}
+	cfg := ParseTunnelConfig(cfgRaw)
+	ts, ok := s.cli(w, "show tailscale status", 20*time.Second)
+	if !ok {
+		return
+	}
+	writeJSON(w, map[string]any{
+		"config": cfg.Tailscale,
+		"peers":  ParseTailscaleStatus(ts),
+	})
+}
+
+// handleFirewallCounters serves per-rule hit counters from "show
+// counters outbound_firewall" — the same data as cnMaestro's Firewall
+// Counters > Outbound Firewall table (RuleId/Name/Comment/Packets/Bytes,
+// including the device's own human-readable rule summary as Comment).
+func (s *Server) handleFirewallCounters(w http.ResponseWriter, _ *http.Request) {
+	countersRaw, ok := s.cli(w, "show counters outbound_firewall", 20*time.Second)
+	if !ok {
+		return
+	}
+	writeJSON(w, map[string]any{
+		"outbound_firewall": ParseOutboundFirewallCounters(countersRaw),
 	})
 }
 
@@ -505,6 +581,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", s.handleHealth)
 	mux.HandleFunc("/api/settings", s.handleSettings)
+	mux.HandleFunc("/api/iplookup", s.handleIPLookup)
 	mux.HandleFunc("/api/overview", s.handleOverview)
 	mux.HandleFunc("/api/details", s.handleDetails)
 	mux.HandleFunc("/api/throughput", s.handleThroughput)
@@ -515,8 +592,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/dhcp", s.handleDHCP)
 	mux.HandleFunc("/api/vlans", s.handleVLANs)
 	mux.HandleFunc("/api/neighbors", s.handleNeighbors)
+	mux.HandleFunc("/api/devices", s.handleDevices)
 	mux.HandleFunc("/api/traffic", s.handleTraffic)
 	mux.HandleFunc("/api/tunnels", s.handleTunnels)
+	mux.HandleFunc("/api/tailscale", s.handleTailscale)
+	mux.HandleFunc("/api/firewallcounters", s.handleFirewallCounters)
 	mux.HandleFunc("/api/events", s.handleEvents)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/debug", s.handleDebug)

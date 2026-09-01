@@ -8,6 +8,7 @@ import (
 
 type Prefs struct {
 	LiveConntrack bool `json:"live_conntrack"`
+	IPLookup      bool `json:"ip_lookup"`
 }
 
 func PrefsPath(settingsPath string) string {

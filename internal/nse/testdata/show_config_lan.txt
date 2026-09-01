@@ -10,6 +10,9 @@ interface eth 3
  type lan
  switchport mode access
  switchport access vlan 1
+ speed 100
+ duplex full
+ advertise 1000
  no shutdown
  exit
 !
@@ -18,7 +21,7 @@ interface eth 5
  switchport mode trunk
  switchport trunk native vlan 1
  switchport trunk allowed vlan 1,30,100,200
- no shutdown
+ shutdown
  exit
 !
 interface vlan 1

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -126,6 +127,11 @@ type networkRequest struct {
 	NativeVLAN   string `json:"native_vlan"`
 	AllowedVLANs string `json:"allowed_vlans"`
 	Enabled      *bool  `json:"enabled"`
+
+	// LAN port PHY fields, used by "port_speed".
+	Speed     string `json:"speed"`     // "10" | "100" | "auto"
+	Duplex    string `json:"duplex"`    // "full" | "half"
+	Advertise string `json:"advertise"` // "10" | "100" | "1000" | "auto"
 }
 
 // currentPortVLAN looks up a single eth port's existing switchport config
@@ -181,7 +187,7 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 		writeSettingsError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	isPortAction := req.Action == "port_switchport" || req.Action == "port_shutdown"
+	isPortAction := req.Action == "port_switchport" || req.Action == "port_shutdown" || req.Action == "port_speed"
 	if !isPortAction && req.VLANID < 1 {
 		writeSettingsError(w, http.StatusBadRequest, "vlan_id is required")
 		return
@@ -235,6 +241,39 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 		block = ConfigBlock{
 			Name:  "lan-port-shutdown",
 			Lines: BuildInterfaceEthLines(req.Port, []string{LANPortShutdownLine(*req.Enabled)}),
+			Risk:  ClassifyRisk("lan-port"),
+			Keys:  []string{fmt.Sprintf("interface eth %d", req.Port)},
+		}
+	case "port_speed":
+		if req.Speed == "" && req.Duplex == "" && req.Advertise == "" {
+			writeSettingsError(w, http.StatusBadRequest, "at least one of speed, duplex, or advertise is required")
+			return
+		}
+		var leaves []string
+		if req.Speed != "" {
+			if !slices.Contains(LANPortSpeedValues, req.Speed) {
+				writeSettingsError(w, http.StatusBadRequest, "speed must be one of: "+strings.Join(LANPortSpeedValues, ", "))
+				return
+			}
+			leaves = append(leaves, LANPortSpeedLine(req.Speed))
+		}
+		if req.Duplex != "" {
+			if !slices.Contains(LANPortDuplexValues, req.Duplex) {
+				writeSettingsError(w, http.StatusBadRequest, "duplex must be one of: "+strings.Join(LANPortDuplexValues, ", "))
+				return
+			}
+			leaves = append(leaves, LANPortDuplexLine(req.Duplex))
+		}
+		if req.Advertise != "" {
+			if !slices.Contains(LANPortAdvertiseValues, req.Advertise) {
+				writeSettingsError(w, http.StatusBadRequest, "advertise must be one of: "+strings.Join(LANPortAdvertiseValues, ", "))
+				return
+			}
+			leaves = append(leaves, LANPortAdvertiseLine(req.Advertise))
+		}
+		block = ConfigBlock{
+			Name:  "lan-port-speed",
+			Lines: BuildInterfaceEthLines(req.Port, leaves),
 			Risk:  ClassifyRisk("lan-port"),
 			Keys:  []string{fmt.Sprintf("interface eth %d", req.Port)},
 		}

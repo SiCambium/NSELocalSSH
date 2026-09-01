@@ -8,11 +8,31 @@ import (
 
 // handleConfigThreat serves and edits the confirmed-syntax subset of
 // Threat Protection (intrusion-prevention): enable, mode, rule set, rule
-// type, and auto-update. Per-category rule enable/disable
-// (snort_vrt_rule_category) is read-only for now: it's a list like
-// name_server, but unlike name_server its exact per-item CLI verb (add vs.
-// toggle) has never been observed, so it isn't guessed at here. The IPS
-// oinkcode is a secret and is never modeled at all (see cloudconfig.go).
+// type, oinkcode, and auto-update. Per-category rule enable/disable
+// (snort_vrt_rule_category) is deliberately read-only, and NOT just
+// because the CLI syntax was unconfirmed — a second round of NSE AI
+// research (2026-08-31) found the actual command path:
+//
+//	intrusion-prevention rule-type et-open rule-category emerging-activex
+//	intrusion-prevention rule-type et-pro rule-category emerging-activex
+//	intrusion-prevention rule-type snort-vrt rule-category <name>
+//
+// is CONFIRMED real and typeable for et-open/et-pro/snort-vrt (not for
+// snort-community, which has no rule-category child at all), one category
+// per line with no multi-value or bulk-replace form. But per that same
+// research, the firmware's own rule-processing engine has an unimplemented
+// TODO stub for per-category SID handling ("sid processing not
+// implemented yet for categories", snort.py:989-997) — meaning a category
+// toggle can be accepted into config without ever changing which Snort
+// rules actually load. Building an interactive on/off control here would
+// give a false sense of working protection, which is worse than not
+// having the control at all, so this stays read-only until that firmware
+// gap is independently verified fixed. The rule-set tier (see
+// IPSRuleSetLine) is the confirmed-working way to broaden/narrow
+// coverage on this firmware. The oinkcode is accepted write-only (see
+// IPSOinkcodeLine) and is never read back, logged, or included in the GET
+// response — same secret-handling policy as everywhere else in this app
+// (see cloudconfig.go's file-level doc comment).
 func (s *Server) handleConfigThreat(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
@@ -45,9 +65,10 @@ type threatRequest struct {
 	Action   string `json:"action"`
 	Enable   *bool  `json:"enable"`
 	Mode     string `json:"mode"`     // "prevention" | "detection"
-	RuleSet  string `json:"rule_set"` // e.g. "balanced"
+	RuleSet  string `json:"rule_set"` // "connectivity" | "balanced" | "security"
 	RuleType string `json:"rule_type"`
 	Interval string `json:"interval"` // e.g. "12-hours"
+	Code     string `json:"code"`     // oinkcode, write-only
 }
 
 func (s *Server) handlePostConfigThreat(w http.ResponseWriter, r *http.Request) {
@@ -78,17 +99,27 @@ func (s *Server) handlePostConfigThreat(w http.ResponseWriter, r *http.Request) 
 		}
 		lines = []string{IPSModeLine(req.Mode)}
 	case "rule_set":
-		if req.RuleSet == "" {
-			writeSettingsError(w, http.StatusBadRequest, "rule_set is required")
+		switch req.RuleSet {
+		case "connectivity", "balanced", "security":
+		default:
+			writeSettingsError(w, http.StatusBadRequest, "rule_set must be 'connectivity', 'balanced', or 'security'")
 			return
 		}
 		lines = []string{IPSRuleSetLine(req.RuleSet)}
 	case "rule_type":
-		if req.RuleType == "" {
-			writeSettingsError(w, http.StatusBadRequest, "rule_type is required")
+		switch req.RuleType {
+		case "snort-community", "snort-vrt", "et-open", "et-pro":
+		default:
+			writeSettingsError(w, http.StatusBadRequest, "rule_type must be 'snort-community', 'snort-vrt', 'et-open', or 'et-pro'")
 			return
 		}
 		lines = []string{IPSRuleTypeLine(req.RuleType)}
+	case "oinkcode":
+		if req.Code == "" {
+			writeSettingsError(w, http.StatusBadRequest, "code is required")
+			return
+		}
+		lines = []string{IPSOinkcodeLine(req.Code)}
 	case "auto_update":
 		if req.Enable == nil {
 			writeSettingsError(w, http.StatusBadRequest, "enable is required")

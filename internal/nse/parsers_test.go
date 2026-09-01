@@ -236,6 +236,100 @@ func TestParseConfigFilter(t *testing.T) {
 	}
 }
 
+func TestParseConfigFilterDPIKindsAndExtra(t *testing.T) {
+	raw := `show config filter
+!
+filter  global-filter
+  stateful
+  application-control
+  filter precedence 1
+     unique_id 1
+     rule-name rule_apps
+     application-group deny Social-Media
+     allowed-sources user-group Enterprise-Users
+     exit
+  filter precedence 2
+     unique_id 2
+     rule-name rule_cat
+     category-control Gambling deny-takeover
+     exit
+!
+NSE-Caravan(config)# `
+	rows := ParseConfigFilter(raw)
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows: %+v", len(rows), rows)
+	}
+	appRule := rows[0]
+	if appRule.Kind != "application_group" || appRule.Rule != "application-group deny Social-Media" {
+		t.Fatalf("appRule = %+v", appRule)
+	}
+	if len(appRule.Extra) != 1 || appRule.Extra[0] != "allowed-sources user-group Enterprise-Users" {
+		t.Fatalf("appRule.Extra = %+v", appRule.Extra)
+	}
+	if got := appRule.FullLine(); got != "application-group deny Social-Media" {
+		t.Fatalf("appRule.FullLine() = %q", got)
+	}
+	catRule := rows[1]
+	if catRule.Kind != "category" || catRule.Rule != "category-control Gambling deny-takeover" {
+		t.Fatalf("catRule = %+v", catRule)
+	}
+	if got := catRule.FullLine(); got != "category-control Gambling deny-takeover" {
+		t.Fatalf("catRule.FullLine() = %q", got)
+	}
+}
+
+func TestFilterRuleFullLineDefaultsToLayer3(t *testing.T) {
+	r := FilterRule{Rule: "deny proto any 1.1.1.0/255.255.255.0 any 2.2.2.0/255.255.255.0 any in"}
+	want := "layer3-filter " + r.Rule
+	if got := r.FullLine(); got != want {
+		t.Fatalf("FullLine() = %q, want %q", got, want)
+	}
+}
+
+func TestParseConnectedClients(t *testing.T) {
+	raw := "show connected-clients\n" +
+		" MAC ADDRESS        IP ADDRESS       HOSTNAME         TYPE             TYPE NAME        BRAND            OS               OS VER   LAST SEEN\n" +
+		" bc:a9:93:0d:89:62  192.168.21.30    XV3-8Caravan2    Enterprise WiFi  Cambium Networks Cambium Networks Cambium OS                2026-08-31 23:50:54\n" +
+		" 72:54:e6:a4:31:c4  172.23.1.36      MacBookAir       LAPTOP           MacBook Air      Apple            macOS            10.15.7  2026-09-01 00:05:24\n" +
+		" 92:46:68:fc:bd:9c  172.23.1.40      Watch            TELEVISION                        Apple            watchOS                   2026-08-31 22:59:55\n" +
+		" ec:a1:38:71:58:d1  172.23.1.32      none             TABLET           Fire 7 (2022)    Amazon           Android          11       2026-08-31 23:56:11\n" +
+		"NSE-Caravan(config)# "
+	clients := ParseConnectedClients(raw)
+	if len(clients) != 4 {
+		t.Fatalf("got %d clients: %+v", len(clients), clients)
+	}
+	c0 := clients[0]
+	if c0.MAC != "bc:a9:93:0d:89:62" || c0.IP != "192.168.21.30" || c0.Hostname != "XV3-8Caravan2" {
+		t.Fatalf("client 0 = %+v", c0)
+	}
+	if c0.Type != "Enterprise WiFi" || c0.TypeName != "Cambium Networks" || c0.Brand != "Cambium Networks" || c0.OS != "Cambium OS" {
+		t.Fatalf("client 0 fingerprint = %+v", c0)
+	}
+	if c0.OSVer != "" || c0.LastSeen != "2026-08-31 23:50:54" {
+		t.Fatalf("client 0 os_ver/last_seen = %+v", c0)
+	}
+	c1 := clients[1]
+	if c1.OS != "macOS" || c1.OSVer != "10.15.7" {
+		t.Fatalf("client 1 (MacBookAir) = %+v", c1)
+	}
+	// This row's empty TYPE NAME column is the case that breaks a naive
+	// split-on-whitespace parser (only one padding space remains).
+	c2 := clients[2]
+	if c2.Type != "TELEVISION" || c2.TypeName != "" || c2.Brand != "Apple" || c2.OS != "watchOS" {
+		t.Fatalf("client 2 (Watch) = %+v", c2)
+	}
+	c3 := clients[3]
+	if c3.TypeName != "Fire 7 (2022)" || c3.Brand != "Amazon" || c3.OS != "Android" || c3.OSVer != "11" {
+		t.Fatalf("client 3 (Fire) = %+v", c3)
+	}
+}
+
+func TestParseConnectedClientsEmpty(t *testing.T) {
+	if got := ParseConnectedClients("show connected-clients\nNSE-Caravan(config)# "); len(got) != 0 {
+		t.Fatalf("got %d clients, want 0: %+v", len(got), got)
+	}
+}
+
 func TestParseTailscaleStatus(t *testing.T) {
 	peers := ParseTailscaleStatus(readDump(t, "show_tailscale_status.txt"))
 	if len(peers) < 5 {
@@ -252,6 +346,52 @@ func TestParseTailscaleStatus(t *testing.T) {
 	}
 	if !offline {
 		t.Fatal("expected g11-8 offline")
+	}
+	for _, p := range peers {
+		if p.Name == "iphone-13-pro-max" {
+			if p.TxBytes != 348 || p.RxBytes != 500 {
+				t.Fatalf("iphone-13-pro-max tx/rx: %+v", p)
+			}
+		}
+		if p.Name == "g11-8" && p.LastSeen != "23d ago" {
+			t.Fatalf("g11-8 last_seen: %+v", p)
+		}
+		if p.Name == "nse4khome" && !p.Exit {
+			t.Fatalf("nse4khome should be an exit node: %+v", p)
+		}
+	}
+}
+
+func TestParseOutboundFirewallCounters(t *testing.T) {
+	raw := `show counters outbound_firewall
+-----------------------------------------------
+| RuleId    : 1
+| Name      : rule_1
+| Comment   : outbound_firewall: drop L3 src 192.168.20.0/24 dst 172.21.0.0/16
+| Packets   : 0
+| Bytes     : 0
+
+-----------------------------------------------
+| RuleId    : 2
+| Name      : rule_2
+| Comment   : outbound_firewall: drop L3 src 192.168.20.0/24 dst 172.23.0.0/16
+| Packets   : 12
+| Bytes     : 4096
+
+NSE-Caravan(config)# `
+	rows := ParseOutboundFirewallCounters(raw)
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows: %+v", len(rows), rows)
+	}
+	if rows[0].RuleID != "1" || rows[0].Name != "rule_1" || rows[0].Packets != 0 {
+		t.Fatalf("row 0: %+v", rows[0])
+	}
+	if rows[1].Packets != 12 || rows[1].Bytes != 4096 {
+		t.Fatalf("row 1: %+v", rows[1])
+	}
+	wantComment := "outbound_firewall: drop L3 src 192.168.20.0/24 dst 172.21.0.0/16"
+	if rows[0].Comment != wantComment {
+		t.Fatalf("comment = %q, want %q", rows[0].Comment, wantComment)
 	}
 }
 
@@ -313,6 +453,17 @@ func TestParseLANConfig(t *testing.T) {
 	for _, p := range lan.Ports {
 		if p.Interface == "eth5" && p.Mode == "trunk" && p.AllowedVLANs == "1,30,100,200" {
 			foundTrunk = true
+			if !p.Shutdown {
+				t.Fatalf("eth5 should be shutdown: %+v", p)
+			}
+		}
+		if p.Interface == "eth3" {
+			if p.Speed != "100" || p.Duplex != "full" || p.Advertise != "1000" {
+				t.Fatalf("eth3 speed/duplex/advertise: %+v", p)
+			}
+			if p.Shutdown {
+				t.Fatalf("eth3 should not be shutdown: %+v", p)
+			}
 		}
 	}
 	if !foundTrunk {
@@ -332,5 +483,49 @@ func TestParseLANConfig(t *testing.T) {
 	}
 	if lan.Bindings[1].Description != "camera-porch" {
 		t.Fatalf("desc %+v", lan.Bindings[1])
+	}
+}
+
+func TestParseGeoIPDefaultsToNoneWhenUnconfigured(t *testing.T) {
+	inbound, outbound := ParseGeoIP("show config\n!\nhostname foo\n!\n")
+	if inbound.Mode != "none" || outbound.Mode != "none" {
+		t.Fatalf("expected mode 'none' when unconfigured, got inbound=%q outbound=%q", inbound.Mode, outbound.Mode)
+	}
+	if len(inbound.Countries) != 0 || len(outbound.Countries) != 0 {
+		t.Fatalf("expected empty country lists, got inbound=%v outbound=%v", inbound.Countries, outbound.Countries)
+	}
+	if len(inbound.Exceptions) != 0 || len(outbound.Exceptions) != 0 {
+		t.Fatalf("expected empty exception lists, got inbound=%v outbound=%v", inbound.Exceptions, outbound.Exceptions)
+	}
+}
+
+func TestParseGeoIPParsesBothDirectionsIndependently(t *testing.T) {
+	raw := `show config
+!
+firewall geo-ip-restrictions inbound mode allow
+firewall geo-ip-restrictions inbound countries US,GB,DE
+firewall geo-ip-allowlist inbound address-range start-address end-address 203.0.113.1 203.0.113.10
+firewall geo-ip-restrictions outbound mode block
+firewall geo-ip-restrictions outbound countries CN
+!
+`
+	inbound, outbound := ParseGeoIP(raw)
+	if inbound.Mode != "allow" {
+		t.Errorf("inbound.Mode = %q, want allow", inbound.Mode)
+	}
+	if len(inbound.Countries) != 3 || inbound.Countries[0] != "US" || inbound.Countries[2] != "DE" {
+		t.Errorf("inbound.Countries = %v", inbound.Countries)
+	}
+	if len(inbound.Exceptions) != 1 || inbound.Exceptions[0].StartIP != "203.0.113.1" || inbound.Exceptions[0].EndIP != "203.0.113.10" {
+		t.Errorf("inbound.Exceptions = %v", inbound.Exceptions)
+	}
+	if outbound.Mode != "block" {
+		t.Errorf("outbound.Mode = %q, want block", outbound.Mode)
+	}
+	if len(outbound.Countries) != 1 || outbound.Countries[0] != "CN" {
+		t.Errorf("outbound.Countries = %v", outbound.Countries)
+	}
+	if len(outbound.Exceptions) != 0 {
+		t.Errorf("outbound.Exceptions = %v, want none", outbound.Exceptions)
 	}
 }

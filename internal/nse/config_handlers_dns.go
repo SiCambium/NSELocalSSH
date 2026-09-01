@@ -34,12 +34,17 @@ func (s *Server) handleGetConfigDNS(w http.ResponseWriter, _ *http.Request) {
 		writeSettingsError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	adv := ParseDNSAdvancedConfig(cfgRaw)
 	writeJSON(w, map[string]any{
-		"dns_server":     cloud.DNSServer,
-		"dns_override":   cloud.DNSOverride,
-		"filter_mode":    dnsFilterMode(cfgRaw),
-		"name_server":    cloud.NameServer,
-		"snort_category": cloud.SnortRuleCategory,
+		"dns_server":      cloud.DNSServer,
+		"dns_override":    cloud.DNSOverride,
+		"filter_mode":     dnsFilterMode(cfgRaw),
+		"name_server":     cloud.NameServer,
+		"snort_category":  cloud.SnortRuleCategory,
+		"local_hosts":     orEmpty(adv.LocalHosts),
+		"forward_zones":   orEmpty(adv.ForwardZones),
+		"bypass_groups":   orEmpty(adv.BypassGroups),
+		"filter_policies": orEmpty(adv.FilterPolicies),
 	})
 }
 
@@ -60,9 +65,25 @@ func dnsFilterMode(cfgRaw string) string {
 
 type dnsRequest struct {
 	Action     string   `json:"action"`
-	FilterMode string   `json:"filter_mode"` // "learning" | "filtering"
+	FilterMode string   `json:"filter_mode"` // "disabled" | "learning" | "filtering"
 	Enable     *bool    `json:"enable"`
 	NameServer []string `json:"name_server"`
+
+	// Local DNS entries / conditional forwarding.
+	Domain string `json:"domain"`
+	IP     string `json:"ip"`
+	Server string `json:"server"`
+
+	// DNS override bypass-list.
+	GroupName string `json:"group_name"`
+
+	// DNS filter policy.
+	ID             int      `json:"id"`
+	Name           string   `json:"name"`
+	SafeSearch     *bool    `json:"safe_search"`
+	DenySourceType string   `json:"deny_source_type"` // "all" | "group"
+	DenySourceName string   `json:"deny_source_name"`
+	DenyCategories []string `json:"deny_categories"`
 }
 
 func (s *Server) handlePostConfigDNS(w http.ResponseWriter, r *http.Request) {
@@ -80,9 +101,9 @@ func (s *Server) handlePostConfigDNS(w http.ResponseWriter, r *http.Request) {
 	switch req.Action {
 	case "filter_mode":
 		switch req.FilterMode {
-		case "learning", "filtering":
+		case "disabled", "learning", "filtering":
 		default:
-			writeSettingsError(w, http.StatusBadRequest, "filter_mode must be 'learning' or 'filtering'")
+			writeSettingsError(w, http.StatusBadRequest, "filter_mode must be 'disabled', 'learning', or 'filtering'")
 			return
 		}
 		lines = BuildDNSServerLines([]string{DNSFilterModeLine(req.FilterMode)})
@@ -113,6 +134,80 @@ func (s *Server) handlePostConfigDNS(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, ApplyOutcome{Status: "applied"})
 			return
 		}
+	case "local_host_add":
+		if req.Domain == "" || req.IP == "" {
+			writeSettingsError(w, http.StatusBadRequest, "domain and ip are required")
+			return
+		}
+		lines = BuildDNSServerLines([]string{DNSLocalHostLine(req.Domain, req.IP)})
+	case "local_host_delete":
+		if req.Domain == "" || req.IP == "" {
+			writeSettingsError(w, http.StatusBadRequest, "domain and ip are required")
+			return
+		}
+		lines = BuildDNSServerLines([]string{DNSLocalHostDeleteLine(req.Domain, req.IP)})
+	case "forward_zone_add":
+		if req.Domain == "" || req.Server == "" {
+			writeSettingsError(w, http.StatusBadRequest, "domain and server are required")
+			return
+		}
+		lines = BuildDNSServerLines([]string{DNSForwardZoneLine(req.Domain, req.Server)})
+	case "forward_zone_delete":
+		if req.Domain == "" || req.Server == "" {
+			writeSettingsError(w, http.StatusBadRequest, "domain and server are required")
+			return
+		}
+		lines = BuildDNSServerLines([]string{DNSForwardZoneDeleteLine(req.Domain, req.Server)})
+	case "bypass_group_add":
+		if req.GroupName == "" {
+			writeSettingsError(w, http.StatusBadRequest, "group_name is required")
+			return
+		}
+		lines = BuildDNSServerLines([]string{DNSOverrideBypassGroupLine(req.GroupName)})
+	case "bypass_group_delete":
+		if req.GroupName == "" {
+			writeSettingsError(w, http.StatusBadRequest, "group_name is required")
+			return
+		}
+		lines = BuildDNSServerLines([]string{DNSOverrideBypassGroupDeleteLine(req.GroupName)})
+	case "filter_policy_save":
+		if req.ID < 1 || req.ID > DNSFilterPolicyMaxIndex {
+			writeSettingsError(w, http.StatusBadRequest, "id must be between 1 and 16")
+			return
+		}
+		if req.Name == "" {
+			writeSettingsError(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		leaves := []string{DNSFilterPolicyNameLine(req.Name)}
+		if req.SafeSearch != nil {
+			leaves = append(leaves, DNSFilterPolicySafeSearchLine(*req.SafeSearch))
+		}
+		switch req.DenySourceType {
+		case "group":
+			if req.DenySourceName == "" {
+				writeSettingsError(w, http.StatusBadRequest, "deny_source_name is required when deny_source_type is 'group'")
+				return
+			}
+			leaves = append(leaves, DNSFilterPolicyDenySourcesGroupLine(req.DenySourceName))
+		case "", "all":
+			leaves = append(leaves, DNSFilterPolicyDenySourcesAllLine())
+		default:
+			writeSettingsError(w, http.StatusBadRequest, "deny_source_type must be 'all' or 'group'")
+			return
+		}
+		for _, cat := range req.DenyCategories {
+			if cat != "" {
+				leaves = append(leaves, DNSFilterPolicyDenyCategoryLine(cat))
+			}
+		}
+		lines = BuildDNSServerLines(BuildDNSFilterPolicyLines(req.ID, leaves))
+	case "filter_policy_delete":
+		if req.ID < 1 || req.ID > DNSFilterPolicyMaxIndex {
+			writeSettingsError(w, http.StatusBadRequest, "id must be between 1 and 16")
+			return
+		}
+		lines = BuildDNSServerLines([]string{DNSFilterPolicyDeleteLine(req.ID)})
 	default:
 		writeSettingsError(w, http.StatusBadRequest, "unknown action")
 		return

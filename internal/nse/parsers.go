@@ -623,42 +623,75 @@ func ParseDF(raw string) []Disk {
 	return rows
 }
 
-type FilterCounter struct {
-	Name       string `json:"name"`
-	Precedence string `json:"precedence"`
-	Type       string `json:"type"`
-	Layer      string `json:"layer"`
-	State      string `json:"state"`
-	Packets    string `json:"packets"`
-	Bytes      string `json:"bytes"`
+// OutboundFirewallCounter is one rule block from "show counters
+// outbound_firewall" — CONFIRMED (2026-08-31, via NSE AI CLI research
+// citing a real v2.3 capture) as the actual per-rule hit-counter command;
+// "show filter global-filter" (the previously assumed command) returns
+// only a header with no data rows on this device. Comment is the
+// device's own human-readable rule summary — the same text cnMaestro's
+// Firewall Counters page shows, so it's used as-is rather than
+// reconstructed from the parsed rule.
+type OutboundFirewallCounter struct {
+	RuleID  string `json:"rule_id"`
+	Name    string `json:"name"`
+	Comment string `json:"comment"`
+	Packets int64  `json:"packets"`
+	Bytes   int64  `json:"bytes"`
 }
 
-func ParseFilterCounters(raw string) []FilterCounter {
-	cmd := "show filter"
-	if strings.Contains(raw[:min(80, len(raw))], "global-filter") {
-		cmd = "show filter global-filter"
-	}
-	var rows []FilterCounter
-	for _, line := range linesOf(raw, cmd) {
-		s := strings.TrimSpace(line)
-		if s == "" || (strings.Contains(line, "Name") && strings.Contains(line, "Precedence")) {
-			continue
-		}
-		if strings.Trim(s, "- ") == "" {
-			continue
-		}
-		parts := strings.Fields(line)
-		if len(parts) >= 6 {
-			row := FilterCounter{
-				Name: parts[0], Precedence: parts[1], Type: parts[2],
-				Layer: parts[3], State: parts[4], Packets: parts[5],
-			}
-			if len(parts) > 6 {
-				row.Bytes = parts[6]
-			}
-			rows = append(rows, row)
+// ParseOutboundFirewallCounters parses blocks shaped like:
+//
+//	-----------------------------------------------
+//	| RuleId    : 1
+//	| Name      : rule_1
+//	| Comment   : outbound_firewall: drop L3 src 192.168.20.0/24 dst 172.21.0.0/16
+//	| Packets   : 0
+//	| Bytes     : 0
+func ParseOutboundFirewallCounters(raw string) []OutboundFirewallCounter {
+	var rows []OutboundFirewallCounter
+	var cur OutboundFirewallCounter
+	has := false
+	flush := func() {
+		if has {
+			rows = append(rows, cur)
+			cur = OutboundFirewallCounter{}
+			has = false
 		}
 	}
+	for _, line := range linesOf(raw, "show counters outbound_firewall") {
+		stripped := strings.TrimSpace(line)
+		if stripped == "" {
+			continue
+		}
+		if strings.HasPrefix(stripped, "---") {
+			flush()
+			continue
+		}
+		stripped = strings.TrimSpace(strings.TrimPrefix(stripped, "|"))
+		key, val, ok := strings.Cut(stripped, ":")
+		if !ok {
+			continue
+		}
+		key, val = strings.TrimSpace(key), strings.TrimSpace(val)
+		switch strings.ToLower(key) {
+		case "ruleid":
+			cur.RuleID = val
+			has = true
+		case "name":
+			cur.Name = val
+			has = true
+		case "comment":
+			cur.Comment = val
+			has = true
+		case "packets":
+			cur.Packets, _ = strconv.ParseInt(val, 10, 64)
+			has = true
+		case "bytes":
+			cur.Bytes, _ = strconv.ParseInt(val, 10, 64)
+			has = true
+		}
+	}
+	flush()
 	return rows
 }
 
@@ -702,11 +735,35 @@ func ParseAppStats(raw string) []AppStat {
 	return rows
 }
 
+// FilterRule is one rule inside "filter global-filter". Kind identifies
+// which of the three CONFIRMED (2026-08-31, real v2.3 capture) rule
+// variants this is, since they use different leaf keywords for their
+// match content: "" (or "layer3", the original/default) for
+// `layer3-filter ...`, "application_group" for `application-group
+// <action> <name>`, and "category" for `category-control <category>
+// <action>`. Rule holds the match-content leaf verbatim including its
+// keyword for the two newer kinds (so it can be replayed as-is by
+// ReplaceFilterRulesLines); for the original layer3 kind it holds just
+// the content after "layer3-filter " for backward compatibility with
+// existing callers.
 type FilterRule struct {
-	ID         string `json:"id,omitempty"`
-	Name       string `json:"name,omitempty"`
-	Precedence string `json:"precedence,omitempty"`
-	Rule       string `json:"rule,omitempty"`
+	ID         string   `json:"id,omitempty"`
+	Name       string   `json:"name,omitempty"`
+	Precedence string   `json:"precedence,omitempty"`
+	Rule       string   `json:"rule,omitempty"`
+	Kind       string   `json:"kind,omitempty"`
+	Extra      []string `json:"extra,omitempty"`
+}
+
+// FullLine returns the complete match-content leaf line for this rule,
+// keyword included, suitable for BuildFilterRuleCreateLines.
+func (r FilterRule) FullLine() string {
+	switch r.Kind {
+	case "application_group", "category":
+		return r.Rule
+	default:
+		return "layer3-filter " + r.Rule
+	}
 }
 
 func ParseConfigFilter(raw string) []FilterRule {
@@ -736,9 +793,26 @@ func ParseConfigFilter(raw string) []FilterRule {
 			has = true
 		case strings.HasPrefix(stripped, "layer3-filter"):
 			current.Rule = strings.TrimSpace(strings.TrimPrefix(stripped, "layer3-filter"))
+			current.Kind = "layer3"
+			has = true
+		case strings.HasPrefix(stripped, "application-group "):
+			current.Rule = stripped
+			current.Kind = "application_group"
+			has = true
+		case strings.HasPrefix(stripped, "category-control "):
+			current.Rule = stripped
+			current.Kind = "category"
 			has = true
 		case stripped == "exit" && has:
 			flush()
+		case has && stripped != "":
+			// Anything else inside a rule block (e.g. "allowed-sources
+			// user-group <name>" scoping a DPI-based rule) is preserved
+			// verbatim so editing/reordering an existing rule via
+			// ReplaceFilterRulesLines doesn't silently drop it, even
+			// though this app's own "Add Filter Rule" doesn't create
+			// this leaf yet.
+			current.Extra = append(current.Extra, stripped)
 		}
 	}
 	flush()
@@ -746,19 +820,33 @@ func ParseConfigFilter(raw string) []FilterRule {
 }
 
 type TailscalePeer struct {
-	IP      string `json:"ip"`
-	Name    string `json:"name"`
-	User    string `json:"user"`
-	OS      string `json:"os"`
-	Status  string `json:"status"`
-	Offline bool   `json:"offline"`
-	Idle    bool   `json:"idle"`
-	Exit    bool   `json:"exit_node"`
-	Self    bool   `json:"self"`
+	IP         string `json:"ip"`
+	Name       string `json:"name"`
+	User       string `json:"user"`
+	OS         string `json:"os"`
+	Status     string `json:"status"`
+	Offline    bool   `json:"offline"`
+	Idle       bool   `json:"idle"`
+	Exit       bool   `json:"exit_node"`
+	Self       bool   `json:"self"`
+	DirectAddr string `json:"direct_addr,omitempty"`
+	TxBytes    int64  `json:"tx_bytes,omitempty"`
+	RxBytes    int64  `json:"rx_bytes,omitempty"`
+	LastSeen   string `json:"last_seen,omitempty"`
 }
 
 var tailscalePeerRE = regexp.MustCompile(`^(\d+\.\d+\.\d+\.\d+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(.*)$`)
+var tailscaleDirectRE = regexp.MustCompile(`direct (\S+),`)
+var tailscaleBytesRE = regexp.MustCompile(`tx (\d+) rx (\d+)`)
+var tailscaleLastSeenRE = regexp.MustCompile(`last seen (.+?ago)`)
 
+// ParseTailscaleStatus parses "show tailscale status", the same
+// human-readable table format the upstream `tailscale status` CLI
+// prints. There is no confirmed JSON/machine-readable variant of this
+// command on this device, so richer fields cnMaestro's Tailnet page shows
+// (a distinct Relay Server column, Last Handshake as its own timestamp)
+// aren't extractable here — only what this free-text status line spells
+// out per peer (direct address, tx/rx bytes, last-seen text) is parsed.
 func ParseTailscaleStatus(raw string) []TailscalePeer {
 	var peers []TailscalePeer
 	for _, line := range linesOf(raw, "show tailscale status") {
@@ -780,6 +868,16 @@ func ParseTailscaleStatus(raw string) []TailscalePeer {
 			Offline: strings.Contains(low, "offline"),
 			Idle:    strings.Contains(low, "idle"),
 			Exit:    strings.Contains(low, "exit node"),
+		}
+		if dm := tailscaleDirectRE.FindStringSubmatch(status); dm != nil {
+			p.DirectAddr = dm[1]
+		}
+		if bm := tailscaleBytesRE.FindStringSubmatch(status); bm != nil {
+			p.TxBytes, _ = strconv.ParseInt(bm[1], 10, 64)
+			p.RxBytes, _ = strconv.ParseInt(bm[2], 10, 64)
+		}
+		if lm := tailscaleLastSeenRE.FindStringSubmatch(status); lm != nil {
+			p.LastSeen = strings.TrimSpace(lm[1])
 		}
 		peers = append(peers, p)
 	}
@@ -985,6 +1083,10 @@ type PortVLAN struct {
 	AccessVLAN   string `json:"access_vlan,omitempty"`
 	NativeVLAN   string `json:"native_vlan,omitempty"`
 	AllowedVLANs string `json:"allowed_vlans,omitempty"`
+	Speed        string `json:"speed,omitempty"`
+	Duplex       string `json:"duplex,omitempty"`
+	Advertise    string `json:"advertise,omitempty"`
+	Shutdown     bool   `json:"shutdown"`
 }
 
 type MACBinding struct {
@@ -1159,6 +1261,21 @@ func ParseLANConfig(raw string) LANConfig {
 			if strings.HasPrefix(stripped, "switchport trunk allowed vlan ") {
 				port.AllowedVLANs = strings.TrimPrefix(stripped, "switchport trunk allowed vlan ")
 			}
+			if strings.HasPrefix(stripped, "speed ") {
+				port.Speed = strings.TrimPrefix(stripped, "speed ")
+			}
+			if strings.HasPrefix(stripped, "duplex ") {
+				port.Duplex = strings.TrimPrefix(stripped, "duplex ")
+			}
+			if strings.HasPrefix(stripped, "advertise ") {
+				port.Advertise = strings.TrimPrefix(stripped, "advertise ")
+			}
+			if stripped == "shutdown" {
+				port.Shutdown = true
+			}
+			if stripped == "no shutdown" {
+				port.Shutdown = false
+			}
 		case "dhcp":
 			switch {
 			case strings.HasPrefix(stripped, "address-range "):
@@ -1286,4 +1403,167 @@ func ParseConntrackFlows(raw string) []ConntrackFlow {
 		})
 	}
 	return rows
+}
+
+// IPRange is a plain start/end address-range pair. Used for GEO IP
+// filtering's "Exceptions" list — IP ranges always allowed through
+// regardless of the country-based mode.
+type IPRange struct {
+	StartIP string `json:"start_ip"`
+	EndIP   string `json:"end_ip"`
+}
+
+// GeoIPDirection is one direction's worth of GEO IP filtering config —
+// "inbound" (cnMaestro's "WAN to LAN Filters") or "outbound" (cnMaestro's
+// "LAN to WAN Filters"). Not modeled in cloud-json-config at all, so
+// parsed straight from `show config`, and never observed configured on
+// any device this project has captured from — the line syntax here is
+// CONFIRMED from the CLI reference tree and design docs (via NSE AI CLI
+// research), not from a live example.
+type GeoIPDirection struct {
+	Mode       string    `json:"mode"` // "allow" | "block" | "none"
+	Countries  []string  `json:"countries"`
+	Exceptions []IPRange `json:"exceptions"`
+}
+
+// ParseGeoIP parses the confirmed "firewall geo-ip-restrictions
+// inbound|outbound mode/countries" and "firewall geo-ip-allowlist
+// inbound|outbound address-range start-address end-address" lines out of
+// a `show config` capture. These are flat top-level lines, not a nested
+// submode block.
+func ParseGeoIP(cfgRaw string) (inbound, outbound GeoIPDirection) {
+	inbound.Mode, outbound.Mode = "none", "none"
+	inbound.Countries, outbound.Countries = []string{}, []string{}
+	inbound.Exceptions, outbound.Exceptions = []IPRange{}, []IPRange{}
+	for _, line := range strings.Split(strings.ReplaceAll(cfgRaw, "\r", ""), "\n") {
+		stripped := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(stripped, "firewall geo-ip-restrictions inbound mode "):
+			inbound.Mode = strings.TrimPrefix(stripped, "firewall geo-ip-restrictions inbound mode ")
+		case strings.HasPrefix(stripped, "firewall geo-ip-restrictions outbound mode "):
+			outbound.Mode = strings.TrimPrefix(stripped, "firewall geo-ip-restrictions outbound mode ")
+		case strings.HasPrefix(stripped, "firewall geo-ip-restrictions inbound countries "):
+			inbound.Countries = splitNonEmpty(strings.TrimPrefix(stripped, "firewall geo-ip-restrictions inbound countries "), ",")
+		case strings.HasPrefix(stripped, "firewall geo-ip-restrictions outbound countries "):
+			outbound.Countries = splitNonEmpty(strings.TrimPrefix(stripped, "firewall geo-ip-restrictions outbound countries "), ",")
+		case strings.HasPrefix(stripped, "firewall geo-ip-allowlist inbound address-range start-address end-address "):
+			if r, ok := parseIPRangeFields(strings.TrimPrefix(stripped, "firewall geo-ip-allowlist inbound address-range start-address end-address ")); ok {
+				inbound.Exceptions = append(inbound.Exceptions, r)
+			}
+		case strings.HasPrefix(stripped, "firewall geo-ip-allowlist outbound address-range start-address end-address "):
+			if r, ok := parseIPRangeFields(strings.TrimPrefix(stripped, "firewall geo-ip-allowlist outbound address-range start-address end-address ")); ok {
+				outbound.Exceptions = append(outbound.Exceptions, r)
+			}
+		}
+	}
+	return inbound, outbound
+}
+
+func parseIPRangeFields(s string) (IPRange, bool) {
+	fields := strings.Fields(s)
+	if len(fields) < 2 {
+		return IPRange{}, false
+	}
+	return IPRange{StartIP: fields[0], EndIP: fields[1]}, true
+}
+
+func splitNonEmpty(s, sep string) []string {
+	var out []string
+	for _, part := range strings.Split(s, sep) {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	if out == nil {
+		out = []string{}
+	}
+	return out
+}
+
+// ConnectedClient is one row of `show connected-clients`'s per-host device
+// fingerprint table — the device-identification data behind cnMaestro's
+// "device fingerprinting" feature (Type/Brand/OS/OS version), separate
+// from the per-VLAN "Enable Device Identification" toggle which only
+// turns this collection on or off.
+type ConnectedClient struct {
+	MAC      string `json:"mac"`
+	IP       string `json:"ip"`
+	Hostname string `json:"hostname"`
+	Type     string `json:"type"`
+	TypeName string `json:"type_name"`
+	Brand    string `json:"brand"`
+	OS       string `json:"os"`
+	OSVer    string `json:"os_version"`
+	LastSeen string `json:"last_seen"`
+}
+
+var connectedClientMACRE = regexp.MustCompile(`^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\b`)
+
+// connectedClientCols are CONFIRMED fixed byte-offset column boundaries
+// from a live capture on a real 2.3-r6 unit. The table's columns are
+// constant-width (not sized to content) — verified against a real row
+// ("Watch ... TELEVISION ... Apple") where the empty TYPE NAME column
+// left only a single padding space, which a naive split-on-whitespace
+// parse would have merged into its neighbor. A different firmware version
+// could in principle use different widths; if columns look misaligned
+// against a fresh capture, this table needs re-deriving.
+var connectedClientCols = []struct {
+	name       string
+	start, end int
+}{
+	{"mac", 1, 20},
+	{"ip", 20, 37},
+	{"hostname", 37, 54},
+	{"type", 54, 71},
+	{"type_name", 71, 88},
+	{"brand", 88, 105},
+	{"os", 105, 122},
+	{"os_ver", 122, 131},
+	{"last_seen", 131, -1},
+}
+
+// fixedCol returns line[start:end], clamped to the line's actual length
+// (a row with empty trailing columns, e.g. no LAST SEEN, is naturally
+// shorter than the full table width) and with surrounding padding
+// trimmed. end<0 means "to end of line".
+func fixedCol(line string, start, end int) string {
+	if start > len(line) {
+		return ""
+	}
+	if end < 0 || end > len(line) {
+		end = len(line)
+	}
+	if end < start {
+		return ""
+	}
+	return strings.TrimSpace(line[start:end])
+}
+
+// ParseConnectedClients parses `show connected-clients`'s device
+// fingerprint table. See connectedClientCols for the confirmation level
+// of the column layout itself.
+func ParseConnectedClients(raw string) []ConnectedClient {
+	var out []ConnectedClient
+	for _, line := range linesOf(raw, "show connected-clients") {
+		if !connectedClientMACRE.MatchString(strings.TrimSpace(line)) {
+			continue
+		}
+		vals := make(map[string]string, len(connectedClientCols))
+		for _, c := range connectedClientCols {
+			vals[c.name] = fixedCol(line, c.start, c.end)
+		}
+		out = append(out, ConnectedClient{
+			MAC:      vals["mac"],
+			IP:       vals["ip"],
+			Hostname: vals["hostname"],
+			Type:     vals["type"],
+			TypeName: vals["type_name"],
+			Brand:    vals["brand"],
+			OS:       vals["os"],
+			OSVer:    vals["os_ver"],
+			LastSeen: vals["last_seen"],
+		})
+	}
+	return out
 }

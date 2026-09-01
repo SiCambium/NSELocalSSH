@@ -9,7 +9,10 @@ const TAB_IDS = [
   "routing",
   "dhcp",
   "neighbors",
+  "devices",
   "tunnels",
+  "tailscale",
+  "firewallcounters",
   "traffic",
   "events",
   "config",
@@ -217,7 +220,10 @@ function render(tab, data) {
   if (tab === "routing") el.innerHTML = renderRouting(data);
   if (tab === "dhcp") el.innerHTML = renderDhcp(data);
   if (tab === "neighbors") el.innerHTML = renderNeighbors(data);
+  if (tab === "devices") el.innerHTML = renderDevices(data);
   if (tab === "tunnels") el.innerHTML = renderTunnels(data);
+  if (tab === "tailscale") el.innerHTML = renderTailscale(data);
+  if (tab === "firewallcounters") el.innerHTML = renderFirewallCounters(data);
   if (tab === "traffic") el.innerHTML = renderTraffic(data);
   if (tab === "events") el.innerHTML = renderEvents(data);
   if (tab === "config") el.innerHTML = renderConfig(data);
@@ -308,7 +314,41 @@ function renderOverview(d) {
       <div class="bar"><span style="width:${usedPct}%"></span></div>
     </div>
     <p class="muted">Full breakdown is on the Memory tab. Extra device fields are on Details.</p>
+    <h2>Threat Protection</h2>
+    <div class="grid">${threatProtectionGrid(d.threat_protection)}</div>
+    <p class="muted">${threatProtectionNote(d.threat_protection)}</p>
   `;
+}
+
+// threatProtectionGrid/threatProtectionNote summarize the same
+// secret-free intrusion-prevention state as Configuration > Threat
+// Protection's own display (see config-threat.js) — duplicated here as a
+// small, stable 4-item lookup rather than sharing state across files.
+const THREAT_RULE_TYPE_LABELS = {
+  "snort-community": "Snort Community",
+  "snort-vrt": "Snort VRT",
+  "et-open": "Emerging Threats Open",
+  "et-pro": "Emerging Threats Pro",
+};
+
+function threatProtectionGrid(t) {
+  t = t || {};
+  const ruleType = THREAT_RULE_TYPE_LABELS[t.rule_type] || t.rule_type || "-";
+  return [
+    stat("Intrusion prevention", t.enabled ? "Enabled" : "Disabled"),
+    stat("Mode", t.mode || "-"),
+    stat("Rule type", ruleType),
+    stat("Rules tier", t.rule_set || "-"),
+    stat("Auto-update", t.auto_update ? `Enabled (${esc(t.update_interval || "-")})` : "Disabled"),
+  ].join("");
+}
+
+function threatProtectionNote(t) {
+  t = t || {};
+  if (!t.auto_update) {
+    return "This firmware doesn't report a rule database version or last-update time. Auto-update is off, so rules only change when set manually on the Configuration > Threat Protection tab.";
+  }
+  return `This firmware doesn't report a rule database version or last-update time — auto-update being enabled (every ${esc(t.update_interval || "-")}) is the closest available signal that rules are staying current.`;
 }
 
 function renderThroughput(d) {
@@ -402,18 +442,87 @@ function renderMemory(d) {
   `;
 }
 
+// ipOrgCache is a client-side cache of IP -> ownership info already
+// fetched from /api/iplookup, keyed by IP. It exists alongside the
+// server-side cache so repeated re-renders of this table (it redraws
+// from scratch on every poll) don't need a network round-trip just to
+// keep showing something already looked up this session.
+const ipOrgCache = new Map();
+const ipOrgQueue = [];
+const ipOrgQueued = new Set();
+let ipOrgQueueRunning = false;
+let ipOrgRerenderTimer = null;
+
+function ipOrgCell(ip, lookupEnabled) {
+  if (!ip) return "-";
+  if (!lookupEnabled) return esc(ip);
+  if (ipOrgCache.has(ip)) {
+    const info = ipOrgCache.get(ip);
+    const label = info && (info.org || info.isp);
+    return label ? `${esc(ip)}<br><span class="muted">${esc(label)}</span>` : esc(ip);
+  }
+  scheduleIPLookup(ip);
+  return `${esc(ip)}<br><span class="muted">…</span>`;
+}
+
+// scheduleIPLookup fires automatically for every not-yet-seen destination
+// IP once lookups are enabled — no per-row button. Requests are queued
+// and run one at a time (with a short gap between them) rather than all
+// at once, so enabling this on a busy table doesn't burst dozens of
+// parallel requests at a free lookup service in one go.
+function scheduleIPLookup(ip) {
+  if (ipOrgCache.has(ip) || ipOrgQueued.has(ip)) return;
+  ipOrgQueued.add(ip);
+  ipOrgQueue.push(ip);
+  runIPOrgQueue();
+}
+
+async function runIPOrgQueue() {
+  if (ipOrgQueueRunning) return;
+  ipOrgQueueRunning = true;
+  while (ipOrgQueue.length) {
+    const ip = ipOrgQueue.shift();
+    try {
+      const res = await fetch(`/api/iplookup?ip=${encodeURIComponent(ip)}`);
+      const data = await res.json().catch(() => null);
+      ipOrgCache.set(ip, res.ok ? data : null);
+      ipOrgQueued.delete(ip);
+    } catch (e) {
+      // Network-level failure (not a definitive answer from our own
+      // backend) — leave it unqueued and uncached so a later render can
+      // retry rather than being stuck showing "…" forever.
+      ipOrgQueued.delete(ip);
+    }
+    requestIPOrgRerender();
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  ipOrgQueueRunning = false;
+}
+
+// requestIPOrgRerender coalesces bursts of queue completions (many IPs
+// resolving within milliseconds of each other) into a single table
+// rebuild instead of one per lookup.
+function requestIPOrgRerender() {
+  clearTimeout(ipOrgRerenderTimer);
+  ipOrgRerenderTimer = setTimeout(() => {
+    if (cache.conntrack) render("conntrack", cache.conntrack);
+  }, 150);
+}
+
 function renderConntrack(d) {
   const ct = d.summary || {};
   const ctPct = ct.limit ? Math.min(100, Math.round((Number(ct.usage) / Number(ct.limit)) * 100)) : 0;
   const live = d.live_enabled === true;
+  const lookupEnabled = d.ip_lookup_enabled === true;
   const flows = live
     ? table(
-        ["Proto", "Src", "Dst", "TX", "RX", "State", "Direction", "App", "Host"],
+        ["Proto", "Src", "Dst", "NAT'd To", "TX", "RX", "State", "Direction", "App", "Host"],
         (d.flows || []).map(
           (f) => `<tr>
         <td>${esc(f.protocol)}</td>
         <td class="mono">${esc(f.origin_src)}${f.src_port ? `:${esc(f.src_port)}` : ""}</td>
-        <td class="mono">${esc(f.origin_dst)}${f.dst_port ? `:${esc(f.dst_port)}` : ""}</td>
+        <td class="mono">${ipOrgCell(f.origin_dst, lookupEnabled)}${f.dst_port ? `:${esc(f.dst_port)}` : ""}</td>
+        <td class="mono">${f.nated_ip ? `${esc(f.nated_ip)}${f.nated_port ? `:${esc(f.nated_port)}` : ""}` : "-"}</td>
         <td class="mono">${bytes(f.tx_bytes)}</td>
         <td class="mono">${bytes(f.rx_bytes)}</td>
         <td>${esc(f.tcp_state)}</td>
@@ -446,6 +555,11 @@ function renderConntrack(d) {
       Show live connection table
     </label>
     <p class="warn">Warning: if there are too many connections, fetching this table can overload the NSE CPU and stall this app. Leave it off unless you need the table.</p>
+    <label class="check-row">
+      <input type="checkbox" id="conntrack-iplookup" ${lookupEnabled ? "checked" : ""}>
+      Look up who owns a destination IP
+    </label>
+    <p class="muted">Off by default: this is the only feature in this app that sends anything to a third party — a free lookup service (ipwho.is) — instead of talking only to your device. When on, every destination IP shown below is looked up automatically (one at a time, not all at once) and cached, so each address is only ever looked up once.</p>
     <p class="muted">${countNote}</p>
     ${flows}
   `;
@@ -638,23 +752,35 @@ function renderNeighbors(d) {
   `;
 }
 
+function renderDevices(d) {
+  const clients = d.clients || [];
+  const rows = table(
+    ["MAC", "IP Address", "Hostname", "Type", "Type Name", "Brand", "OS", "OS Version", "Last Seen"],
+    clients.map(
+      (c) =>
+        `<tr>
+          <td class="mono">${esc(c.mac)}</td>
+          <td class="mono">${esc(c.ip)}</td>
+          <td>${esc(c.hostname)}</td>
+          <td>${esc(c.type)}</td>
+          <td>${esc(c.type_name)}</td>
+          <td>${esc(c.brand)}</td>
+          <td>${esc(c.os)}</td>
+          <td>${esc(c.os_version)}</td>
+          <td class="mono">${esc(c.last_seen)}</td>
+        </tr>`
+    )
+  );
+  return `
+    <h2>Connected Devices</h2>
+    <p class="muted">Device-identification fingerprints (type, brand, OS) for hosts the NSE has seen on the LAN — this is the result of Vulnerability Scan/Device Identification, gated by the same per-VLAN toggles on the Config page's Network tab. Discovered open ports aren't exposed by this CLI, only the identification result.</p>
+    ${rows || '<p class="muted">No connected clients found.</p>'}
+  `;
+}
+
 function renderTraffic(d) {
   const apps = (d.by_application || []).slice(0, 40);
   const cats = d.by_category || [];
-  const rules = table(
-    ["ID", "Name", "Precedence", "Rule"],
-    (d.filter_rules || []).map(
-      (r) =>
-        `<tr><td>${esc(r.id)}</td><td>${esc(r.name)}</td><td>${esc(r.precedence)}</td><td class="mono">${esc(r.rule)}</td></tr>`
-    )
-  );
-  const counters = table(
-    ["Name", "Prec", "Type", "Packets", "Bytes"],
-    (d.filter_counters || []).map(
-      (r) =>
-        `<tr><td>${esc(r.name)}</td><td>${esc(r.precedence)}</td><td>${esc(r.type)}</td><td>${esc(r.packets)}</td><td>${esc(r.bytes)}</td></tr>`
-    )
-  );
   const appTable = table(
     ["Application", "TX", "RX", "Total"],
     apps.map(
@@ -673,35 +799,18 @@ function renderTraffic(d) {
         )}</td></tr>`
     )
   );
-  return `<h2>Firewall rules</h2>${rules}<h2>Filter counters</h2>${counters}<h2>Applications (top 40 by bytes)</h2>${appTable}<h2>Categories</h2>${catTable}`;
+  return `<h2>Applications (top 40 by bytes)</h2>${appTable}<h2>Categories</h2>${catTable}`;
 }
 
 function renderTunnels(d) {
   const cfg = d.config || {};
   const sl = cfg.starlink || {};
   const vpn = cfg.vpn_server || {};
-  const tsCfg = cfg.tailscale || {};
   const ping = d.starlink_ping || {};
   const wan = (d.wan_dhcp || [])[0] || {};
   const o = wan.options || {};
-  const peers = d.tailscale || [];
   const sessions = d.vpn || [];
   const wanIface = (d.interfaces || []).find((p) => p.interface === "eth1") || {};
-
-  const peerRows = table(
-    ["IP", "Name", "User", "OS", "Status"],
-    peers.map((p) => {
-      const cls = p.offline ? "down" : "up";
-      const name = p.self ? `${p.name} (this NSE)` : p.name;
-      return `<tr>
-        <td class="mono">${esc(p.ip)}</td>
-        <td>${esc(name)}</td>
-        <td>${esc(p.user)}</td>
-        <td>${esc(p.os)}</td>
-        <td class="${cls}">${esc(p.status)}</td>
-      </tr>`;
-    })
-  );
 
   const vpnBlocks = sessions
     .map((s) => {
@@ -737,14 +846,73 @@ function renderTunnels(d) {
     </div>
     ${vpnBlocks}
     <p class="muted">Active session tables come from <span class="mono">show vpn-sessions …</span>. Empty JSON means the service is up but no clients are connected, or the NSE returned no session payload.</p>
+  `;
+}
+
+function renderTailscale(d) {
+  const cfg = d.config || {};
+  const peers = d.peers || [];
+  const self = peers.find((p) => p.self);
+  const others = peers.filter((p) => !p.self);
+  const onlineCount = others.filter((p) => !p.offline).length;
+
+  const peerRows = table(
+    ["Host Name", "OS", "IP Address", "Status", "TX", "RX", "Exit Node", "Last Seen"],
+    others.map((p) => {
+      const cls = p.offline ? "down" : "up";
+      const status = p.offline ? "Offline" : p.idle ? "Idle" : "Online";
+      return `<tr>
+        <td>${esc(p.name)}</td>
+        <td>${esc(p.os)}</td>
+        <td class="mono">${esc(p.ip)}${p.direct_addr ? ` <span class="muted">(direct ${esc(p.direct_addr)})</span>` : ""}</td>
+        <td class="${cls}">${esc(status)}</td>
+        <td class="mono">${p.tx_bytes ? bytes(p.tx_bytes) : "-"}</td>
+        <td class="mono">${p.rx_bytes ? bytes(p.rx_bytes) : "-"}</td>
+        <td>${p.exit_node ? "Yes" : "No"}</td>
+        <td>${esc(p.last_seen || (p.offline ? "-" : "now"))}</td>
+      </tr>`;
+    })
+  );
+
+  return `
     <h2>Tailscale</h2>
     <div class="grid">
-      ${stat("Enabled", tsCfg.enabled ? "yes" : "no")}
-      ${stat("Accept routes", tsCfg.accept_routes ? "yes" : "no")}
-      ${stat("Advertise", tsCfg.advertise_routes)}
-      ${stat("Auth key", tsCfg.auth_key_set ? "set" : "none")}
+      ${stat("Enabled", cfg.enabled ? "yes" : "no")}
+      ${stat("Accept routes", cfg.accept_routes ? "yes" : "no")}
+      ${stat("Advertise routes", cfg.advertise_routes || "-")}
+      ${stat("Auth key", cfg.auth_key_set ? "set" : "none")}
     </div>
-    ${peerRows}
+    <h2>Tailnet Peers</h2>
+    <div class="grid">
+      ${stat("Total peers", others.length)}
+      ${stat("Online", onlineCount)}
+      ${stat("This device", self ? self.name : "-")}
+    </div>
+    <p class="muted">From <span class="mono">show tailscale status</span> — this device's own CLI output, not the Tailscale admin console. There's no confirmed way to get DERP relay/latency-per-region or a distinct "Relay Server" per peer from this device's CLI, so those columns from cnMaestro's Tailnet page aren't shown here.</p>
+    ${peerRows || '<p class="muted">No peers.</p>'}
+  `;
+}
+
+function renderFirewallCounters(d) {
+  const rows = d.outbound_firewall || [];
+  const table1 = table(
+    ["Rule ID", "Name", "Packets", "Bytes", "Comment"],
+    rows.map(
+      (r) => `<tr>
+        <td>${esc(r.rule_id)}</td>
+        <td>${esc(r.name)}</td>
+        <td class="mono">${esc(r.packets)}</td>
+        <td class="mono">${esc(r.bytes)}</td>
+        <td class="mono">${esc(r.comment || "-")}</td>
+      </tr>`
+    )
+  );
+  return `
+    <h2>Outbound Firewall</h2>
+    <p class="muted">Per-rule hit counters from <span class="mono">show counters outbound_firewall</span>.</p>
+    ${table1 || '<p class="muted">No filter rules found.</p>'}
+    <h2>DNAT / Traffic Shaping / Flow Preferences</h2>
+    <p class="muted">Not tracked here — this app doesn't yet support configuring NAT, traffic shaping, or flow preference rules, so there's nothing to show counters for.</p>
   `;
 }
 
@@ -1008,10 +1176,33 @@ document.getElementById("set-live-conntrack").addEventListener("change", (ev) =>
   persistLiveConntrack(ev.target.checked);
 });
 document.getElementById("panel-conntrack").addEventListener("change", (ev) => {
-  const box = ev.target.closest("#conntrack-live");
-  if (!box) return;
-  persistLiveConntrack(box.checked);
+  const liveBox = ev.target.closest("#conntrack-live");
+  if (liveBox) {
+    persistLiveConntrack(liveBox.checked);
+    return;
+  }
+  const lookupBox = ev.target.closest("#conntrack-iplookup");
+  if (lookupBox) persistIPLookup(lookupBox.checked);
 });
+
+async function persistIPLookup(on) {
+  const err = document.getElementById("error");
+  err.hidden = true;
+  try {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "prefs", ip_lookup: on }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    if (page === "status" && current === "conntrack") load("conntrack", true);
+  } catch (e) {
+    err.hidden = false;
+    err.textContent = e.message;
+  }
+}
+
 
 tabs.forEach((b) => b.addEventListener("click", () => activate(b.dataset.tab)));
 document.querySelectorAll(".menu button").forEach((b) => {

@@ -211,6 +211,88 @@ func TestLANPortAccessLinesNoNegationForFreshPort(t *testing.T) {
 	}
 }
 
+func TestFilterRuleLayer3Line(t *testing.T) {
+	got := FilterRuleLayer3Line("deny", "any", FilterAddrSpec("192.168.20.0", "255.255.255.0"), "any", FilterAddrSpec("172.21.0.0", "255.255.0.0"), "any")
+	want := "layer3-filter deny proto any 192.168.20.0/255.255.255.0 any 172.21.0.0/255.255.0.0 any in"
+	if got != want {
+		t.Errorf("FilterRuleLayer3Line() = %q, want %q", got, want)
+	}
+}
+
+func TestFilterRuleLayer3LineWithGroupNames(t *testing.T) {
+	got := FilterRuleLayer3Line("deny", "any", "Enterprise-Users", "any", "Guest", "any")
+	want := "layer3-filter deny proto any Enterprise-Users any Guest any in"
+	if got != want {
+		t.Errorf("FilterRuleLayer3Line() = %q, want %q", got, want)
+	}
+}
+
+func TestBuildFilterRuleCreateLines(t *testing.T) {
+	lines := BuildFilterRuleCreateLines(4, "test_probe_a", "layer3-filter deny proto any 203.0.113.0/255.255.255.0 any 198.51.100.0/255.255.255.0 any in")
+	want := []string{
+		"filter precedence 4",
+		"unique_id 4",
+		"rule-name test_probe_a",
+		"layer3-filter deny proto any 203.0.113.0/255.255.255.0 any 198.51.100.0/255.255.255.0 any in",
+		"exit",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("BuildFilterRuleCreateLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+func TestFilterRuleDeleteLine(t *testing.T) {
+	if got, want := FilterRuleDeleteLine(4), "no filter precedence 4"; got != want {
+		t.Errorf("FilterRuleDeleteLine(4) = %q, want %q", got, want)
+	}
+}
+
+func TestReplaceFilterRulesLinesDeletesAllThenRecreatesInNewOrder(t *testing.T) {
+	current := []FilterRule{
+		{Precedence: "1", Name: "rule_1", Rule: "deny proto any 192.168.20.0/255.255.255.0 any 172.21.0.0/255.255.0.0 any in"},
+		{Precedence: "2", Name: "rule_2", Rule: "deny proto any 192.168.20.0/255.255.255.0 any 172.23.0.0/255.255.0.0 any in"},
+		{Precedence: "3", Name: "rule_3", Rule: "deny proto any 192.168.20.0/255.255.255.0 any 172.18.0.0/255.255.0.0 any in"},
+	}
+	// Simulate "move rule_3 up": swap indices 1 and 2.
+	newOrder := []FilterRule{current[0], current[2], current[1]}
+	lines := ReplaceFilterRulesLines(current, newOrder)
+	want := []string{
+		"filter global-filter",
+		"no filter precedence 1",
+		"no filter precedence 2",
+		"no filter precedence 3",
+		"filter precedence 1",
+		"unique_id 1",
+		"rule-name rule_1",
+		"layer3-filter deny proto any 192.168.20.0/255.255.255.0 any 172.21.0.0/255.255.0.0 any in",
+		"exit",
+		"filter precedence 2",
+		"unique_id 2",
+		"rule-name rule_3",
+		"layer3-filter deny proto any 192.168.20.0/255.255.255.0 any 172.18.0.0/255.255.0.0 any in",
+		"exit",
+		"filter precedence 3",
+		"unique_id 3",
+		"rule-name rule_2",
+		"layer3-filter deny proto any 192.168.20.0/255.255.255.0 any 172.23.0.0/255.255.0.0 any in",
+		"exit",
+		"exit",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("ReplaceFilterRulesLines() = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
 func TestLANPortShutdownLine(t *testing.T) {
 	if got, want := LANPortShutdownLine(true), "no shutdown"; got != want {
 		t.Errorf("LANPortShutdownLine(true) = %q, want %q", got, want)
@@ -516,5 +598,41 @@ func TestDHCPPoolLinesOmitsEmptyDomain(t *testing.T) {
 	}
 	if len(lines) != 5 {
 		t.Fatalf("expected 5 lines without domain, got %d: %v", len(lines), lines)
+	}
+}
+
+func TestGeoIPModeLine(t *testing.T) {
+	if got, want := GeoIPModeLine("inbound", "allow"), "firewall geo-ip-restrictions inbound mode allow"; got != want {
+		t.Errorf("GeoIPModeLine() = %q, want %q", got, want)
+	}
+	if got, want := GeoIPModeLine("outbound", "none"), "firewall geo-ip-restrictions outbound mode none"; got != want {
+		t.Errorf("GeoIPModeLine() = %q, want %q", got, want)
+	}
+}
+
+func TestGeoIPCountriesLine(t *testing.T) {
+	got := GeoIPCountriesLine("inbound", []string{"US", "GB", "DE"})
+	want := "firewall geo-ip-restrictions inbound countries US,GB,DE"
+	if got != want {
+		t.Errorf("GeoIPCountriesLine() = %q, want %q", got, want)
+	}
+}
+
+func TestGeoIPExceptionAddAndDeleteLines(t *testing.T) {
+	add := GeoIPExceptionAddLine("outbound", "203.0.113.1", "203.0.113.10")
+	wantAdd := "firewall geo-ip-allowlist outbound address-range start-address end-address 203.0.113.1 203.0.113.10"
+	if add != wantAdd {
+		t.Errorf("GeoIPExceptionAddLine() = %q, want %q", add, wantAdd)
+	}
+	del := GeoIPExceptionDeleteLine("outbound", "203.0.113.1", "203.0.113.10")
+	wantDel := "no " + wantAdd
+	if del != wantDel {
+		t.Errorf("GeoIPExceptionDeleteLine() = %q, want %q", del, wantDel)
+	}
+}
+
+func TestIPSOinkcodeLine(t *testing.T) {
+	if got, want := IPSOinkcodeLine("abc123"), "intrusion-prevention oinkcode abc123"; got != want {
+		t.Errorf("IPSOinkcodeLine() = %q, want %q", got, want)
 	}
 }

@@ -15,6 +15,7 @@ type settingsRequest struct {
 	Password      string `json:"password"`
 	Port          string `json:"port"`
 	LiveConntrack *bool  `json:"live_conntrack"`
+	IPLookup      *bool  `json:"ip_lookup"`
 }
 
 func (s *Server) settingsFile() string {
@@ -65,6 +66,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 		"active_id":      active,
 		"profiles":       publicSlots(store),
 		"live_conntrack": ReadPrefs(s.prefsFile()).LiveConntrack,
+		"ip_lookup":      ReadPrefs(s.prefsFile()).IPLookup,
 	})
 }
 
@@ -109,12 +111,17 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) savePrefs(w http.ResponseWriter, req settingsRequest) {
-	if req.LiveConntrack == nil {
-		writeSettingsError(w, http.StatusBadRequest, "live_conntrack is required")
+	if req.LiveConntrack == nil && req.IPLookup == nil {
+		writeSettingsError(w, http.StatusBadRequest, "live_conntrack or ip_lookup is required")
 		return
 	}
 	prefs := ReadPrefs(s.prefsFile())
-	prefs.LiveConntrack = *req.LiveConntrack
+	if req.LiveConntrack != nil {
+		prefs.LiveConntrack = *req.LiveConntrack
+	}
+	if req.IPLookup != nil {
+		prefs.IPLookup = *req.IPLookup
+	}
 	if err := WritePrefs(s.prefsFile(), prefs); err != nil {
 		writeSettingsError(w, http.StatusInternalServerError, "could not save settings: "+err.Error())
 		return
@@ -122,6 +129,7 @@ func (s *Server) savePrefs(w http.ResponseWriter, req settingsRequest) {
 	writeJSON(w, map[string]any{
 		"ok":             true,
 		"live_conntrack": prefs.LiveConntrack,
+		"ip_lookup":      prefs.IPLookup,
 	})
 }
 

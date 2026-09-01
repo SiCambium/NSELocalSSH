@@ -61,3 +61,105 @@ func TestDNSFilterModeEmptyWhenNoBlock(t *testing.T) {
 		t.Fatalf("dnsFilterMode() = %q, want empty", got)
 	}
 }
+
+func TestConfigDNSFilterModeAcceptsDisabled(t *testing.T) {
+	s := testConfigServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/config/dns", strings.NewReader(`{"action":"filter_mode","filter_mode":"disabled"}`))
+	rec := httptest.NewRecorder()
+	s.handleConfigDNS(rec, req)
+	if rec.Code == http.StatusBadRequest {
+		t.Fatalf("filter_mode=disabled rejected as invalid input: %s", rec.Body.String())
+	}
+}
+
+func TestConfigDNSLocalHostAddRequiresFields(t *testing.T) {
+	s := testConfigServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/config/dns", strings.NewReader(`{"action":"local_host_add","domain":"nas.lan"}`))
+	rec := httptest.NewRecorder()
+	s.handleConfigDNS(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConfigDNSLocalHostAddAcceptsValid(t *testing.T) {
+	s := testConfigServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/config/dns", strings.NewReader(`{"action":"local_host_add","domain":"nas.lan","ip":"172.21.1.50"}`))
+	rec := httptest.NewRecorder()
+	s.handleConfigDNS(rec, req)
+	if rec.Code == http.StatusBadRequest {
+		t.Fatalf("local_host_add rejected as invalid input: %s", rec.Body.String())
+	}
+}
+
+func TestConfigDNSForwardZoneAddRequiresFields(t *testing.T) {
+	s := testConfigServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/config/dns", strings.NewReader(`{"action":"forward_zone_add","domain":"corp.example"}`))
+	rec := httptest.NewRecorder()
+	s.handleConfigDNS(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConfigDNSBypassGroupAddRequiresGroupName(t *testing.T) {
+	s := testConfigServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/config/dns", strings.NewReader(`{"action":"bypass_group_add"}`))
+	rec := httptest.NewRecorder()
+	s.handleConfigDNS(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConfigDNSFilterPolicySaveRequiresIDAndName(t *testing.T) {
+	s := testConfigServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/config/dns", strings.NewReader(`{"action":"filter_policy_save","id":0,"name":"Ad_Blocking"}`))
+	rec := httptest.NewRecorder()
+	s.handleConfigDNS(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConfigDNSFilterPolicySaveRejectsOutOfRangeID(t *testing.T) {
+	s := testConfigServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/config/dns", strings.NewReader(`{"action":"filter_policy_save","id":99,"name":"Ad_Blocking"}`))
+	rec := httptest.NewRecorder()
+	s.handleConfigDNS(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConfigDNSFilterPolicySaveGroupSourceRequiresName(t *testing.T) {
+	s := testConfigServer(t)
+	body := `{"action":"filter_policy_save","id":1,"name":"Ad_Blocking","deny_source_type":"group"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/config/dns", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleConfigDNS(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConfigDNSFilterPolicySaveAcceptsValid(t *testing.T) {
+	s := testConfigServer(t)
+	body := `{"action":"filter_policy_save","id":1,"name":"Ad_Blocking","safe_search":true,"deny_categories":["malware-sites","spam-urls"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/config/dns", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleConfigDNS(rec, req)
+	if rec.Code == http.StatusBadRequest {
+		t.Fatalf("filter_policy_save rejected as invalid input: %s", rec.Body.String())
+	}
+}
+
+func TestConfigDNSFilterPolicyDeleteRejectsOutOfRangeID(t *testing.T) {
+	s := testConfigServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/config/dns", strings.NewReader(`{"action":"filter_policy_delete","id":0}`))
+	rec := httptest.NewRecorder()
+	s.handleConfigDNS(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+}

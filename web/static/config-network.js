@@ -51,6 +51,8 @@
           <td>${esc(p.mode || "-")}</td>
           <td>${esc(p.mode === "trunk" ? p.native_vlan || "-" : p.access_vlan || "-")}</td>
           <td>${esc(p.allowed_vlans || "-")}</td>
+          <td>${esc(p.speed || "auto")}</td>
+          <td>${esc(p.duplex || "-")}</td>
           <td><button type="button" class="row-edit" data-port="${esc(p.interface)}">Edit</button></td>
         </tr>`
       )
@@ -67,8 +69,8 @@
       <h2>LAN Ports</h2>
       <p class="muted">WAN ports aren't shown here — manage them from the WAN tab instead.</p>
       <div class="table-wrap"><table>
-        <thead><tr><th>Port</th><th>Mode</th><th>VLAN</th><th>Allowed VLANs</th><th></th></tr></thead>
-        <tbody>${portRows || '<tr><td colspan="5" class="muted">No LAN ports found.</td></tr>'}</tbody>
+        <thead><tr><th>Port</th><th>Mode</th><th>VLAN</th><th>Allowed VLANs</th><th>Speed</th><th>Duplex</th><th></th></tr></thead>
+        <tbody>${portRows || '<tr><td colspan="7" class="muted">No LAN ports found.</td></tr>'}</tbody>
       </table></div>
     `;
 
@@ -106,6 +108,30 @@
         <label>Allowed VLANs (comma separated) <input id="cfg-port-allowed-vlans" type="text" value="${esc(p.allowed_vlans || "")}"></label>
       </div>
       <p class="warn">Changing a LAN port's VLAN assignment can disconnect whatever is plugged into it — or, if this port is carrying the session doing the editing (e.g. a direct connection to the 172.23.0.1 local UI), lock you out. This change is applied through the safe-apply path: it's verified reachable over a fresh connection before it's kept, and rolled back automatically if not confirmed within 60 seconds.</p>
+      <label>Speed
+        <select id="cfg-port-speed">
+          <option value="auto" ${(!p.speed || p.speed === "auto") ? "selected" : ""}>Auto</option>
+          <option value="100" ${p.speed === "100" ? "selected" : ""}>100 Mbps (forced)</option>
+          <option value="10" ${p.speed === "10" ? "selected" : ""}>10 Mbps (forced)</option>
+        </select>
+      </label>
+      <label>Duplex
+        <select id="cfg-port-duplex">
+          <option value="" ${!p.duplex ? "selected" : ""}>Not set</option>
+          <option value="full" ${p.duplex === "full" ? "selected" : ""}>Full</option>
+          <option value="half" ${p.duplex === "half" ? "selected" : ""}>Half</option>
+        </select>
+      </label>
+      <label>Advertise (auto-negotiation)
+        <select id="cfg-port-advertise">
+          <option value="auto" ${(!p.advertise || p.advertise === "auto") ? "selected" : ""}>Auto</option>
+          <option value="1000" ${p.advertise === "1000" ? "selected" : ""}>1000 Mbps</option>
+          <option value="100" ${p.advertise === "100" ? "selected" : ""}>100 Mbps</option>
+          <option value="10" ${p.advertise === "10" ? "selected" : ""}>10 Mbps</option>
+        </select>
+      </label>
+      <p class="muted">"Speed" forces the link rate — it only offers 10/100/Auto, not gigabit, per this device's own CLI. "Advertise" controls what's offered during auto-negotiation and does include 1000 Mbps. Forcing a mismatched speed/duplex against the far end can badly degrade or drop the link.</p>
+      <label class="check-row"><input id="cfg-port-enabled" type="checkbox" ${!p.shutdown ? "checked" : ""}> Port enabled</label>
       <div id="cfg-port-outcome"></div>
     `;
     const modalEl = openModal(`Edit ${iface}`, body, async (el) => {
@@ -121,6 +147,21 @@
       }
       const outcome = await postJSON("/api/config/network", req);
       await renderOutcome(outcomeEl, outcome);
+
+      const speed = el.querySelector("#cfg-port-speed").value;
+      const duplex = el.querySelector("#cfg-port-duplex").value;
+      const advertise = el.querySelector("#cfg-port-advertise").value;
+      if (speed !== (p.speed || "auto") || duplex !== (p.duplex || "") || advertise !== (p.advertise || "auto")) {
+        const speedOutcome = await postJSON("/api/config/network", { action: "port_speed", port, speed, duplex, advertise });
+        await renderOutcome(outcomeEl, speedOutcome);
+      }
+
+      const enabled = el.querySelector("#cfg-port-enabled").checked;
+      if (enabled !== !p.shutdown) {
+        const shutdownOutcome = await postJSON("/api/config/network", { action: "port_shutdown", port, enabled });
+        await renderOutcome(outcomeEl, shutdownOutcome);
+      }
+
       await load();
     });
     modalEl.querySelector("#cfg-port-mode").addEventListener("change", (e) => {

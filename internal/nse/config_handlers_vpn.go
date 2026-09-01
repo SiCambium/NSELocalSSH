@@ -27,16 +27,30 @@ func (s *Server) handleConfigVPN(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// radiusClientWithID adds the client-list index cloud-json-config doesn't
+// expose (radius_client_list is a plain JSON array with no id field). The
+// index is derived from array position on the assumption that entries are
+// sequential starting at 1 with no gaps — the same assumption
+// radius_client_create already makes via len(list)+1.
+type radiusClientWithID struct {
+	RADIUSClient
+	ID int `json:"id"`
+}
+
 func (s *Server) handleGetConfigVPN(w http.ResponseWriter, _ *http.Request) {
 	cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
 	if err != nil {
 		writeSettingsError(w, http.StatusBadGateway, err.Error())
 		return
 	}
+	clients := make([]radiusClientWithID, 0, len(cloud.RADIUSClientList))
+	for i, c := range cloud.RADIUSClientList {
+		clients = append(clients, radiusClientWithID{RADIUSClient: c, ID: i + 1})
+	}
 	writeJSON(w, map[string]any{
 		"tailscale":          cloud.Tailscale,
 		"site_to_site":       cloud.SiteToSite,
-		"radius_client_list": cloud.RADIUSClientList,
+		"radius_client_list": clients,
 	})
 }
 
@@ -44,6 +58,7 @@ type vpnRequest struct {
 	Action    string   `json:"action"`
 	Enable    *bool    `json:"enable"`
 	Routes    []string `json:"routes"` // advertise-routes CIDRs
+	ID        int      `json:"id"`
 	Name      string   `json:"name"`
 	Secret    string   `json:"secret"`
 	Address   string   `json:"address"`
@@ -102,6 +117,22 @@ func (s *Server) handlePostConfigVPN(w http.ResponseWriter, r *http.Request) {
 		id := len(cloud.RADIUSClientList) + 1
 		lines = append([]string{RADIUSModeLine(true)},
 			BuildRADIUSClientLines(id, RADIUSClientLines(req.Name, req.Secret, req.Address, req.PrefixLen))...)
+	case "radius_client_edit":
+		if req.ID < 1 {
+			writeSettingsError(w, http.StatusBadRequest, "id is required")
+			return
+		}
+		if req.Name == "" || req.Secret == "" || req.Address == "" || req.PrefixLen <= 0 {
+			writeSettingsError(w, http.StatusBadRequest, "name, secret, address, and prefix_length are required")
+			return
+		}
+		lines = BuildRADIUSClientLines(req.ID, RADIUSClientLines(req.Name, req.Secret, req.Address, req.PrefixLen))
+	case "radius_client_delete":
+		if req.ID < 1 {
+			writeSettingsError(w, http.StatusBadRequest, "id is required")
+			return
+		}
+		lines = []string{RADIUSClientDeleteLine(req.ID)}
 	default:
 		writeSettingsError(w, http.StatusBadRequest, "unknown action")
 		return

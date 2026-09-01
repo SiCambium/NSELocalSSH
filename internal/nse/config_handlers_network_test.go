@@ -100,6 +100,56 @@ func TestConfigNetworkPortSwitchportTrunkRequiresVLANs(t *testing.T) {
 	}
 }
 
+func TestConfigNetworkPortSpeedRequiresPort(t *testing.T) {
+	s := testConfigServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/config/network", strings.NewReader(`{"action":"port_speed","speed":"auto"}`))
+	rec := httptest.NewRecorder()
+	s.handleConfigNetwork(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConfigNetworkPortSpeedRequiresAtLeastOneField(t *testing.T) {
+	s := testConfigServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/config/network", strings.NewReader(`{"action":"port_speed","port":3}`))
+	rec := httptest.NewRecorder()
+	s.handleConfigNetwork(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConfigNetworkPortSpeedRejectsInvalidSpeed(t *testing.T) {
+	s := testConfigServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/config/network", strings.NewReader(`{"action":"port_speed","port":3,"speed":"1000"}`))
+	rec := httptest.NewRecorder()
+	s.handleConfigNetwork(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code %d body %s (speed must not accept 1000 -- that's only valid for advertise)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConfigNetworkPortSpeedRejectsInvalidDuplex(t *testing.T) {
+	s := testConfigServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/config/network", strings.NewReader(`{"action":"port_speed","port":3,"duplex":"auto"}`))
+	rec := httptest.NewRecorder()
+	s.handleConfigNetwork(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("code %d body %s (duplex has no auto value)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestConfigNetworkPortSpeedAcceptsValidAdvertise(t *testing.T) {
+	s := testConfigServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/config/network", strings.NewReader(`{"action":"port_speed","port":3,"advertise":"1000"}`))
+	rec := httptest.NewRecorder()
+	s.handleConfigNetwork(rec, req)
+	if rec.Code == http.StatusBadRequest {
+		t.Fatalf("advertise=1000 rejected as invalid input: %s", rec.Body.String())
+	}
+}
+
 func TestConfigNetworkPortShutdownRequiresEnabled(t *testing.T) {
 	s := testConfigServer(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/config/network", strings.NewReader(`{"action":"port_shutdown","port":3}`))

@@ -22,14 +22,19 @@ const (
 // ClassifyRisk maps a change's section name to a RiskLevel. WAN interface
 // edits, physical LAN port switchport/shutdown edits, a VLAN's
 // management-access flag, management ssh/https/http toggles, HA, the
-// admin password, and the free-text CLI overrides are all RiskLockout —
-// the overrides are unparseable ahead of time, so they can never be
-// judged safe by inspection, and a LAN port's VLAN/trunk assignment can
-// plausibly carry the session doing the editing (e.g. the local 172.23.0.1
-// UI wired directly into that port).
+// admin password, outbound filter rule edits, GEO IP filtering, and the
+// free-text CLI overrides are all RiskLockout — the overrides are
+// unparseable ahead of time, so they can never be judged safe by
+// inspection; a LAN port's VLAN/trunk assignment can plausibly carry the
+// session doing the editing (e.g. the local 172.23.0.1 UI wired directly
+// into that port); a wrong filter rule (or a botched delete-and-recreate
+// reorder) can block the traffic carrying the session doing the editing
+// just as easily as a WAN or management-access mistake can; and GEO IP
+// filtering in "allow only" mode with the wrong country list (or none at
+// all) can cut off remote management from the operator's own location.
 func ClassifyRisk(section string) RiskLevel {
 	switch section {
-	case "wan", "lan-port", "vlan-management-access", "management-service", "high-availability", "admin-password", "overrides":
+	case "wan", "lan-port", "vlan-management-access", "management-service", "high-availability", "admin-password", "outbound-filter", "geo-ip", "overrides":
 		return RiskLockout
 	default:
 		return RiskNone
