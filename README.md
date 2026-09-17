@@ -81,11 +81,10 @@ CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o nse-status.exe ./cmd/nse-sta
 
 Settings can be entered through the **Settings** tab in the UI, or put in a `.env` file next to the executable. Create that file from a terminal (`copy .env.example .env`) rather than File Explorer, which will silently save it as `.env.txt`. Note that the Settings tab writes to a `.env` in the *working directory*, so launch the app from the folder you want it to keep settings in.
 
-Three Windows-specific caveats:
+Two Windows-specific caveats:
 
 - The desktop app needs the **WebView2 runtime**. It ships with Windows 11 and current Windows 10; on older installs, get Microsoft's Evergreen bootstrapper.
 - The release binaries are unsigned, so SmartScreen shows a "Windows protected your PC" prompt on first run — *More info* → *Run anyway*. (The macOS build is ad-hoc signed only, and gets the equivalent Gatekeeper prompt.)
-- The desktop app's **Open in Browser** button is macOS-only at present; on Windows it does nothing. Use browser mode, or open http://127.0.0.1:8080 yourself.
 
 ### Dev probe utilities
 
