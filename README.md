@@ -51,6 +51,42 @@ go run ./cmd/nse-status
 
 Open http://127.0.0.1:8080
 
+### Windows
+
+Both modes run on Windows. The quickest route is a prebuilt binary from the repo's [Releases](https://github.com/SiCambium/NSELocalSSH/releases) page — no toolchain needed:
+
+- `NSE-Status-windows-amd64.exe` — the desktop app (native window via WebView2).
+- `nse-status_<version>_windows_amd64.exe` — browser mode; serves http://127.0.0.1:8080 and prints to a console window.
+
+To build from source instead, browser mode needs nothing but Go:
+
+```powershell
+copy .env.example .env   # then set NSE_PASSWORD
+go build -o nse-status.exe ./cmd/nse-status
+.\nse-status.exe
+```
+
+The desktop app additionally needs CGO and a C++ toolchain (MinGW-w64, e.g. `choco install mingw`), and must be built **on** Windows — it does not cross-compile from macOS or Linux, because the WebView2 binding needs the Windows C headers:
+
+```powershell
+$env:CGO_ENABLED=1
+go build -ldflags "-H windowsgui -s -w" -o NSE-Status-windows-amd64.exe ./cmd/nse-app
+```
+
+Browser mode alone *does* cross-compile from any OS, which is how the release binaries are produced:
+
+```bash
+CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o nse-status.exe ./cmd/nse-status
+```
+
+Settings can be entered through the **Settings** tab in the UI, or put in a `.env` file next to the executable. Create that file from a terminal (`copy .env.example .env`) rather than File Explorer, which will silently save it as `.env.txt`. Note that the Settings tab writes to a `.env` in the *working directory*, so launch the app from the folder you want it to keep settings in.
+
+Three Windows-specific caveats:
+
+- The desktop app needs the **WebView2 runtime**. It ships with Windows 11 and current Windows 10; on older installs, get Microsoft's Evergreen bootstrapper.
+- The release binaries are unsigned, so SmartScreen shows a "Windows protected your PC" prompt on first run — *More info* → *Run anyway*. (The macOS build is ad-hoc signed only, and gets the equivalent Gatekeeper prompt.)
+- The desktop app's **Open in Browser** button is macOS-only at present; on Windows it does nothing. Use browser mode, or open http://127.0.0.1:8080 yourself.
+
 ### Dev probe utilities
 
 `cmd/nse-probe` and `cmd/nse-statsprobe` are small ad-hoc tools for running specific read-only `show` commands against a live device during development — not part of the app itself.
