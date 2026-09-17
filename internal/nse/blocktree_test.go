@@ -2,6 +2,7 @@ package nse
 
 import (
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -64,6 +65,114 @@ func TestParseBlockTreeRoundTripFull(t *testing.T) {
 
 func TestParseBlockTreeRoundTripLAN(t *testing.T) {
 	assertRoundTrip(t, "testdata/show_config_lan.txt")
+}
+
+func TestParseBlockTreeRoundTripSubBlocks(t *testing.T) {
+	assertRoundTrip(t, "testdata/show_config_subblocks.txt")
+}
+
+// TestParseBlockTreeIndentedSubBlocks covers the contexts this device
+// opens without any name the parser could know in advance. The capture
+// mirrors the structures of a live firmware-2.3-r6 unit (values
+// generalized): port-forward/source-nat rules nested in an interface and
+// closed only by the next sibling's indent, a "wireguard" context inside
+// vpn-server, and an "ike-eap" context entered and left immediately.
+func TestParseBlockTreeIndentedSubBlocks(t *testing.T) {
+	raw, err := os.ReadFile("testdata/show_config_subblocks.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree := ParseBlockTree(string(raw))
+
+	eth1 := tree.Find("interface eth 1")
+	if eth1 == nil {
+		t.Fatal("interface eth 1 not parsed as a block")
+	}
+	// Each rule is its own block and a sibling of the others — not
+	// swallowed by the rule before it, which is what a flat parse did.
+	if n := len(eth1.FindAll("source-nat-rule ")); n != 2 {
+		t.Errorf("source-nat-rule blocks under eth1 = %d, want 2", n)
+	}
+	pf := eth1.Find("port-forward-rule 1")
+	if pf == nil {
+		t.Fatal("port-forward-rule 1 not parsed as a block")
+	}
+	if _, ok := pf.Leaf("lan-port 9090"); !ok {
+		t.Error("port-forward-rule 1 lost its own children")
+	}
+	if snat := eth1.Find("source-nat-rule 1"); snat == nil {
+		t.Error("source-nat-rule 1 was swallowed by port-forward-rule 1")
+	} else if _, ok := snat.Leaf("overload disable"); !ok {
+		t.Error("source-nat-rule 1 lost its children")
+	}
+
+	// A sub-context's implicit end must not pop its parent: every rule
+	// block has to come back out inside eth1, so the stanza stays whole.
+	lines := ExtractStanza(string(raw), []string{"interface eth 1"})
+	if lines[len(lines)-1] != "exit" || !slices.Contains(lines, "public-IP 203.0.113.1-203.0.113.254") {
+		t.Errorf("eth1 rollback stanza is not self-contained:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+// TestParseBlockTreeStrayExitKeepsParent is the regression test for the
+// damaging half of the old behavior: an unrecognized context's "exit"
+// used to pop the nearest *recognized* ancestor instead, silently
+// truncating the rollback pre-image for a section that was never at fault.
+func TestParseBlockTreeStrayExitKeepsParent(t *testing.T) {
+	raw, err := os.ReadFile("testdata/show_config_subblocks.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vpn := ParseBlockTree(string(raw)).Find("vpn-server")
+	if vpn == nil {
+		t.Fatal("vpn-server not parsed as a block")
+	}
+	// "ike-eap" is entered and left immediately — a real, empty context.
+	// Read as a leaf, its "exit" would close vpn-server and drop
+	// everything after it.
+	if ike := vpn.Find("ike-eap"); ike == nil {
+		t.Error("ike-eap should be an (empty) block, not a leaf")
+	} else if len(ike.Children) != 0 {
+		t.Errorf("ike-eap should have no children, got %d", len(ike.Children))
+	}
+	wg := vpn.Find("wireguard")
+	if wg == nil {
+		t.Fatal("vpn-server lost its wireguard sub-block")
+	}
+	if _, ok := wg.Leaf("listen-port 1"); !ok {
+		t.Error("wireguard sub-block lost its children")
+	}
+}
+
+// TestParseBlockTreeBareKeywordStaysLeaf is the other side of the coin:
+// the same "wireguard" keyword is a context in vpn-server and a plain flag
+// under vpn-client and radius-server users-list. Only indentation tells
+// them apart, which is why this can't be a blockOpeners entry.
+func TestParseBlockTreeBareKeywordStaysLeaf(t *testing.T) {
+	raw, err := os.ReadFile("testdata/show_config_subblocks.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tree := ParseBlockTree(string(raw))
+	client := tree.Find("vpn-client")
+	if client == nil {
+		t.Fatal("vpn-client not parsed as a block")
+	}
+	if client.Find("wireguard") != nil {
+		t.Error("the bare \"wireguard\" flag under vpn-client became a block")
+	}
+	if _, ok := client.Leaf("wireguard full-tunnel"); !ok {
+		t.Error("vpn-client lost its wireguard leaves")
+	}
+	users := tree.Find("radius-server users-list 10")
+	if users == nil {
+		t.Fatal("radius-server users-list 10 not parsed as a block")
+	}
+	if u := users.Find("wireguard-user 1"); u == nil {
+		t.Error("wireguard-user 1 should be a block")
+	} else if _, ok := u.Leaf("ip-address 10.10.100.2"); !ok {
+		t.Error("wireguard-user 1 lost its children")
+	}
 }
 
 func TestParseBlockTreeRoundTripTunnels(t *testing.T) {

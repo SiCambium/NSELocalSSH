@@ -1,0 +1,65 @@
+show config
+
+interface eth 1
+ type wan
+ wan-name wan1
+ ip nat inside 
+ ip address dhcp
+ port-forward-rule 1
+   port 9090
+   lan-IP 10.0.0.50
+   protocol tcp
+   lan-port 9090
+ source-nat-rule 1
+   lan-IP address 10.1.0.0/24
+   overload disable
+   public-IP 203.0.113.1-203.0.113.254
+ source-nat-rule 2
+   lan-IP address 10.2.0.0/24
+   overload disable
+   public-IP 203.0.113.1-203.0.113.254
+!
+pppoe server
+ shutdown
+ tcp-mss-clamp
+ management-access
+!
+vpn-server
+ tcp-mss-clamp
+ mfa
+ ike-eap
+  exit
+ wireguard 
+  interface 198.51.100.7
+  virtual-interface 10.10.100.1/24
+  listen-port 1
+  offline-interval 4
+  exit 
+ exit
+!
+radius-server users-list 10
+ name someuser
+ password REDACTED_FOR_TESTDATA
+ wireguard 
+ wireguard-user 1
+   name someuser_phone
+   public-key REDACTED_FOR_TESTDATA
+   ip-address 10.10.100.2
+   exit
+!
+vpn-client 
+ wireguard 
+ wireguard private-key REDACTED_FOR_TESTDATA
+ wireguard ip-address 10.69.42.52
+ wireguard end-point 198.51.100.9:51820
+ wireguard full-tunnel
+!
+admin contact-info
+ email (null)
+ phone (null)
+!
+device-class-filter 1
+ wlan 1
+ filter-list 1
+!
+hostname NSE-Test
