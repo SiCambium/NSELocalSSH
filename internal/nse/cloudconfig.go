@@ -21,6 +21,13 @@ import (
 // oinkcodes, shared secrets) is modeled here — it is never exposed to the
 // frontend because it was never unmarshaled in the first place.
 type CloudConfig struct {
+	// Source records which device command this was built from —
+	// CloudSourceJSON or CloudSourceShowConfig. Set by FetchCloudConfig,
+	// never unmarshaled from the device, and surfaced to the frontend so a
+	// section that loses fields in fallback mode can say so instead of
+	// rendering a derived zero value as if it were fact.
+	Source string `json:"-"`
+
 	SystemName        string          `json:"system_name"`
 	DHCPAuthoritative bool            `json:"dhcp_authoritative"`
 	WANInterfaces     []WANInterface  `json:"wan_interfaces"`
@@ -238,19 +245,106 @@ func extractJSONObject(raw string) string {
 	return raw[start : end+1]
 }
 
-// FetchCloudConfig runs `service show cloud-json-config` and parses it.
+const cloudJSONCommand = "service show cloud-json-config"
+
+// Values for CloudConfig.Source.
+const (
+	CloudSourceJSON       = "cloud-json-config"
+	CloudSourceShowConfig = "show-config"
+)
+
+// derivedConfigTTL is how long a fallback-derived CloudConfig is reused.
+// Deliberately short — just long enough to collapse one page load's burst
+// of FetchCloudConfig calls into a single `show config` (see
+// Client.cachedDerivedConfig).
+const derivedConfigTTL = 3 * time.Second
+
+// FetchCloudConfig returns the device's structured configuration.
+//
+// The preferred source is `service show cloud-json-config`, whose JSON
+// maps field-for-field onto cnMaestro's own NSE Group export schema. That
+// command is not universally available, though — other firmware, another
+// model, or an account without service-command rights can all reject it —
+// so when the device answers with the CLI's error convention instead of
+// JSON, this falls back to deriving the same structure from `show config`
+// (CloudConfigFromShowConfig), which every unit supports.
+//
+// The fallback is slightly lossy; see CloudConfigFromShowConfig for the
+// exact list of fields `show config` cannot express. A device that has
+// rejected the command once is remembered, so the dead round-trip is paid
+// at most once per connection rather than on every read.
 func FetchCloudConfig(c *Client, timeout time.Duration) (CloudConfig, error) {
-	raw, err := c.Run("service show cloud-json-config", timeout)
+	if c.CloudJSONUnsupported() {
+		return fetchCloudConfigFallback(c, timeout, nil)
+	}
+	raw, err := c.Run(cloudJSONCommand, timeout)
 	if err != nil {
+		// A transport failure says nothing about the command's
+		// availability, and `show config` would fail the same way.
 		return CloudConfig{}, err
 	}
-	body := extractJSONObject(raw)
-	if body == "" {
-		return CloudConfig{}, fmt.Errorf("no JSON object found in cloud-json-config output")
+	if body := extractJSONObject(raw); body != "" {
+		var cfg CloudConfig
+		if err := json.Unmarshal([]byte(body), &cfg); err != nil {
+			return CloudConfig{}, fmt.Errorf("parsing cloud-json-config: %w", err)
+		}
+		cfg.Source = CloudSourceJSON
+		c.noteCloudJSONHit()
+		return cfg, nil
 	}
-	var cfg CloudConfig
-	if err := json.Unmarshal([]byte(body), &cfg); err != nil {
-		return CloudConfig{}, fmt.Errorf("parsing cloud-json-config: %w", err)
+	// No JSON came back — see Client.noteCloudJSONMiss for how much weight
+	// that carries depending on what the device said instead.
+	rejected := classifyLine(cloudJSONCommand, raw)
+	c.noteCloudJSONMiss(!rejected.OK)
+	return fetchCloudConfigFallback(c, timeout, &rejected)
+}
+
+// fetchCloudConfigFallback derives a CloudConfig from `show config`. The
+// cloudJSON result, when the caller has one, is folded into the error
+// message so a failure here reports what the device said to *both*
+// commands rather than only the second.
+func fetchCloudConfigFallback(c *Client, timeout time.Duration, cloudJSON *LineResult) (CloudConfig, error) {
+	if cfg, ok := c.cachedDerivedConfig(derivedConfigTTL); ok {
+		return cfg, nil
 	}
+	if timeout < 25*time.Second {
+		timeout = 25 * time.Second
+	}
+	raw, err := c.Run("show config", timeout)
+	if err != nil {
+		return CloudConfig{}, fmt.Errorf("%s unavailable%s, and `show config` fallback failed: %w",
+			cloudJSONCommand, cloudJSONDetail(cloudJSON), err)
+	}
+	cfg := CloudConfigFromShowConfig(raw)
+	if len(cfg.LANInterfaces) == 0 && len(cfg.WANInterfaces) == 0 && cfg.SystemName == "" {
+		return CloudConfig{}, fmt.Errorf("%s unavailable%s, and `show config` returned nothing recognizable",
+			cloudJSONCommand, cloudJSONDetail(cloudJSON))
+	}
+	c.storeDerivedConfig(cfg)
 	return cfg, nil
+}
+
+// cloudJSONDetail renders the device's own rejection of cloud-json-config
+// for an error message, so the failure explains itself instead of leaving
+// the operator to guess. The CLI's error lines carry no secrets (they are
+// "%Error ..." / "Invalid arguments"), but the value is length-capped and
+// single-lined regardless.
+func cloudJSONDetail(r *LineResult) string {
+	if r == nil {
+		return ""
+	}
+	// A non-conventional reply ("could not open file") is not recorded as
+	// an Error, but it is still exactly what the operator needs to see.
+	detail := r.Error
+	if detail == "" {
+		detail = r.Output
+	}
+	if detail == "" {
+		return ""
+	}
+	detail = strings.Join(strings.Fields(detail), " ")
+	if len(detail) > 120 {
+		detail = detail[:120]
+	}
+	return " (" + detail + ")"
 }

@@ -76,8 +76,12 @@ func (s *Server) handleGetConfigNetwork(w http.ResponseWriter, _ *http.Request) 
 	}
 	lan := ParseLANConfig(cfgRaw)
 	writeJSON(w, map[string]any{
-		"vlans": cloud.LANInterfaces,
-		"ports": lan.Ports,
+		// config_source tells the frontend whether VLAN names are real
+		// values or simply absent — see CloudConfigFromShowConfig for what
+		// the fallback can't express.
+		"config_source": cloud.Source,
+		"vlans":         cloud.LANInterfaces,
+		"ports":         lan.Ports,
 	})
 }
 

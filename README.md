@@ -14,6 +14,8 @@ This is a personal tool, not an official Cambium product.
 
 **Profile export**: produces a JSON profile in the same schema as cnMaestro's own NSE Group export, so a profile built here is interchangeable with cnMaestro's profile library.
 
+**Works without `service show cloud-json-config`**: configuration reads prefer that command, whose JSON matches cnMaestro's export schema field-for-field, but not every firmware, model, or account has it. When the device rejects it, the same structure is derived from `show config` instead — the one read command every unit supports. A few values exist only in the JSON (VLAN names, the per-VLAN port-scan flag, and the feature license, which is read from its own command on export); the UI marks those as unknown rather than guessing, and everything else — VLANs, DHCP scopes, WAN settings, DNS, threat protection, firewall, VPN, management — is identical either way.
+
 ### Safety mechanism
 
 Any change that could plausibly lock you out of the device (WAN edits, LAN port VLAN/trunk assignment, management access, HA, the admin password, free-text CLI overrides) goes through a safe-apply path instead of being sent directly:

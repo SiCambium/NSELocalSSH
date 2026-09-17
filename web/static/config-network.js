@@ -19,6 +19,22 @@
     }
   }
 
+  // A VLAN's name is the one field here that only
+  // `service show cloud-json-config` reports; when the backend had to fall
+  // back to `show config` (config_source === "show-config") there is no
+  // name to show, so the row is labelled by its VLAN id instead of going
+  // blank. Everything else in this table, port-scan included, is derived
+  // identically from either source.
+  function derivedFromShowConfig() {
+    return cache && cache.config_source === "show-config";
+  }
+
+  function vlanName(v) {
+    if (v.name) return esc(v.name);
+    if (derivedFromShowConfig()) return `<span class="muted">VLAN ${v.vlan_id}</span>`;
+    return "";
+  }
+
   function render() {
     const panel = document.getElementById("config-network-panel");
     const vlans = cache.vlans || [];
@@ -33,7 +49,7 @@
         );
         return `<tr>
           <td>${v.vlan_id}</td>
-          <td>${esc(v.name)}</td>
+          <td>${vlanName(v)}</td>
           <td class="mono">${esc(v.ip_addr)}</td>
           <td class="mono">${esc(v.subnet_mask)}</td>
           <td>${v.management_access === "enable" ? "Enabled" : "Disabled"}</td>
@@ -89,7 +105,12 @@
     const port = parseInt(/^eth(\d+)$/.exec(iface)[1], 10);
     const mode = p.mode === "trunk" ? "trunk" : "access";
     const vlanOptions = (cache.vlans || [])
-      .map((v) => `<option value="${v.vlan_id}" ${String(v.vlan_id) === p.access_vlan ? "selected" : ""}>${v.vlan_id} (${esc(v.name)})</option>`)
+      .map(
+        (v) =>
+          `<option value="${v.vlan_id}" ${String(v.vlan_id) === p.access_vlan ? "selected" : ""}>${
+            v.name ? `${v.vlan_id} (${esc(v.name)})` : v.vlan_id
+          }</option>`
+      )
       .join("");
     const body = `
       <label>Mode
@@ -263,7 +284,7 @@
       ${dhcpScopeFieldsHTML("cfg-vlan-dhcp", dhcp)}
       <div id="cfg-vlan-outcome"></div>
     `;
-    openModal(`Edit VLAN ${vlanID} (${v.name})`, body, async (modalEl) => {
+    openModal(v.name ? `Edit VLAN ${vlanID} (${v.name})` : `Edit VLAN ${vlanID}`, body, async (modalEl) => {
       const ip = modalEl.querySelector("#cfg-vlan-ip").value.trim();
       const mask = modalEl.querySelector("#cfg-vlan-mask").value.trim();
       const mgmt = modalEl.querySelector("#cfg-vlan-mgmt").checked;

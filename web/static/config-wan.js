@@ -80,7 +80,14 @@
           ${stat("PPPoE service name", pppoe.service_name || "-")}
         </div>`
       : "";
-    return `<h2>${esc(w.name)} <span class="muted">(${esc(w.lan_intf)})</span></h2>
+    // A device that has never had a "wan-name" set prints no such leaf, so
+    // in show-config fallback mode the name can be empty — fall back to the
+    // physical port rather than rendering a headless card. "Change port"
+    // still needs a real name and says so if one is missing.
+    const heading = w.name
+      ? `${esc(w.name)} <span class="muted">(${esc(w.lan_intf)})</span>`
+      : `<span class="muted">Unnamed WAN</span> (${esc(w.lan_intf)})`;
+    return `<h2>${heading}</h2>
       <div class="grid">
         ${stat("IP mode", pppoe ? "pppoe" : w.ip_mode)}
         ${stat("Source NAT", w.source_nat)}
@@ -356,7 +363,7 @@
       <p class="warn">This reassigns two physical ports at once and is applied through the safe-apply path: verified reachable over a fresh connection before being kept, and rolled back automatically (restoring both ports to their exact prior config) within 60 seconds if not confirmed or if the device becomes unreachable. Whether "type lan" fully clears the old port's WAN-only settings is unconfirmed — if this port looks odd afterward, its exact prior config is only ever a rollback away.</p>
       <div id="cfg-chg-outcome"></div>
     `;
-    const modalEl = openModal(`Change port for ${w.name}`, body, async (el) => {
+    const modalEl = openModal(`Change port for ${w.name || w.lan_intf}`, body, async (el) => {
       const newPortStr = el.querySelector("#cfg-chg-port").value;
       const newPort = parseInt(/^eth(\d+)$/.exec(newPortStr)[1], 10);
       const mode = el.querySelector("#cfg-chg-mode").value;
