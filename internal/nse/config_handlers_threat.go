@@ -140,5 +140,6 @@ func (s *Server) handlePostConfigThreat(w http.ResponseWriter, r *http.Request) 
 		writeSettingsError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	writeJSON(w, outcome)
+	// The oinkcode action's applied line carries the code itself.
+	writeJSON(w, redactOutcome(outcome))
 }

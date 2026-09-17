@@ -20,6 +20,42 @@ func (s *Server) handleLicense(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]any{"license": ParseFeatureLicense(raw)})
 }
 
+// containsCLILineBreak reports whether a free-text value would break out
+// of the CLI line it is interpolated into. Client.runLocked terminates
+// every command with a carriage return, so an embedded CR or LF in a
+// user-supplied value (a secret, a name) would reach the device as the
+// start of a second command of the submitter's choosing. Every handler
+// that puts request text into a CLI line rejects it first.
+func containsCLILineBreak(s string) bool {
+	return strings.ContainsAny(s, "\r\n")
+}
+
+// outcomeSecretLine extends secretLine to the lines this app sends itself.
+// secretLine doubles as ParseTunnelConfig's control flow, so widening it
+// would change parsing; a bare "secret <value>" leaf (a RADIUS client's)
+// is far too generic to match in an arbitrary config scan but is
+// unambiguous in a line we built ourselves.
+func outcomeSecretLine(line string) bool {
+	return secretLine(line) || strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "secret ")
+}
+
+// redactOutcome strips secret values out of the CLI lines an ApplyOutcome
+// echoes back. SafeApplier returns the exact lines it sent so the UI can
+// show what was applied, but for a write-only secret — a Tailscale auth
+// key, an IPS oinkcode, a RADIUS shared secret — that line contains the
+// secret itself, and returning it unaltered would put it back on the wire
+// and into whatever the frontend renders or a caller logs. Handlers that
+// can carry a secret pass their outcome through this first.
+func redactOutcome(o ApplyOutcome) ApplyOutcome {
+	for i, l := range o.Lines {
+		if outcomeSecretLine(l.Line) {
+			o.Lines[i].Line = redactSecretLine(l.Line)
+		}
+		o.Lines[i].Output = SanitizeCLIOutput(l.Output)
+	}
+	return o
+}
+
 type confirmRequest struct {
 	Token string `json:"token"`
 }

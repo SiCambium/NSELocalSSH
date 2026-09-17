@@ -47,10 +47,19 @@ func (s *Server) handleGetConfigVPN(w http.ResponseWriter, _ *http.Request) {
 	for i, c := range cloud.RADIUSClientList {
 		clients = append(clients, radiusClientWithID{RADIUSClient: c, ID: i + 1})
 	}
+	// Whether an auth key is set is useful to show; the key itself is
+	// never read back. cloud-json-config reports it as "*masked*" and is
+	// not modeled at all, so this comes from the presence of the
+	// "tailscale auth-key" leaf in `show config`.
+	authKeySet := false
+	if cfgRaw, err := s.Client.Run("show config", 25*time.Second); err == nil {
+		authKeySet = ParseTunnelConfig(cfgRaw).Tailscale.AuthKeySet
+	}
 	writeJSON(w, map[string]any{
-		"tailscale":          cloud.Tailscale,
-		"site_to_site":       cloud.SiteToSite,
-		"radius_client_list": clients,
+		"tailscale":              cloud.Tailscale,
+		"tailscale_auth_key_set": authKeySet,
+		"site_to_site":           cloud.SiteToSite,
+		"radius_client_list":     clients,
 	})
 }
 
@@ -61,6 +70,7 @@ type vpnRequest struct {
 	ID        int      `json:"id"`
 	Name      string   `json:"name"`
 	Secret    string   `json:"secret"`
+	AuthKey   string   `json:"auth_key"` // Tailscale auth key, write-only
 	Address   string   `json:"address"`
 	PrefixLen int      `json:"prefix_length"`
 }
@@ -90,6 +100,17 @@ func (s *Server) handlePostConfigVPN(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		lines = []string{TailscaleAcceptRoutesLine(*req.Enable)}
+	case "tailscale_auth_key":
+		key := strings.TrimSpace(req.AuthKey)
+		if key == "" {
+			writeSettingsError(w, http.StatusBadRequest, "auth_key is required")
+			return
+		}
+		if containsCLILineBreak(key) {
+			writeSettingsError(w, http.StatusBadRequest, "auth_key must be a single line")
+			return
+		}
+		lines = []string{TailscaleAuthKeyLine(key)}
 	case "tailscale_advertise_routes":
 		routes := make([]string, 0, len(req.Routes))
 		for _, r := range req.Routes {
@@ -144,5 +165,5 @@ func (s *Server) handlePostConfigVPN(w http.ResponseWriter, r *http.Request) {
 		writeSettingsError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	writeJSON(w, outcome)
+	writeJSON(w, redactOutcome(outcome))
 }

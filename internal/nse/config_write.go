@@ -596,6 +596,24 @@ func TailscaleEnableLine(enable bool) string {
 	return "no tailscale"
 }
 
+// TailscaleAuthKeyLine sets the pre-authentication key this device uses to
+// join a tailnet. CONFIRMED: "tailscale auth-key <key>" is a real,
+// currently-active line in this device's own `show config`.
+//
+// The key is write-only everywhere it appears in this app, the same way
+// the IPS oinkcode is: it is never read back, never returned in a GET, and
+// redacted out of the ApplyOutcome that echoes the applied lines (see
+// redactOutcome). cloud-json-config reports it as "*masked*", so there is
+// nothing to read back even where that command works.
+//
+// There is deliberately no "clear the key" counterpart: "no tailscale
+// auth-key" would follow this device's negation convention but is
+// unconfirmed, and guessing at it buys little, since re-keying is done by
+// setting a new key.
+func TailscaleAuthKeyLine(key string) string {
+	return "tailscale auth-key " + key
+}
+
 // TailscaleAcceptRoutesLine toggles accepting routes advertised by other
 // tailnet peers. CONFIRMED bare keyword; the negated form is UNCONFIRMED.
 func TailscaleAcceptRoutesLine(enable bool) string {
