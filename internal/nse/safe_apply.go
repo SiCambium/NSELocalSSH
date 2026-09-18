@@ -190,6 +190,16 @@ func (a *SafeApplier) Apply(block ConfigBlock) (ApplyOutcome, error) {
 	return ApplyOutcome{Status: "provisional", ConfirmToken: token, ExpiresIn: int(window.Seconds()), Lines: result.Lines}, nil
 }
 
+// PendingCount reports how many changes are applied but still awaiting
+// confirmation. A provisional change is tied to the device it was applied
+// to — its rollback pre-image is that device's config — so the connection
+// must not be repointed while one is outstanding. See Server.SwitchDevice.
+func (a *SafeApplier) PendingCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.pending)
+}
+
 // Confirm commits a provisional change, cancelling its auto-rollback and
 // persisting it to the startup config — the first point at which a
 // lockout-risk change has been proven survivable and is therefore safe to

@@ -12,6 +12,8 @@ This is a personal tool, not an official Cambium product.
 
 **License-aware UI**: reads `show feature-license` and greys out (rather than hides) any control gated behind NSE Security Plus, matching cnMaestro's own convention.
 
+**Multi-site connections**: saved connections for every site you manage, each with its own label, address, username and SSH port. Switch between them from the header, or manage the list in Settings. One connection is live at a time — opening a site closes the previous SSH session — and a switch is refused while a configuration change on the current device is still awaiting confirmation, since its rollback snapshot belongs to that device and must not be replayed onto another. Connections live in `profiles.json` next to the settings `.env`, **including their passwords in cleartext** (file mode `0600`); treat that file accordingly.
+
 **Profile export**: produces a JSON profile in the same schema as cnMaestro's own NSE Group export, so a profile built here is interchangeable with cnMaestro's profile library.
 
 **Works without `service show cloud-json-config`**: configuration reads prefer that command, whose JSON matches cnMaestro's export schema field-for-field, but not every firmware, model, or account has it. When the device rejects it, the same structure is derived from `show config` instead — the one read command every unit supports. A few values exist only in the JSON (VLAN names, the per-VLAN port-scan flag, and the feature license, which is read from its own command on export); the UI marks those as unknown rather than guessing, and everything else — VLANs, DHCP scopes, WAN settings, DNS, threat protection, firewall, VPN, management — is identical either way.

@@ -302,3 +302,103 @@ td.mono, .mono { font-family: var(--mono); }
 .muted { color: var(--muted); }
 .bar { height: 6px; background: var(--line); margin-top: 8px; }
 .bar > span { display: block; height: 100%; background: var(--accent); }
+
+/* --- Connection manager ------------------------------------------------
+   One connection is live at a time; the header control switches between
+   saved sites, and the Settings page manages the list. */
+
+.conn-switcher { position: relative; }
+
+.conn-switcher > button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 220px;
+}
+
+.conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4b5563;
+  flex: 0 0 auto;
+}
+
+.conn-dot.on { background: #34d399; }
+
+#conn-current-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conn-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 260px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid #1f2937;
+  border-radius: 8px;
+  background: #0f172a;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 45%);
+}
+
+.conn-menu-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+}
+
+.conn-menu-item:hover { background: #1f2937; }
+.conn-menu-item.active { background: #1e293b; }
+.conn-menu-host { font-size: 12px; color: #9ca3af; }
+
+.conn-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.conn-toolbar input[type="search"] { flex: 1 1 260px; max-width: 360px; }
+
+.conn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 20px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.conn-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid transparent;
+  background: #111827;
+}
+
+.conn-row:hover { background: #1f2937; }
+.conn-row.selected { border-color: #334155; }
+.conn-row.active { border-color: #14b8a6; }
+.conn-row-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conn-row-host { font-size: 12px; color: #9ca3af; }
+
+.conn-row-tag {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #14b8a6;
+}

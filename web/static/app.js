@@ -22,7 +22,10 @@ const panels = Object.fromEntries(TAB_IDS.map((id) => [id, document.getElementBy
 
 let current = "overview";
 let dhcpSub = "pools";
-let selectedSlot = 1;
+// 0 means "nothing chosen yet", so the first load of the Settings page
+// edits whichever connection is actually live rather than whichever one
+// happens to hold id 1.
+let selectedSlot = 0;
 let timer = null;
 
 const cache = {};
@@ -978,10 +981,12 @@ async function loadSettings() {
     const res = await fetch("/api/settings");
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
-    selectedSlot = data.active_id || selectedSlot || 1;
-    const slot = (data.profiles || []).find((p) => p.id === selectedSlot) || data;
-    fillSettingsForm({ ...slot, id: selectedSlot }, data);
+    // renderProfileSlots refreshes `connections`, so it runs before the
+    // form is filled from it.
     renderProfileSlots(data);
+    // Keep editing whatever is selected; fall back to the live connection.
+    if (!connById(selectedSlot)) selectedSlot = data.active_id || 0;
+    fillConnForm(connById(selectedSlot));
     applyLiveConntrack(data.live_conntrack);
     document.getElementById("settings-file").textContent = data.file ? `Saved in ${data.file}` : "";
     note.textContent = "";
@@ -991,59 +996,114 @@ async function loadSettings() {
   }
 }
 
-function fillSettingsForm(slot, data) {
-  document.getElementById("set-slot").value = String(slot.id || selectedSlot);
-  document.getElementById("set-host").value = slot.host || "";
-  document.getElementById("set-user").value = slot.user || data.user || "admin";
-  document.getElementById("set-port").value = slot.port || "22";
-  document.getElementById("set-password").value = "";
-  document.getElementById("set-password").placeholder = slot.password_set
-    ? "Leave blank to keep the current password"
-    : "Required";
+// --- Connection manager ------------------------------------------------
+//
+// One connection is live at a time: opening a site closes the previous
+// SSH session. The header switcher is the quick path; the Settings page
+// is where connections are added, renamed and deleted.
+
+let connections = [];
+let connFilter = "";
+
+function connById(id) {
+  return connections.find((c) => c.id === id) || null;
 }
 
-function renderProfileSlots(data) {
-  const el = document.getElementById("profile-slots");
-  const profiles = data.profiles || [];
-  el.innerHTML = profiles
-    .map((p) => {
-      const label = p.empty ? `Empty` : p.name || p.host;
-      const cls = [
-        "profile-slot",
-        p.id === selectedSlot ? "selected" : "",
-        p.id === data.active_id ? "active" : "",
-        p.empty ? "empty" : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-      return `<button type="button" class="${cls}" data-slot="${p.id}" data-empty="${p.empty ? "1" : "0"}">
-        <span class="slot-num">${p.id}</span>
-        <span class="slot-name">${esc(label)}</span>
-      </button>`;
-    })
+function activeConn() {
+  return connections.find((c) => c.active) || null;
+}
+
+function renderConnSwitcher() {
+  const wrap = document.getElementById("conn-switcher");
+  const label = document.getElementById("conn-current-label");
+  const menu = document.getElementById("conn-menu");
+  // With a single connection there is nothing to switch between, so the
+  // control stays out of the way rather than being a permanent no-op.
+  wrap.hidden = connections.length < 2;
+  const cur = activeConn();
+  label.textContent = cur ? cur.label : "No connection";
+  menu.innerHTML = connections
+    .map(
+      (c) => `<button type="button" class="conn-menu-item${c.active ? " active" : ""}" data-conn="${c.id}">
+        <span class="conn-menu-name">${esc(c.label)}</span>
+        <span class="conn-menu-host mono">${esc(c.host)}</span>
+      </button>`
+    )
     .join("");
 }
 
-async function openSlot(slot) {
+function renderConnList(data) {
+  const el = document.getElementById("conn-list");
+  if (!el) return;
+  const needle = connFilter.trim().toLowerCase();
+  const shown = needle
+    ? connections.filter(
+        (c) => c.label.toLowerCase().includes(needle) || c.host.toLowerCase().includes(needle)
+      )
+    : connections;
+  if (!connections.length) {
+    el.innerHTML = `<p class="muted">No saved connections yet. Add one below.</p>`;
+    return;
+  }
+  if (!shown.length) {
+    el.innerHTML = `<p class="muted">Nothing matches "${esc(connFilter)}".</p>`;
+    return;
+  }
+  el.innerHTML = shown
+    .map(
+      (c) => `<button type="button" class="conn-row${c.active ? " active" : ""}${c.id === selectedSlot ? " selected" : ""}" data-conn="${c.id}">
+        <span class="conn-dot${c.active ? " on" : ""}"></span>
+        <span class="conn-row-name">${esc(c.label)}</span>
+        <span class="conn-row-host mono">${esc(c.user)}@${esc(c.host)}:${esc(c.port)}</span>
+        ${c.active ? '<span class="conn-row-tag">connected</span>' : ""}
+      </button>`
+    )
+    .join("");
+}
+
+function fillConnForm(conn) {
+  document.getElementById("set-slot").value = String(conn ? conn.id : 0);
+  document.getElementById("set-name").value = conn ? conn.name || "" : "";
+  document.getElementById("set-host").value = conn ? conn.host : "";
+  document.getElementById("set-user").value = conn ? conn.user : "admin";
+  document.getElementById("set-port").value = conn ? conn.port : "22";
+  const pw = document.getElementById("set-password");
+  pw.value = "";
+  pw.placeholder = conn && conn.password_set ? "Leave blank to keep the current password" : "Required";
+  document.getElementById("conn-form-heading").textContent = conn
+    ? `Edit ${conn.label}`
+    : "New connection";
+  document.getElementById("settings-clear").hidden = !conn;
+}
+
+function renderProfileSlots(data) {
+  connections = data.connections || data.profiles || [];
+  renderConnSwitcher();
+  renderConnList(data);
+}
+
+async function openConnection(id) {
   const err = document.getElementById("error");
   const note = document.getElementById("settings-note");
   err.hidden = true;
-  note.textContent = "Opening…";
+  note.textContent = "Connecting…";
   try {
     const res = await fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "open", slot }),
+      body: JSON.stringify({ action: "open", id }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
+    // Every cached panel belongs to the site we just left.
     Object.keys(cache).forEach((k) => delete cache[k]);
-    selectedSlot = data.active_id || slot;
+    selectedSlot = data.active_id || id;
     await loadSettings();
     if (data.connected) {
-      note.textContent = `Opened ${data.name || data.host}`;
+      note.textContent = `Connected to ${data.name || data.host}`;
+      if (page === "status") load(current, true, true);
     } else {
-      note.textContent = "Opened, but SSH did not connect yet.";
+      note.textContent = "Selected, but SSH did not connect yet.";
       err.hidden = false;
       err.textContent = data.detail || "Could not connect";
     }
@@ -1054,23 +1114,46 @@ async function openSlot(slot) {
   }
 }
 
-document.getElementById("profile-slots").addEventListener("click", async (ev) => {
-  const btn = ev.target.closest("[data-slot]");
+// Header switcher.
+const connMenu = document.getElementById("conn-menu");
+document.getElementById("conn-current").addEventListener("click", () => {
+  connMenu.hidden = !connMenu.hidden;
+});
+connMenu.addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("[data-conn]");
   if (!btn) return;
-  const slot = Number(btn.dataset.slot);
-  selectedSlot = slot;
-  document.getElementById("set-slot").value = String(slot);
-  if (btn.dataset.empty === "1") {
-    document.querySelectorAll(".profile-slot").forEach((b) => {
-      b.classList.toggle("selected", Number(b.dataset.slot) === slot);
-    });
-    document.getElementById("set-host").value = "";
-    document.getElementById("set-password").value = "";
-    document.getElementById("set-password").placeholder = "Required";
-    document.getElementById("settings-note").textContent = `Editing empty slot ${slot}`;
-    return;
-  }
-  await openSlot(slot);
+  connMenu.hidden = true;
+  const id = Number(btn.dataset.conn);
+  if (id === (activeConn() || {}).id) return;
+  await openConnection(id);
+});
+document.addEventListener("click", (ev) => {
+  if (connMenu.hidden) return;
+  if (ev.target.closest("#conn-switcher")) return;
+  connMenu.hidden = true;
+});
+
+// Settings-page list: clicking a row selects it for editing and connects.
+document.getElementById("conn-list").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("[data-conn]");
+  if (!btn) return;
+  const id = Number(btn.dataset.conn);
+  selectedSlot = id;
+  fillConnForm(connById(id));
+  renderConnList();
+  if (id !== (activeConn() || {}).id) await openConnection(id);
+});
+
+document.getElementById("conn-filter").addEventListener("input", (ev) => {
+  connFilter = ev.target.value;
+  renderConnList();
+});
+
+document.getElementById("conn-new").addEventListener("click", () => {
+  selectedSlot = 0;
+  fillConnForm(null);
+  renderConnList();
+  document.getElementById("set-name").focus();
 });
 
 document.getElementById("settings-form").addEventListener("submit", async (ev) => {
@@ -1087,7 +1170,8 @@ document.getElementById("settings-form").addEventListener("submit", async (ev) =
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "save",
-        slot: Number(document.getElementById("set-slot").value || selectedSlot),
+        id: Number(document.getElementById("set-slot").value || 0),
+        name: document.getElementById("set-name").value,
         host: document.getElementById("set-host").value,
         user: document.getElementById("set-user").value,
         password: document.getElementById("set-password").value,
@@ -1116,7 +1200,10 @@ document.getElementById("settings-form").addEventListener("submit", async (ev) =
 });
 
 document.getElementById("settings-clear").addEventListener("click", async () => {
-  const slot = Number(document.getElementById("set-slot").value || selectedSlot);
+  const id = Number(document.getElementById("set-slot").value || 0);
+  const conn = connById(id);
+  if (!conn) return;
+  if (!window.confirm(`Delete the saved connection "${conn.label}"? This does not change the device.`)) return;
   const err = document.getElementById("error");
   const note = document.getElementById("settings-note");
   err.hidden = true;
@@ -1124,13 +1211,13 @@ document.getElementById("settings-clear").addEventListener("click", async () => 
     const res = await fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "clear", slot }),
+      body: JSON.stringify({ action: "clear", id }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
-    selectedSlot = data.active_id || slot;
+    selectedSlot = data.active_id || 0;
     await loadSettings();
-    note.textContent = `Cleared slot ${slot}`;
+    note.textContent = `Deleted ${conn.label}`;
   } catch (e) {
     err.hidden = false;
     err.textContent = e.message;

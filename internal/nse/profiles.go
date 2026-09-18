@@ -5,10 +5,24 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 )
 
-const MaxProfiles = 5
+// MaxProfiles bounds the saved-connection list. It is a sanity limit on a
+// hand-maintained local file, not the old five-slot model: connections are
+// identified by a stable ID, not by which of five slots they occupy.
+const MaxProfiles = 200
 
+// Profile is one saved connection — a site. Name is a human label ("Leeds
+// branch"), free to differ from Host; older files that predate labels, and
+// entries saved without one, fall back to the host at read time rather
+// than having the label overwritten on save.
+//
+// Password is stored in cleartext in profiles.json (mode 0600), the same
+// as it has always been. That is a deliberate, accepted trade-off rather
+// than an oversight, and worth revisiting if this file ever holds a large
+// number of customer sites.
 type Profile struct {
 	ID       int    `json:"id"`
 	Name     string `json:"name"`
@@ -18,9 +32,24 @@ type Profile struct {
 	Port     string `json:"port"`
 }
 
+// Label is what the UI shows for a connection: its name if it has one,
+// otherwise the host it points at.
+func (p Profile) Label() string {
+	if strings.TrimSpace(p.Name) != "" {
+		return p.Name
+	}
+	return p.Host
+}
+
 type ProfileStore struct {
-	ActiveID int       `json:"active_id"`
-	Profiles []Profile `json:"profiles"`
+	ActiveID int `json:"active_id"`
+	// NextIDSeq is the ID allocator's high-water mark, persisted so that
+	// deleting the newest connection cannot make the next one reuse its
+	// ID. Without it a stale reference in an open tab could act on a
+	// different site than the one it was rendered for. Files written
+	// before this field existed simply start from the highest ID present.
+	NextIDSeq int       `json:"next_id,omitempty"`
+	Profiles  []Profile `json:"profiles"`
 }
 
 func ProfilesPath(settingsPath string) string {
@@ -41,14 +70,40 @@ func (s ProfileStore) Get(id int) *Profile {
 	return nil
 }
 
-func (s *ProfileStore) Upsert(p Profile) error {
-	if p.ID < 1 || p.ID > MaxProfiles {
-		return fmt.Errorf("slot must be between 1 and %d", MaxProfiles)
+// NextID allocates an unused connection ID and advances the high-water
+// mark, so an ID is never handed out twice even across a delete.
+func (s *ProfileStore) NextID() int {
+	next := s.NextIDSeq
+	for _, p := range s.Profiles {
+		if p.ID >= next {
+			next = p.ID + 1
+		}
 	}
-	p.Name = p.Host
+	if next < 1 {
+		next = 1
+	}
+	s.NextIDSeq = next + 1
+	return next
+}
+
+// Upsert adds or replaces a connection. An ID of 0 means "new": one is
+// allocated. Unlike the old five-slot version this does NOT overwrite
+// Name with Host — a label the user typed is the whole point of a
+// connection manager.
+func (s *ProfileStore) Upsert(p Profile) (Profile, error) {
+	if p.ID == 0 {
+		if len(s.Profiles) >= MaxProfiles {
+			return Profile{}, fmt.Errorf("cannot store more than %d connections", MaxProfiles)
+		}
+		p.ID = s.NextID()
+	}
+	if p.ID < 1 {
+		return Profile{}, fmt.Errorf("connection id must be positive")
+	}
 	if p.Port == "" {
 		p.Port = "22"
 	}
+	p.Name = strings.TrimSpace(p.Name)
 	found := false
 	for i := range s.Profiles {
 		if s.Profiles[i].ID == p.ID {
@@ -60,8 +115,7 @@ func (s *ProfileStore) Upsert(p Profile) error {
 	if !found {
 		s.Profiles = append(s.Profiles, p)
 	}
-	s.ActiveID = p.ID
-	return nil
+	return p, nil
 }
 
 func (s *ProfileStore) Clear(id int) {
@@ -114,47 +168,47 @@ func LoadOrInitProfiles(path string, current Config) ProfileStore {
 	}
 	store = ProfileStore{ActiveID: 1, Profiles: []Profile{}}
 	if current.Host != "" {
-		_ = store.Upsert(Profile{
+		p, err := store.Upsert(Profile{
 			ID:       1,
-			Name:     current.Host,
 			Host:     current.Host,
 			User:     current.User,
 			Password: current.Password,
 			Port:     current.Port,
 		})
+		if err == nil {
+			store.ActiveID = p.ID
+		}
 	}
 	return store
 }
 
-func publicSlots(store ProfileStore) []map[string]any {
-	byID := map[int]Profile{}
+// publicConnections renders the saved connections for the frontend,
+// ordered by label so a long list stays navigable, and never including a
+// password — only whether one is set.
+func publicConnections(store ProfileStore) []map[string]any {
+	out := make([]map[string]any, 0, len(store.Profiles))
 	for _, p := range store.Profiles {
-		byID[p.ID] = p
-	}
-	slots := make([]map[string]any, 0, MaxProfiles)
-	for id := 1; id <= MaxProfiles; id++ {
-		p, ok := byID[id]
-		if !ok || p.Host == "" {
-			slots = append(slots, map[string]any{
-				"id":           id,
-				"name":         "",
-				"host":         "",
-				"user":         "",
-				"port":         "22",
-				"password_set": false,
-				"empty":        true,
-			})
+		if p.Host == "" {
 			continue
 		}
-		slots = append(slots, map[string]any{
+		out = append(out, map[string]any{
 			"id":           p.ID,
 			"name":         p.Name,
+			"label":        p.Label(),
 			"host":         p.Host,
 			"user":         p.User,
 			"port":         p.Port,
 			"password_set": p.Password != "",
-			"empty":        false,
+			"active":       p.ID == store.ActiveID,
 		})
 	}
-	return slots
+	sort.Slice(out, func(i, j int) bool {
+		li := strings.ToLower(out[i]["label"].(string))
+		lj := strings.ToLower(out[j]["label"].(string))
+		if li != lj {
+			return li < lj
+		}
+		return out[i]["id"].(int) < out[j]["id"].(int)
+	})
+	return out
 }

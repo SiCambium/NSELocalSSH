@@ -61,6 +61,12 @@ Every write follows the same shape:
 
 `ClassifyRisk` is the lockout list: `wan`, `lan-port`, `vlan-management-access`, `management-service`, `high-availability`, `admin-password`, `outbound-filter`, `geo-ip`, `overrides`. Anything that could plausibly cut the session doing the editing belongs here; free-text CLI overrides are always risky because they can't be judged by inspection.
 
+### Connections (multi-site)
+
+`profiles.json` (next to the writable `.env`, see `ProfilesPath`) holds the saved connections — one per site, with a stable auto-incrementing ID, a free-text `Name`, and the credentials. `Profile.Label()` falls back to the host when there's no name. `ProfileStore.NextIDSeq` is a persisted high-water mark so a delete can never make the next connection reuse an ID a UI element still refers to.
+
+Exactly one connection is live: `Server` holds a single `*Client`. **Switching goes through `Server.SwitchDevice`, never `Client.ApplyConfig` directly** — everything cached on `Server` is per-device (throughput sampler, WAN port set, threat summary) and would otherwise be served for the wrong site; the throughput sampler in particular would subtract one device's byte counters from another's. `SwitchDevice` also refuses outright while `SafeApplier.PendingCount() > 0`, because a provisional change's rollback pre-image is the *old* device's config and the expiry loop replays pre-images through whatever the shared client currently points at.
+
 ### HTTP layer
 
 `server.go` `Handler()` registers all routes on one mux: read-only `/api/<tab>` endpoints for the dashboard, `/api/config/<section>` GET+POST for configuration, `/api/debug`, `/api/license`, `/api/settings`, `/api/profile/export`. **Every state-changing endpoint must call `isSameOrigin(r)` and `writeCrossOriginBlocked(w)` on failure** — that is the only CSRF defense, and `csrf_test.go` enumerates the endpoints.

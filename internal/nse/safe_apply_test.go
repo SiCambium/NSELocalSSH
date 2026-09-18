@@ -3,6 +3,7 @@ package nse
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestClassifyRisk(t *testing.T) {
@@ -98,5 +99,71 @@ func TestSaveOnlyFailed(t *testing.T) {
 		if got := saveOnlyFailed(tt.results, tt.n); got != tt.want {
 			t.Errorf("%s: saveOnlyFailed = %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+// TestSwitchDeviceBlockedByPendingChange is the guard against writing one
+// site's configuration onto another. A provisional change holds a rollback
+// pre-image taken from the device it was applied to, and the expiry loop
+// replays pre-images through whatever the shared client currently points
+// at — so repointing the client while one is outstanding would eventually
+// push site A's stanza to site B.
+func TestSwitchDeviceBlockedByPendingChange(t *testing.T) {
+	s := &Server{Client: NewClient(Config{Host: "10.0.0.1"}), SkipConnect: true}
+	a := s.safeApplier()
+	a.mu.Lock()
+	a.pending["tok"] = pendingChange{
+		block:     ConfigBlock{Name: "wan", Risk: RiskLockout},
+		preImage:  []string{"interface eth 1", "ip address dhcp", "exit"},
+		expiresAt: time.Now().Add(time.Minute),
+	}
+	a.mu.Unlock()
+
+	err := s.SwitchDevice(Config{Host: "10.0.0.2"})
+	if err == nil {
+		t.Fatal("switching with a provisional change outstanding must be refused")
+	}
+	if got := s.Client.Snapshot().Host; got != "10.0.0.1" {
+		t.Errorf("client was repointed anyway: host = %q", got)
+	}
+
+	// Once it is confirmed, the switch goes through.
+	if _, err := a.Confirm("tok"); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if err := s.SwitchDevice(Config{Host: "10.0.0.2"}); err != nil {
+		t.Fatalf("switch after confirm: %v", err)
+	}
+	if got := s.Client.Snapshot().Host; got != "10.0.0.2" {
+		t.Errorf("host = %q, want the new device", got)
+	}
+}
+
+// TestSwitchDeviceClearsPerDeviceState covers the quieter half: caches
+// that belong to the old device must not be served for the new one. The
+// throughput sampler matters most — its first rate after a switch would
+// otherwise be computed by subtracting one device's byte counters from
+// another's.
+func TestSwitchDeviceClearsPerDeviceState(t *testing.T) {
+	s := &Server{Client: NewClient(Config{Host: "10.0.0.1"}), SkipConnect: true}
+	s.lastIfaces = []IfconfigIface{{Name: "eth1", RxBytes: 999}}
+	s.lastRates = []Throughput{{Name: "eth1"}}
+	s.lastSample = time.Now()
+	s.wanPortSet = map[string]bool{"eth1": true}
+	s.wanPortAt = time.Now()
+	s.threatCache = ThreatSummary{Enabled: true, Mode: "prevention"}
+	s.threatAt = time.Now()
+
+	if err := s.SwitchDevice(Config{Host: "10.0.0.2"}); err != nil {
+		t.Fatalf("switch: %v", err)
+	}
+	if s.lastIfaces != nil || s.lastRates != nil || !s.lastSample.IsZero() {
+		t.Error("throughput sampler still holds the previous device's counters")
+	}
+	if s.wanPortSet != nil || !s.wanPortAt.IsZero() {
+		t.Error("WAN port cache survived the switch")
+	}
+	if s.threatCache.Enabled || !s.threatAt.IsZero() {
+		t.Error("threat summary cache survived the switch")
 	}
 }

@@ -2,6 +2,7 @@ package nse
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -113,6 +114,47 @@ func (s *Server) safeApplier() *SafeApplier {
 		s.applier = NewSafeApplier(s.Client)
 	})
 	return s.applier
+}
+
+// SwitchDevice repoints the shared client at a different device, after
+// discarding every piece of state that belonged to the previous one.
+//
+// Nothing on Server is device-agnostic except the IP-to-org lookup cache
+// (which is keyed by public IP, not by device), so all of it has to go:
+// the throughput sampler in particular would otherwise compute its first
+// rate after a switch by subtracting one device's byte counters from
+// another's, producing garbage.
+//
+// A change that is still provisional blocks the switch outright rather
+// than being discarded. Its rollback pre-image is the *old* device's
+// config, and SafeApplier's expiry loop replays pre-images through
+// whatever the shared client currently points at — so letting the switch
+// through would eventually write one site's configuration onto another.
+// Confirming it, or simply waiting out the short window, clears the way.
+func (s *Server) SwitchDevice(cfg Config) error {
+	if a := s.safeApplier(); a.PendingCount() > 0 {
+		return fmt.Errorf("a configuration change on the current device is still awaiting confirmation; confirm it or wait for it to roll back before switching")
+	}
+
+	s.sampleMu.Lock()
+	s.lastIfaces, s.lastRates, s.lastSample, s.lastInterval = nil, nil, time.Time{}, 0
+	s.sampleMu.Unlock()
+
+	s.wanPortMu.Lock()
+	s.wanPortSet, s.wanPortAt = nil, time.Time{}
+	s.wanPortMu.Unlock()
+
+	s.threatMu.Lock()
+	s.threatCache, s.threatAt = ThreatSummary{}, time.Time{}
+	s.threatMu.Unlock()
+
+	if s.SkipConnect {
+		s.Client.mu.Lock()
+		s.Client.Cfg = cfg
+		s.Client.mu.Unlock()
+		return nil
+	}
+	return s.Client.ApplyConfig(cfg)
 }
 
 func (s *Server) cli(w http.ResponseWriter, cmd string, timeout time.Duration) (string, bool) {

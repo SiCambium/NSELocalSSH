@@ -23,6 +23,13 @@
       <button type="button" data-page="settings">Settings</button>
     </nav>
     <div class="top-meta">
+      <div class="conn-switcher" id="conn-switcher" hidden>
+        <button type="button" id="conn-current" title="Switch site">
+          <span class="conn-dot" id="conn-dot"></span>
+          <span id="conn-current-label">—</span>
+        </button>
+        <div class="conn-menu" id="conn-menu" hidden></div>
+      </div>
       <span id="clock"></span>
       <span id="poll-state">Idle</span>
       <div class="auto-refresh" id="auto-refresh-label">
@@ -101,13 +108,20 @@
     </section>
 
     <section id="page-settings" hidden>
-      <h2>Saved connections</h2>
-      <p class="muted">Up to 5 NSE logins. Each saved slot is named after its IP address. Click a saved IP to open it.</p>
-      <div class="profile-slots" id="profile-slots"></div>
-      <h2>Connection</h2>
-      <p class="muted">Edit the selected slot, then save. The slot name becomes the IP address.</p>
+      <h2>Connections</h2>
+      <p class="muted">Every site you manage. Click one to connect to it — the previous connection is closed.</p>
+      <div class="conn-toolbar">
+        <input id="conn-filter" type="search" placeholder="Filter by name or address" spellcheck="false" autocomplete="off">
+        <button type="button" id="conn-new">Add connection</button>
+      </div>
+      <div class="conn-list" id="conn-list"></div>
+      <h2 id="conn-form-heading">Connection</h2>
       <form id="settings-form" class="settings-form" autocomplete="off">
-        <input type="hidden" id="set-slot" value="1">
+        <input type="hidden" id="set-slot" value="0">
+        <label>
+          Name
+          <input id="set-name" name="name" type="text" spellcheck="false" placeholder="e.g. Leeds branch — defaults to the address">
+        </label>
         <label>
           IP address / host
           <input id="set-host" name="host" type="text" spellcheck="false" required>
@@ -126,7 +140,7 @@
         </label>
         <div class="settings-actions">
           <button type="submit" id="settings-save">Save and connect</button>
-          <button type="button" id="settings-clear">Clear slot</button>
+          <button type="button" id="settings-clear">Delete connection</button>
           <span id="settings-note" class="muted"></span>
         </div>
       </form>
