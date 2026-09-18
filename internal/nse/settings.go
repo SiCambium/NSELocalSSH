@@ -8,8 +8,13 @@ import (
 )
 
 type settingsRequest struct {
-	Action        string `json:"action"`
+	Action string `json:"action"`
+	// ID identifies a saved connection. Zero means "a new one" on save.
+	// Slot is the old five-slot field, still accepted so an older frontend
+	// (or a bookmarked request) keeps working; ID wins when both are set.
+	ID            int    `json:"id"`
 	Slot          int    `json:"slot"`
+	Name          string `json:"name"`
 	Host          string `json:"host"`
 	User          string `json:"user"`
 	Password      string `json:"password"`
@@ -64,7 +69,8 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 		"file":           s.settingsFile(),
 		"profiles_file":  s.profilesFile(),
 		"active_id":      active,
-		"profiles":       publicSlots(store),
+		"connections":    publicConnections(store),
+		"profiles":       publicConnections(store),
 		"live_conntrack": ReadPrefs(s.prefsFile()).LiveConntrack,
 		"ip_lookup":      ReadPrefs(s.prefsFile()).IPLookup,
 	})
@@ -84,25 +90,34 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 	if action == "" {
 		action = "save"
 	}
-	slot := req.Slot
-	if slot == 0 {
-		slot = 1
-	}
-	if slot < 1 || slot > MaxProfiles {
-		writeSettingsError(w, http.StatusBadRequest, "slot must be between 1 and 5")
-		return
-	}
 
 	cfg := s.Client.Snapshot()
 	store := LoadOrInitProfiles(s.profilesFile(), cfg)
 
+	// A save may legitimately carry no id (a brand-new connection); open
+	// and clear must name an existing one.
+	id := req.ID
+	if id == 0 {
+		id = req.Slot
+	}
+	if action != "save" && action != "prefs" {
+		if id < 1 {
+			writeSettingsError(w, http.StatusBadRequest, "id is required")
+			return
+		}
+		if store.Get(id) == nil {
+			writeSettingsError(w, http.StatusNotFound, "no saved connection with that id")
+			return
+		}
+	}
+
 	switch action {
 	case "open":
-		s.openProfile(w, store, slot)
+		s.openProfile(w, store, id)
 	case "clear":
-		s.clearProfile(w, store, slot)
+		s.clearProfile(w, store, id)
 	case "save":
-		s.saveProfile(w, store, slot, req, cfg)
+		s.saveProfile(w, store, id, req, cfg)
 	case "prefs":
 		s.savePrefs(w, req)
 	default:
@@ -164,12 +179,17 @@ func (s *Server) saveProfile(w http.ResponseWriter, store ProfileStore, slot int
 		writeSettingsError(w, http.StatusBadRequest, "password is required")
 		return
 	}
-	prof := Profile{ID: slot, Name: host, Host: host, User: user, Password: password, Port: port}
-	if err := store.Upsert(prof); err != nil {
+	prof := Profile{ID: slot, Name: strings.TrimSpace(req.Name), Host: host, User: user, Password: password, Port: port}
+	saved, err := store.Upsert(prof)
+	if err != nil {
 		writeSettingsError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.persistAndConnect(w, store, prof)
+	// Saving a connection also selects it — that is what the old slot
+	// behaviour did, and it is what you want after editing the site you
+	// are looking at. Upsert no longer does it implicitly.
+	store.ActiveID = saved.ID
+	s.persistAndConnect(w, store, saved)
 }
 
 func (s *Server) openProfile(w http.ResponseWriter, store ProfileStore, slot int) {
@@ -189,14 +209,23 @@ func (s *Server) clearProfile(w http.ResponseWriter, store ProfileStore, slot in
 		return
 	}
 	writeJSON(w, map[string]any{
-		"ok":        true,
-		"cleared":   true,
-		"active_id": store.ActiveID,
-		"profiles":  publicSlots(store),
+		"ok":          true,
+		"cleared":     true,
+		"active_id":   store.ActiveID,
+		"connections": publicConnections(store),
+		"profiles":    publicConnections(store),
 	})
 }
 
 func (s *Server) persistAndConnect(w http.ResponseWriter, store ProfileStore, prof Profile) {
+	// Checked before anything is written: if the switch is going to be
+	// refused, neither the profile store nor the .env should have moved on
+	// to a device we are not actually going to connect to.
+	if a := s.safeApplier(); a.PendingCount() > 0 {
+		writeSettingsError(w, http.StatusConflict,
+			"a configuration change on the current device is still awaiting confirmation; confirm it or wait for it to roll back before switching")
+		return
+	}
 	if err := WriteProfiles(s.profilesFile(), store); err != nil {
 		writeSettingsError(w, http.StatusInternalServerError, "could not save settings: "+err.Error())
 		return
@@ -216,14 +245,9 @@ func (s *Server) persistAndConnect(w http.ResponseWriter, store ProfileStore, pr
 		return
 	}
 	ApplyEnv(cfg)
-	var connErr error
-	if !s.SkipConnect {
-		connErr = s.Client.ApplyConfig(cfg)
-	} else {
-		s.Client.mu.Lock()
-		s.Client.Cfg = cfg
-		s.Client.mu.Unlock()
-	}
+	// SwitchDevice clears the per-device caches the old connection left
+	// behind, and refuses outright if a change there is still provisional.
+	connErr := s.SwitchDevice(cfg)
 	resp := map[string]any{
 		"ok":           true,
 		"saved":        true,
@@ -234,7 +258,8 @@ func (s *Server) persistAndConnect(w http.ResponseWriter, store ProfileStore, pr
 		"file":         s.settingsFile(),
 		"active_id":    store.ActiveID,
 		"name":         prof.Name,
-		"profiles":     publicSlots(store),
+		"connections":  publicConnections(store),
+		"profiles":     publicConnections(store),
 		"connected":    connErr == nil,
 	}
 	if connErr != nil {

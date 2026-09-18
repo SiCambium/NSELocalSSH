@@ -14,11 +14,11 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--font); }
-button, input { font: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
 
 .top {
   display: grid;
-  grid-template-columns: minmax(200px, 1fr) auto minmax(280px, 1fr);
+  grid-template-columns: minmax(340px, 1fr) auto minmax(280px, 1fr);
   align-items: center;
   gap: 16px;
   padding: 14px 24px;
@@ -302,3 +302,181 @@ td.mono, .mono { font-family: var(--mono); }
 .muted { color: var(--muted); }
 .bar { height: 6px; background: var(--line); margin-top: 8px; }
 .bar > span { display: block; height: 100%; background: var(--accent); }
+
+/* --- Connection manager ------------------------------------------------
+   One connection is live at a time. The switcher sits beside the page
+   title rather than in the meta strip: it names the device every other
+   number on screen refers to, so it has to read as a primary control and
+   not as another status readout.
+
+   Everything here uses the palette tokens rather than its own hex values,
+   so it stays consistent with the rest of the app and inherits any future
+   change to them. */
+
+.conn-switcher { position: relative; flex: 0 1 auto; min-width: 0; }
+
+#conn-current {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 12px;
+  min-height: 44px;
+  max-width: 260px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+#conn-current:hover { border-color: var(--accent); }
+
+.conn-current-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.2;
+  overflow: hidden;
+}
+
+.conn-current-kicker {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+#conn-current-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 170px;
+}
+
+.conn-caret { color: var(--muted); font-size: 11px; }
+
+.conn-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line);
+  flex: 0 0 auto;
+}
+
+.conn-dot.on { background: var(--up); }
+
+.conn-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 40;
+  min-width: 300px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-2);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 45%);
+}
+
+.conn-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.conn-menu-item:hover { background: var(--bg); }
+.conn-menu-item.active { background: var(--bg); }
+
+.conn-menu-text { display: flex; flex-direction: column; gap: 1px; overflow: hidden; }
+.conn-menu-name { color: var(--text); }
+.conn-menu-host { font-size: 12px; color: var(--muted); }
+.conn-menu-empty { padding: 10px; margin: 0; font-size: 13px; }
+.conn-menu-sep { height: 1px; margin: 4px 0; background: var(--line); }
+.conn-menu-manage { color: var(--accent); font-size: 13px; }
+
+.conn-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+#conn-filter {
+  flex: 1 1 260px;
+  max-width: 360px;
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 9px 10px;
+}
+
+#conn-filter:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+#conn-filter::placeholder { color: var(--muted); }
+
+#conn-new {
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 8px 16px;
+  cursor: pointer;
+}
+
+#conn-new:hover { border-color: var(--accent); }
+
+.conn-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 24px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.conn-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.conn-row:hover { border-color: var(--muted); }
+.conn-row.selected { border-color: var(--muted); }
+.conn-row.active { border-color: var(--accent); }
+
+.conn-row-name {
+  flex: 1 1 auto;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conn-row-host { font-size: 12px; color: var(--muted); }
+
+.conn-row-tag {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}

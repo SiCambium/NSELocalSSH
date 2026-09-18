@@ -22,7 +22,10 @@ const panels = Object.fromEntries(TAB_IDS.map((id) => [id, document.getElementBy
 
 let current = "overview";
 let dhcpSub = "pools";
-let selectedSlot = 1;
+// 0 means "nothing chosen yet", so the first load of the Settings page
+// edits whichever connection is actually live rather than whichever one
+// happens to hold id 1.
+let selectedSlot = 0;
 let timer = null;
 
 const cache = {};
@@ -268,6 +271,20 @@ function throughputTable(rows, empty) {
   ) || (empty ? `<p class="muted">${esc(empty)}</p>` : "");
 }
 
+// The device model comes from the first line of `show version` (parsed into
+// version.model). Only /api/overview and /api/details carry it, so remember the
+// last value — the Configuration and Settings pages must keep the same brand
+// line even though their payloads have no version block.
+let deviceModel = "";
+
+function setBrand(v) {
+  if (v && v.model) deviceModel = v.model;
+  const label = deviceModel ? `Cambium ${deviceModel}` : "Cambium NSE";
+  const kicker = document.getElementById("kicker");
+  if (kicker) kicker.textContent = label;
+  document.title = deviceModel ? `${deviceModel} Status` : "NSE Status";
+}
+
 function renderOverview(d) {
   const v = d.version || {};
   const remote = d.remote || {};
@@ -275,7 +292,8 @@ function renderOverview(d) {
   const cpu = d.cpu || {};
   const usedPct = mem.used_pct != null ? mem.used_pct : 0;
   const cpuPct = cpu.used_pct != null ? cpu.used_pct : 0;
-  document.getElementById("title").textContent = v.hostname || v.identity || "NSE 3000";
+  setBrand(v);
+  document.getElementById("title").textContent = v.hostname || v.identity || "Status";
   document.getElementById("clock").textContent = (d.clock && d.clock.clock) || "";
   const wan = d.wan_throughput || [];
   const wanGrid = wan.length
@@ -372,7 +390,8 @@ function renderDetails(d) {
   const v = d.version || {};
   const m = d.management || {};
   const rem = d.remote || {};
-  document.getElementById("title").textContent = v.identity || "NSE 3000";
+  setBrand(v);
+  document.getElementById("title").textContent = v.identity || "Status";
   document.getElementById("clock").textContent = (d.clock && d.clock.clock) || "";
   const root = (d.disks || []).find((x) => x.mounted === "/") || {};
   return `
@@ -949,11 +968,18 @@ function showPage(next, force = false) {
   });
   document.getElementById("page-status").hidden = next !== "status";
   document.getElementById("page-settings").hidden = next !== "settings";
+  document.getElementById("page-connections").hidden = next !== "connections";
   const configPage = document.getElementById("page-config");
   if (configPage) configPage.hidden = next !== "config";
   document.getElementById("status-tabs").hidden = next !== "status";
   document.getElementById("refresh").hidden = next !== "status";
   document.getElementById("auto-refresh-label").hidden = next !== "status";
+  if (next === "connections") {
+    document.getElementById("title").textContent = "Connections";
+    loadSettings();
+    location.hash = "connections";
+    return;
+  }
   if (next === "settings") {
     document.getElementById("title").textContent = "Settings";
     loadSettings();
@@ -978,10 +1004,12 @@ async function loadSettings() {
     const res = await fetch("/api/settings");
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
-    selectedSlot = data.active_id || selectedSlot || 1;
-    const slot = (data.profiles || []).find((p) => p.id === selectedSlot) || data;
-    fillSettingsForm({ ...slot, id: selectedSlot }, data);
+    // renderProfileSlots refreshes `connections`, so it runs before the
+    // form is filled from it.
     renderProfileSlots(data);
+    // Keep editing whatever is selected; fall back to the live connection.
+    if (!connById(selectedSlot)) selectedSlot = data.active_id || 0;
+    fillConnForm(connById(selectedSlot));
     applyLiveConntrack(data.live_conntrack);
     document.getElementById("settings-file").textContent = data.file ? `Saved in ${data.file}` : "";
     note.textContent = "";
@@ -991,59 +1019,123 @@ async function loadSettings() {
   }
 }
 
-function fillSettingsForm(slot, data) {
-  document.getElementById("set-slot").value = String(slot.id || selectedSlot);
-  document.getElementById("set-host").value = slot.host || "";
-  document.getElementById("set-user").value = slot.user || data.user || "admin";
-  document.getElementById("set-port").value = slot.port || "22";
-  document.getElementById("set-password").value = "";
-  document.getElementById("set-password").placeholder = slot.password_set
-    ? "Leave blank to keep the current password"
-    : "Required";
+// --- Connection manager ------------------------------------------------
+//
+// One connection is live at a time: opening a site closes the previous
+// SSH session. The header switcher is the quick path; the Settings page
+// is where connections are added, renamed and deleted.
+
+let connections = [];
+let connFilter = "";
+
+function connById(id) {
+  return connections.find((c) => c.id === id) || null;
 }
 
-function renderProfileSlots(data) {
-  const el = document.getElementById("profile-slots");
-  const profiles = data.profiles || [];
-  el.innerHTML = profiles
-    .map((p) => {
-      const label = p.empty ? `Empty` : p.name || p.host;
-      const cls = [
-        "profile-slot",
-        p.id === selectedSlot ? "selected" : "",
-        p.id === data.active_id ? "active" : "",
-        p.empty ? "empty" : "",
-      ]
-        .filter(Boolean)
-        .join(" ");
-      return `<button type="button" class="${cls}" data-slot="${p.id}" data-empty="${p.empty ? "1" : "0"}">
-        <span class="slot-num">${p.id}</span>
-        <span class="slot-name">${esc(label)}</span>
-      </button>`;
-    })
+function activeConn() {
+  return connections.find((c) => c.active) || null;
+}
+
+function renderConnSwitcher() {
+  const label = document.getElementById("conn-current-label");
+  const menu = document.getElementById("conn-menu");
+  const cur = activeConn();
+  label.textContent = cur ? cur.label : "No connection";
+  // Always rendered, including with a single site. It is the only
+  // persistent indication of *which device* everything on screen refers
+  // to, and hiding it until a second connection exists meant there was
+  // nothing to discover the feature from in the state every new user
+  // starts in.
+  const items = connections
+    .map(
+      (c) => `<button type="button" class="conn-menu-item${c.active ? " active" : ""}" data-conn="${c.id}">
+        <span class="conn-dot${c.active ? " on" : ""}"></span>
+        <span class="conn-menu-text">
+          <span class="conn-menu-name">${esc(c.label)}</span>
+          <span class="conn-menu-host mono">${esc(c.user)}@${esc(c.host)}:${esc(c.port)}</span>
+        </span>
+      </button>`
+    )
+    .join("");
+  menu.innerHTML = `${items || '<p class="conn-menu-empty muted">No saved connections yet.</p>'}
+    <div class="conn-menu-sep"></div>
+    <button type="button" class="conn-menu-item conn-menu-manage" data-conn-manage="1">
+      ${connections.length ? "Manage connections…" : "Add a connection…"}
+    </button>`;
+}
+
+function renderConnList(data) {
+  const el = document.getElementById("conn-list");
+  if (!el) return;
+  const needle = connFilter.trim().toLowerCase();
+  const shown = needle
+    ? connections.filter(
+        (c) => c.label.toLowerCase().includes(needle) || c.host.toLowerCase().includes(needle)
+      )
+    : connections;
+  if (!connections.length) {
+    el.innerHTML = `<p class="muted">No saved connections yet. Add one below.</p>`;
+    return;
+  }
+  if (!shown.length) {
+    el.innerHTML = `<p class="muted">Nothing matches "${esc(connFilter)}".</p>`;
+    return;
+  }
+  el.innerHTML = shown
+    .map(
+      (c) => `<button type="button" class="conn-row${c.active ? " active" : ""}${c.id === selectedSlot ? " selected" : ""}" data-conn="${c.id}">
+        <span class="conn-dot${c.active ? " on" : ""}"></span>
+        <span class="conn-row-name">${esc(c.label)}</span>
+        <span class="conn-row-host mono">${esc(c.user)}@${esc(c.host)}:${esc(c.port)}</span>
+        ${c.active ? '<span class="conn-row-tag">connected</span>' : ""}
+      </button>`
+    )
     .join("");
 }
 
-async function openSlot(slot) {
+function fillConnForm(conn) {
+  document.getElementById("set-slot").value = String(conn ? conn.id : 0);
+  document.getElementById("set-name").value = conn ? conn.name || "" : "";
+  document.getElementById("set-host").value = conn ? conn.host : "";
+  document.getElementById("set-user").value = conn ? conn.user : "admin";
+  document.getElementById("set-port").value = conn ? conn.port : "22";
+  const pw = document.getElementById("set-password");
+  pw.value = "";
+  pw.placeholder = conn && conn.password_set ? "Leave blank to keep the current password" : "Required";
+  document.getElementById("conn-form-heading").textContent = conn
+    ? `Edit ${conn.label}`
+    : "New connection";
+  document.getElementById("settings-clear").hidden = !conn;
+}
+
+function renderProfileSlots(data) {
+  connections = data.connections || data.profiles || [];
+  renderConnSwitcher();
+  renderConnList(data);
+}
+
+async function openConnection(id) {
   const err = document.getElementById("error");
   const note = document.getElementById("settings-note");
   err.hidden = true;
-  note.textContent = "Opening…";
+  note.textContent = "Connecting…";
   try {
     const res = await fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "open", slot }),
+      body: JSON.stringify({ action: "open", id }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
+    // Every cached panel belongs to the site we just left.
     Object.keys(cache).forEach((k) => delete cache[k]);
-    selectedSlot = data.active_id || slot;
+    selectedSlot = data.active_id || id;
     await loadSettings();
     if (data.connected) {
-      note.textContent = `Opened ${data.name || data.host}`;
+      note.textContent = `Connected to ${data.name || data.host}`;
+      if (page === "status") load(current, true, true);
     } else {
-      note.textContent = "Opened, but SSH did not connect yet.";
+      note.textContent = "Selected, but SSH did not connect yet.";
       err.hidden = false;
       err.textContent = data.detail || "Could not connect";
     }
@@ -1054,23 +1146,64 @@ async function openSlot(slot) {
   }
 }
 
-document.getElementById("profile-slots").addEventListener("click", async (ev) => {
-  const btn = ev.target.closest("[data-slot]");
-  if (!btn) return;
-  const slot = Number(btn.dataset.slot);
-  selectedSlot = slot;
-  document.getElementById("set-slot").value = String(slot);
-  if (btn.dataset.empty === "1") {
-    document.querySelectorAll(".profile-slot").forEach((b) => {
-      b.classList.toggle("selected", Number(b.dataset.slot) === slot);
-    });
-    document.getElementById("set-host").value = "";
-    document.getElementById("set-password").value = "";
-    document.getElementById("set-password").placeholder = "Required";
-    document.getElementById("settings-note").textContent = `Editing empty slot ${slot}`;
+// Header switcher.
+const connMenu = document.getElementById("conn-menu");
+const connCurrentBtn = document.getElementById("conn-current");
+
+function closeConnMenu() {
+  connMenu.hidden = true;
+  connCurrentBtn.setAttribute("aria-expanded", "false");
+}
+
+connCurrentBtn.addEventListener("click", () => {
+  const opening = connMenu.hidden;
+  connMenu.hidden = !opening;
+  connCurrentBtn.setAttribute("aria-expanded", opening ? "true" : "false");
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") closeConnMenu();
+});
+connMenu.addEventListener("click", async (ev) => {
+  const manage = ev.target.closest("[data-conn-manage]");
+  if (manage) {
+    closeConnMenu();
+    showPage("connections");
     return;
   }
-  await openSlot(slot);
+  const btn = ev.target.closest("[data-conn]");
+  if (!btn) return;
+  closeConnMenu();
+  const id = Number(btn.dataset.conn);
+  if (id === (activeConn() || {}).id) return;
+  await openConnection(id);
+});
+document.addEventListener("click", (ev) => {
+  if (connMenu.hidden) return;
+  if (ev.target.closest("#conn-switcher")) return;
+  closeConnMenu();
+});
+
+// Settings-page list: clicking a row selects it for editing and connects.
+document.getElementById("conn-list").addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("[data-conn]");
+  if (!btn) return;
+  const id = Number(btn.dataset.conn);
+  selectedSlot = id;
+  fillConnForm(connById(id));
+  renderConnList();
+  if (id !== (activeConn() || {}).id) await openConnection(id);
+});
+
+document.getElementById("conn-filter").addEventListener("input", (ev) => {
+  connFilter = ev.target.value;
+  renderConnList();
+});
+
+document.getElementById("conn-new").addEventListener("click", () => {
+  selectedSlot = 0;
+  fillConnForm(null);
+  renderConnList();
+  document.getElementById("set-name").focus();
 });
 
 document.getElementById("settings-form").addEventListener("submit", async (ev) => {
@@ -1087,7 +1220,8 @@ document.getElementById("settings-form").addEventListener("submit", async (ev) =
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         action: "save",
-        slot: Number(document.getElementById("set-slot").value || selectedSlot),
+        id: Number(document.getElementById("set-slot").value || 0),
+        name: document.getElementById("set-name").value,
         host: document.getElementById("set-host").value,
         user: document.getElementById("set-user").value,
         password: document.getElementById("set-password").value,
@@ -1116,7 +1250,10 @@ document.getElementById("settings-form").addEventListener("submit", async (ev) =
 });
 
 document.getElementById("settings-clear").addEventListener("click", async () => {
-  const slot = Number(document.getElementById("set-slot").value || selectedSlot);
+  const id = Number(document.getElementById("set-slot").value || 0);
+  const conn = connById(id);
+  if (!conn) return;
+  if (!window.confirm(`Delete the saved connection "${conn.label}"? This does not change the device.`)) return;
   const err = document.getElementById("error");
   const note = document.getElementById("settings-note");
   err.hidden = true;
@@ -1124,13 +1261,13 @@ document.getElementById("settings-clear").addEventListener("click", async () => 
     const res = await fetch("/api/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "clear", slot }),
+      body: JSON.stringify({ action: "clear", id }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || res.statusText);
-    selectedSlot = data.active_id || slot;
+    selectedSlot = data.active_id || 0;
     await loadSettings();
-    note.textContent = `Cleared slot ${slot}`;
+    note.textContent = `Deleted ${conn.label}`;
   } catch (e) {
     err.hidden = false;
     err.textContent = e.message;
@@ -1249,24 +1386,47 @@ autoInterval.addEventListener("change", () => {
   startAutoRefresh();
 });
 
+// afterScripts defers work until every <script> tag in the document has
+// executed. app.js runs first, so at this point config-common.js and the
+// section modules it hosts do not exist yet — and showPage("config") calls
+// window.NSEConfig.onShow(), which would silently no-op and leave the
+// Configuration page blank.
+//
+// This used to be a setTimeout(fn, 0), which only *usually* wins that
+// race: a timer callback runs whenever the parser next yields, which may
+// be before the remaining script tags have run. When it lost, a deep link
+// or reload onto #config rendered an empty page with no error anywhere.
+// DOMContentLoaded is the event that actually guarantees what is needed.
+function afterScripts(fn) {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", fn, { once: true });
+  } else {
+    fn();
+  }
+}
+
 if (location.hash === "#settings") {
   showPage("settings");
+} else if (location.hash === "#connections") {
+  afterScripts(() => showPage("connections"));
 } else if (location.hash === "#config") {
-  // Deferred: config-common.js (and the section modules it hosts) load via
-  // later <script> tags that haven't run yet at this point in app.js's own
-  // synchronous execution, so window.NSEConfig.onShow() — which showPage
-  // calls for the config page — would silently no-op and leave the page
-  // blank. Deferring to a fresh task runs this after every script tag has
-  // executed.
-  setTimeout(() => showPage("config"), 0);
+  afterScripts(() => showPage("config"));
 } else {
   activate("overview", true);
-  fetch("/api/settings")
-    .then((r) => r.json())
-    .then((d) => {
-      applyLiveConntrack(d.live_conntrack);
-      if (!d.password_set) showPage("settings");
-    })
-    .catch(() => {});
 }
+
+// The switcher lives in the header, so it has to know the connection list
+// on every page — not just the two that call loadSettings(). This runs
+// unconditionally at startup for that reason; it used to be tucked inside
+// the no-hash branch, which left the switcher showing "—" and an empty
+// menu whenever the app opened straight onto Status.
+fetch("/api/settings")
+  .then((r) => r.json())
+  .then((d) => {
+    renderProfileSlots(d);
+    applyLiveConntrack(d.live_conntrack);
+    if (!d.password_set && !location.hash) showPage("connections");
+  })
+  .catch(() => {});
+
 startAutoRefresh();

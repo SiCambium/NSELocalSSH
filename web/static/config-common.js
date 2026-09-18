@@ -139,7 +139,12 @@
   function renderOutcome(container, outcome) {
     return new Promise((resolve) => {
       if (outcome.status === "applied") {
-        container.innerHTML = `<p class="apply-ok">Applied.</p>`;
+        // An "applied" outcome can still carry a reason — the change took
+        // effect but persisting it to the startup config didn't, which the
+        // operator needs to know because it won't survive a reboot.
+        container.innerHTML = outcome.reason
+          ? `<p class="apply-ok">Applied.</p><p class="warn">${esc(outcome.reason)}</p>`
+          : `<p class="apply-ok">Applied and saved.</p>`;
         resolve(outcome);
         return;
       }
@@ -149,38 +154,68 @@
         return;
       }
       if (outcome.status === "rolled_back") {
-        container.innerHTML = `<p class="apply-error">Rolled back automatically: ${esc(outcome.reason || "device unreachable after change")}</p>`;
+        container.innerHTML = `<p class="apply-error">Undone: ${esc(outcome.reason || "the device stopped answering after the change")}</p>`;
+        resolve(outcome);
+        return;
+      }
+      // The change broke access to the device AND the undo could not be
+      // delivered over the connection it broke. Nothing in this app can
+      // fix that, so it says so plainly and gives the recovery that does
+      // work — the change was never saved, so a power-cycle restores.
+      if (outcome.status === "unreachable") {
+        container.innerHTML = `<p class="apply-error"><strong>The device is not responding and could not be restored automatically.</strong></p>
+          <p class="warn">${esc(outcome.reason || "")}</p>`;
         resolve(outcome);
         return;
       }
       if (outcome.status === "provisional") {
         let remaining = outcome.expires_in || 60;
-        const render = () => {
-          container.innerHTML = `<div class="apply-provisional">
-            <p>Applied — verifying reachability. Confirm within <strong>${remaining}s</strong> or it will be undone automatically.</p>
-            <button type="button" class="modal-save" data-role="confirm-apply">Confirm</button>
-          </div>`;
-          container.querySelector('[data-role="confirm-apply"]').addEventListener("click", async () => {
-            clearInterval(timer);
-            try {
-              await postJSON("/api/config/confirm", { token: outcome.confirm_token });
-              container.innerHTML = `<p class="apply-ok">Confirmed.</p>`;
-            } catch (e) {
-              container.innerHTML = `<p class="apply-error">${esc(e.message)}</p>`;
-            }
-            resolve(outcome);
-          });
+        // Built once. An earlier version re-rendered this whole block on
+        // every tick of the countdown, which destroyed and recreated the
+        // Confirm button sixty times — and a click only fires when
+        // mousedown and mouseup land on the same element, so a press that
+        // straddled a tick produced no event at all. The change then
+        // expired unconfirmed and a later click reported "no pending
+        // change for that token". Only the seconds are updated now; the
+        // button and its listener are never replaced.
+        container.innerHTML = `<div class="apply-provisional">
+          <p>Applied — verifying reachability. Confirm within <strong data-role="countdown">${remaining}s</strong> or it will be undone automatically.</p>
+          <button type="button" class="modal-save" data-role="confirm-apply">Confirm</button>
+        </div>`;
+        const countdownEl = container.querySelector('[data-role="countdown"]');
+        const confirmBtn = container.querySelector('[data-role="confirm-apply"]');
+
+        let settled = false;
+        const finish = (html) => {
+          if (settled) return;
+          settled = true;
+          clearInterval(timer);
+          container.innerHTML = html;
+          resolve(outcome);
         };
-        render();
+
+        confirmBtn.addEventListener("click", async () => {
+          if (settled) return;
+          // Stop the countdown and disable immediately, so a second click
+          // cannot send the same token twice.
+          clearInterval(timer);
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = "Confirming…";
+          try {
+            await postJSON("/api/config/confirm", { token: outcome.confirm_token });
+            finish(`<p class="apply-ok">Confirmed and saved.</p>`);
+          } catch (e) {
+            finish(`<p class="apply-error">${esc(e.message)}</p>`);
+          }
+        });
+
         const timer = setInterval(() => {
           remaining -= 1;
           if (remaining <= 0) {
-            clearInterval(timer);
-            container.innerHTML = `<p class="apply-error">Timed out waiting for confirmation — rolled back automatically.</p>`;
-            resolve(outcome);
+            finish(`<p class="apply-error">Timed out waiting for confirmation — the change was undone.</p>`);
             return;
           }
-          render();
+          countdownEl.textContent = `${remaining}s`;
         }, 1000);
         return;
       }

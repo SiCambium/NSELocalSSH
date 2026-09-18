@@ -20,9 +20,13 @@ type Block struct {
 	Children []Node
 }
 
-// blockOpeners lists every context-opening line documented in
-// NSE3000-CLI-REFERENCE.md. A line matching one of these (after whitespace
-// normalization) starts a nested Block instead of being treated as a leaf.
+// blockOpeners lists context-opening lines confirmed from
+// NSE3000-CLI-REFERENCE.md. Matching one of these (after whitespace
+// normalization) always starts a nested Block — even when the block turns
+// out to be empty, which indentation alone cannot detect and which
+// Find()-based callers rely on to tell "section present but empty" apart
+// from "section absent". Lines outside this list can still open a block;
+// see ParseBlockTree.
 var blockOpeners = []*regexp.Regexp{
 	regexp.MustCompile(`^interface (eth|vlan) \d+$`),
 	regexp.MustCompile(`^ip dhcp pool \d+$`),
@@ -40,6 +44,14 @@ var blockOpeners = []*regexp.Regexp{
 	regexp.MustCompile(`^group \d+$`),
 	regexp.MustCompile(`^ip group \d+$`),
 	regexp.MustCompile(`^application-group \d+$`),
+}
+
+// indentOf returns the display width of a line's leading whitespace,
+// counting a tab as one column — this device indents with spaces, and the
+// only thing that matters here is the relative ordering of two lines'
+// indents, not their exact column.
+func indentOf(line string) int {
+	return len(line) - len(strings.TrimLeft(line, " \t"))
 }
 
 func normalizeSpaces(s string) string {
@@ -61,52 +73,102 @@ func isBlockOpener(normalized string) bool {
 // leaves of whatever context is currently open, and any still-open blocks
 // at end of input are implicitly closed.
 //
-// The device's own `show config` renderer is inconsistent about how a
-// block's end is marked: interface/pool/vlan-style blocks are closed only
-// by the next "!" separator with no explicit "exit" line, while blocks
-// entered by a bare keyword (vpn-server, dns-filter policy N, filter
-// precedence N) usually show an explicit "exit" before the next "!". Both
-// are handled uniformly here: "exit" pops exactly one level, and "!"
-// resets the whole stack back to the root regardless of current depth.
-// Blank lines are ignored.
+// The device's own `show config` renderer is wildly inconsistent about how
+// a block ends. Some blocks ("interface eth 1", "ip dhcp pool 1") are
+// closed only by the next "!". Some ("vpn-server", "dns-filter policy 1")
+// print an explicit "exit". Some ("ip group 1") print neither and simply
+// end at the next top-level entry. And some — "port-forward-rule 1" and
+// "source-nat-rule 1", both nested inside an interface on a live
+// firmware-2.3-r6 unit — end only when the next sibling at the same indent
+// begins.
 //
-// One block type is worse than inconsistent about its closing marker: it
-// has none at all. "ip group N" (confirmed by live capture) ends with
-// neither "!" nor "exit" — just a blank line before the next top-level
-// entry. Without a fallback, an open-but-never-closed "ip group" block
-// would silently swallow everything after it (hostname, timezone, every
-// section that follows) as its own children. The fallback: a line with no
-// leading whitespace is always top-level content, so it forces the stack
-// back to root before being processed, regardless of what's still nominally
-// open — "!" and "exit" are exempted since they already have their own
-// (narrower) popping logic above.
+// What the renderer IS consistent about is indentation: a block's contents
+// are always printed deeper than its header. So indentation, not a list of
+// known keywords, is the primary signal here:
+//
+//   - "!" resets the stack to the root, whatever depth it was at.
+//   - "exit" pops exactly one level.
+//   - Any other line first pops every open block whose header is indented
+//     at or deeper than the line itself, which closes implicitly-ended
+//     blocks (a same-indent sibling, or a top-level line ending a nested
+//     one) without needing to know their names.
+//   - The line then opens a new block if it matches blockOpeners, or if
+//     the next content line is indented deeper than it.
+//
+// Keeping blockOpeners as an additional signal matters for blocks that are
+// legitimately empty, where there is no deeper line to detect.
+//
+// Getting this wrong is not cosmetic. ExtractStanza builds SafeApplier's
+// rollback pre-image out of this tree, so an unrecognized sub-context used
+// to do two damaging things at once on a real device: flatten its children
+// into the parent (replaying "source-nat-rule 2" while still inside
+// "source-nat-rule 1"), and — because its stray "exit" then popped the
+// nearest *recognized* ancestor — silently truncate that ancestor's
+// stanza, so a "vpn-server" rollback restored three leaves and dropped the
+// whole wireguard sub-block.
+//
+// One inference is carried over from the old behavior rather than
+// independently confirmed: ToLines emits an explicit "exit" after every
+// nested block, including these indentation-derived ones, which assumes
+// "exit" is accepted to leave any sub-context on this CLI. That is
+// confirmed for the named contexts in blockOpeners and consistent with
+// every context observed since; a wrong guess here is caught by
+// Client.unwindLocked, which drops the shell rather than leaving it wedged.
 func ParseBlockTree(raw string) *Block {
 	lines := linesOf(raw, "show config")
 	root := &Block{}
 	stack := []*Block{root}
-	for _, line := range lines {
+	// indents[i] is the display indent of stack[i]'s header. The root sits
+	// at -1 so that a line at column 0 pops everything but never the root.
+	indents := []int{-1}
+
+	// nextContentIndent reports the indent of the next line that is neither
+	// blank nor a "!" separator, or -1 if there is none. "exit" counts as
+	// content: a context entered and left immediately ("ike-eap" followed
+	// by a deeper "exit") has no children but is still a context, and
+	// treating it as a leaf would let its "exit" pop the parent instead.
+	nextContentIndent := func(from int) int {
+		for j := from; j < len(lines); j++ {
+			t := strings.TrimSpace(lines[j])
+			if t == "" || t == "!" {
+				continue
+			}
+			return indentOf(lines[j])
+		}
+		return -1
+	}
+
+	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
 			continue
 		}
-		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") && trimmed != "!" && trimmed != "exit" {
-			stack = stack[:1]
+		if trimmed == "!" {
+			stack, indents = stack[:1], indents[:1]
+			continue
 		}
-		top := stack[len(stack)-1]
-		switch {
-		case trimmed == "!":
-			stack = stack[:1]
-		case trimmed == "exit":
+		if trimmed == "exit" {
 			if len(stack) > 1 {
-				stack = stack[:len(stack)-1]
+				stack, indents = stack[:len(stack)-1], indents[:len(indents)-1]
 			}
-		case isBlockOpener(normalizeSpaces(trimmed)):
-			b := &Block{Header: normalizeSpaces(trimmed)}
+			continue
+		}
+
+		ind := indentOf(line)
+		for len(stack) > 1 && ind <= indents[len(indents)-1] {
+			stack, indents = stack[:len(stack)-1], indents[:len(indents)-1]
+		}
+
+		top := stack[len(stack)-1]
+		normalized := normalizeSpaces(trimmed)
+		if isBlockOpener(normalized) || nextContentIndent(i+1) > ind {
+			b := &Block{Header: normalized}
 			top.Children = append(top.Children, Node{Block: b})
 			stack = append(stack, b)
-		default:
-			top.Children = append(top.Children, Node{Line: trimmed})
+			indents = append(indents, ind)
+			continue
 		}
+		top.Children = append(top.Children, Node{Line: trimmed})
 	}
 	return root
 }

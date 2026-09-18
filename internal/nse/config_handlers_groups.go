@@ -135,7 +135,7 @@ func (s *Server) handlePostConfigGroups(w http.ResponseWriter, r *http.Request) 
 	block := ConfigBlock{Name: "groups-" + req.Action, Lines: lines, Risk: RiskNone}
 	outcome, err := s.safeApplier().Apply(block)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	writeJSON(w, outcome)

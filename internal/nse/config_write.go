@@ -17,6 +17,26 @@ type ApplyResult struct {
 	Error string       `json:"error,omitempty"`
 }
 
+// SaveConfigLine is the CLI command that persists the running config to
+// the device's startup config. Without it, every change this app makes
+// lives only in the running config and is lost on reboot.
+//
+// CONFIRMED live on an NSE4000 running 2.4-r1: the bare "save" command
+// returns "[Config Save OK]" and leaves the running config byte-identical.
+// That token is notable — this CLI has no general success token, so
+// success is normally inferred from the absence of an error line (see
+// classifyLine). Whether older firmware prints the same token is unknown,
+// so it is treated as confirmation when present rather than required:
+// a save is judged failed only by the usual error convention.
+//
+// NSE3000-CLI-REFERENCE.md previously listed "save"/"apply" as untested
+// precisely to avoid persisting probe changes; "save" is now confirmed,
+// "apply" remains untested and unused.
+const SaveConfigLine = "save"
+
+// ConfigSaveOKToken is the positive acknowledgement SaveConfigLine prints.
+const ConfigSaveOKToken = "[Config Save OK]"
+
 // ApplyLines sends a sequence of CLI lines via RunSequence, stopping at
 // the first line whose output matches the CLI's error convention.
 func (c *Client) ApplyLines(lines []string, timeout time.Duration) (ApplyResult, error) {
@@ -225,9 +245,30 @@ func VLANCreateLines(ip, mask string, managementAccess bool) []string {
 }
 
 // DHCPOption is one custom "dhcp-option <code> <value>" line.
+// DHCPOption is one custom option inside an "ip dhcp pool N" block. Type
+// is the device's own type token ("IP", "text") — see DHCPOptionLine. An
+// empty Type is inferred from the value.
 type DHCPOption struct {
 	Code  int
+	Type  string
 	Value string
+}
+
+// DHCP option type tokens observed in a real `show config`.
+const (
+	DHCPOptionTypeIP   = "IP"
+	DHCPOptionTypeText = "text"
+)
+
+// InferDHCPOptionType picks a type token for a value that arrived without
+// one — the UI accepts "15 example.local" as well as "43 IP 10.0.0.1".
+// Only the two tokens this device has been seen to print are produced; a
+// value that is not an IPv4 address is treated as text.
+func InferDHCPOptionType(value string) string {
+	if ip := net.ParseIP(strings.TrimSpace(value)); ip != nil && ip.To4() != nil {
+		return DHCPOptionTypeIP
+	}
+	return DHCPOptionTypeText
 }
 
 // DHCPScope is the set of fields the CONFIRMED "ip dhcp pool N" block
@@ -267,7 +308,7 @@ func DHCPPoolLines(s DHCPScope) []string {
 		fmt.Sprintf("network %s %s", s.NetworkIP, s.NetworkMask),
 	)
 	for _, opt := range s.Options {
-		lines = append(lines, DHCPOptionLine(opt.Code, opt.Value))
+		lines = append(lines, DHCPOptionLine(opt.Code, opt.Type, opt.Value))
 	}
 	return lines
 }
@@ -288,12 +329,55 @@ func dnsServerLine(primary, secondary string) string {
 	return fmt.Sprintf("dns-server %s %s", primary, secondary)
 }
 
-// DHCPOptionLine returns the CONFIRMED "dhcp-option <code> <value>" leaf
-// line for a custom DHCP option inside an "ip dhcp pool N" block. String
-// values are emitted unquoted, matching the real 2.3 export (e.g. option
-// 15 "example.local" appears with no quotes) — do not add quoting here.
-func DHCPOptionLine(code int, value string) string {
-	return fmt.Sprintf("dhcp-option %d %s", code, value)
+// DHCPOptionLine builds the leaf line for a custom DHCP option inside an
+// "ip dhcp pool N" block:
+//
+//	option 43 IP 192.168.200.1
+//	option 60 text something.cambium.com
+//
+// That three-token form — "option <code> <type> <value>" — is what a live
+// NSE prints in `show config`, and this file's rollback machinery already
+// depends on `show config` lines being replayable as input (ExtractStanza
+// feeds them straight back through ApplyLines), so it is the best-evidenced
+// write form available. It has not yet been round-tripped live.
+//
+// It previously emitted "dhcp-option <code> <value>" and was marked
+// CONFIRMED on the strength of a cnMaestro Group export — but that export
+// is JSON, not CLI, so it could never have confirmed a CLI keyword. Both
+// the keyword and the missing type token were wrong.
+//
+// Values are emitted unquoted, matching the real capture.
+func DHCPOptionLine(code int, optionType, value string) string {
+	if optionType == "" {
+		optionType = InferDHCPOptionType(value)
+	}
+	return fmt.Sprintf("option %d %s %s", code, optionType, value)
+}
+
+// ParseDHCPOptionLeaf parses an "option <code> <type> <value>" leaf back
+// into a DHCPOption. The two-token "option <code> <value>" form is also
+// accepted and its type inferred, so a device that prints options without
+// a type token still round-trips.
+func ParseDHCPOptionLeaf(line string) (DHCPOption, bool) {
+	rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "option "))
+	fields := strings.Fields(rest)
+	if len(fields) < 2 {
+		return DHCPOption{}, false
+	}
+	code, err := strconv.Atoi(fields[0])
+	if err != nil {
+		return DHCPOption{}, false
+	}
+	switch fields[1] {
+	case DHCPOptionTypeIP, DHCPOptionTypeText:
+		if len(fields) < 3 {
+			return DHCPOption{}, false
+		}
+		return DHCPOption{Code: code, Type: fields[1], Value: strings.Join(fields[2:], " ")}, true
+	default:
+		value := strings.Join(fields[1:], " ")
+		return DHCPOption{Code: code, Type: InferDHCPOptionType(value), Value: value}, true
+	}
 }
 
 // BuildDHCPPoolLines wraps leaf lines with the confirmed
@@ -417,6 +501,27 @@ func HostnameLine(name string) string {
 
 // TimezoneLine sets the display timezone (IANA name, e.g. "Europe/London").
 // CONFIRMED top-level line from a real `show config` export.
+// CambiumRemoteLine enables or disables the device's link to cnMaestro.
+//
+// "management cambium-remote" is CONFIRMED — a real, currently-active
+// line in a device's own `show config`. The negated form is the one to
+// send to delink, reported from the device by the operator.
+//
+// Delinking is not a lockout risk in the sense SafeApplier means: it ends
+// cloud management, not local access, so it applies directly and is
+// saved with it. It is still consequential and awkward to undo — sending
+// the positive line again restores the config leaf, but a device that has
+// been delinked generally also has to be re-claimed in cnMaestro before
+// it reconnects, which nothing here can do. The UI asks before sending
+// it, which is the right place for "are you sure" on something that is
+// hard to reverse rather than dangerous to the session.
+func CambiumRemoteLine(enable bool) string {
+	if enable {
+		return "management cambium-remote"
+	}
+	return "no management cambium-remote"
+}
+
 func TimezoneLine(tz string) string {
 	return "timezone " + tz
 }
@@ -698,8 +803,29 @@ func TailscaleEnableLine(enable bool) string {
 	return "no tailscale"
 }
 
+// TailscaleAuthKeyLine sets the pre-authentication key this device uses to
+// join a tailnet. CONFIRMED: "tailscale auth-key <key>" is a real,
+// currently-active line in this device's own `show config`.
+//
+// The key is write-only everywhere it appears in this app, the same way
+// the IPS oinkcode is: it is never read back, never returned in a GET, and
+// redacted out of the ApplyOutcome that echoes the applied lines (see
+// redactOutcome). cloud-json-config reports it as "*masked*", so there is
+// nothing to read back even where that command works.
+//
+// There is deliberately no "clear the key" counterpart: "no tailscale
+// auth-key" would follow this device's negation convention but is
+// unconfirmed, and guessing at it buys little, since re-keying is done by
+// setting a new key.
+func TailscaleAuthKeyLine(key string) string {
+	return "tailscale auth-key " + key
+}
+
 // TailscaleAcceptRoutesLine toggles accepting routes advertised by other
-// tailnet peers. CONFIRMED bare keyword; the negated form is UNCONFIRMED.
+// tailnet peers. Both forms CONFIRMED live on an NSE4000 running 2.4-r1:
+// applying each in turn added and then removed the "tailscale
+// accept-routes" line in `show config`, leaving the device byte-identical
+// to where it started.
 func TailscaleAcceptRoutesLine(enable bool) string {
 	if enable {
 		return "tailscale accept-routes"

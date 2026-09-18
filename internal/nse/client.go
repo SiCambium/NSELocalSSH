@@ -2,6 +2,7 @@ package nse
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -56,6 +57,89 @@ type Client struct {
 	session  *ssh.Session
 	stdin    io.WriteCloser
 	incoming <-chan []byte
+
+	// Per-device capability and cache state for FetchCloudConfig's
+	// fallback path (see cloudconfig.go). Guarded by its own mutex rather
+	// than mu, so it can be read and written around a Run call without
+	// nesting locks.
+	capMu           sync.Mutex
+	noCloudJSON     bool
+	cloudJSONMisses int
+	derivedCfg      CloudConfig
+	derivedCfgAt    time.Time
+	derivedCfgOK    bool
+}
+
+// cloudJSONMissLimit is how many non-definitive empty replies to
+// `service show cloud-json-config` it takes before the client gives up on
+// the command. See noteCloudJSONMiss.
+const cloudJSONMissLimit = 2
+
+// CloudJSONUnsupported reports whether this device has been written off as
+// unable to answer `service show cloud-json-config`, in which case
+// FetchCloudConfig stops paying for the round-trip and goes straight to
+// its `show config` fallback.
+func (c *Client) CloudJSONUnsupported() bool {
+	c.capMu.Lock()
+	defer c.capMu.Unlock()
+	return c.noCloudJSON
+}
+
+// noteCloudJSONMiss records a reply to cloud-json-config that carried no
+// JSON. A reply in the CLI's error convention ("%Error ...", "Invalid
+// ...") is a definitive "no such command" and is believed at once.
+// Anything else is not: a real NSE3000 running firmware 2.3-r6 answers
+// "could not open file" — a plain, non-conventional line meaning the
+// command exists but has no file to read — while a desynced session could
+// return literally anything. Both look the same from here, so a
+// non-definitive miss has to repeat before it counts, which bounds the
+// wasted round-trips without letting one stale read permanently downgrade
+// a device that does support the command.
+func (c *Client) noteCloudJSONMiss(definitive bool) {
+	c.capMu.Lock()
+	defer c.capMu.Unlock()
+	c.cloudJSONMisses++
+	if definitive || c.cloudJSONMisses >= cloudJSONMissLimit {
+		c.noCloudJSON = true
+	}
+}
+
+// noteCloudJSONHit resets the miss counter after a good reply, so
+// occasional failures spread over a long session never accumulate into a
+// verdict.
+func (c *Client) noteCloudJSONHit() {
+	c.capMu.Lock()
+	defer c.capMu.Unlock()
+	c.cloudJSONMisses = 0
+}
+
+// cachedDerivedConfig returns a recently derived fallback CloudConfig, if
+// one is still fresh. The fallback costs a full `show config` per call and
+// a single Configuration page load fans out into several FetchCloudConfig
+// calls, so a very short TTL collapses that burst without the UI ever
+// showing a stale value: every write path clears the cache (see
+// RunSequence) and nothing but a write changes what `show config` says.
+func (c *Client) cachedDerivedConfig(ttl time.Duration) (CloudConfig, bool) {
+	c.capMu.Lock()
+	defer c.capMu.Unlock()
+	if !c.derivedCfgOK || time.Since(c.derivedCfgAt) > ttl {
+		return CloudConfig{}, false
+	}
+	return c.derivedCfg, true
+}
+
+func (c *Client) storeDerivedConfig(cfg CloudConfig) {
+	c.capMu.Lock()
+	defer c.capMu.Unlock()
+	c.derivedCfg = cfg
+	c.derivedCfgAt = time.Now()
+	c.derivedCfgOK = true
+}
+
+func (c *Client) invalidateDerivedConfig() {
+	c.capMu.Lock()
+	defer c.capMu.Unlock()
+	c.derivedCfgOK = false
 }
 
 func NewClient(cfg Config) *Client {
@@ -167,6 +251,36 @@ func (c *Client) ensure() error {
 	return c.connect()
 }
 
+// ErrCLILineBreak marks a command rejected for spanning lines. It is a
+// bad request, not a device failure, so the API layer can answer 400
+// rather than reporting it as a gateway error.
+var ErrCLILineBreak = errors.New("refusing to send a CLI command containing a line break")
+
+// validateCLILine rejects a command that would not stay on its own line.
+// runLocked terminates every command with a carriage return, so an
+// embedded CR or LF makes the remainder a second command of whoever
+// supplied the value — and this app builds command lines by interpolating
+// request text in dozens of places (a hostname, a RADIUS client's name, a
+// secret, a DNS domain). Guarding each of those individually would only
+// hold until the next one was written, so the check lives here, where
+// every command without exception passes through.
+//
+// The offending line is quoted with %q so the newline cannot mangle the
+// error itself, and redacted first if it carries a secret.
+func validateCLILine(command string) error {
+	if !strings.ContainsAny(command, "\r\n") {
+		return nil
+	}
+	shown := command
+	if secretLine(shown) {
+		shown = redactSecretLine(shown)
+	}
+	if len(shown) > 80 {
+		shown = shown[:80] + "…"
+	}
+	return fmt.Errorf("%w: the remainder would run as a separate command: %q", ErrCLILineBreak, shown)
+}
+
 func (c *Client) Run(command string, timeout time.Duration) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -174,6 +288,9 @@ func (c *Client) Run(command string, timeout time.Duration) (string, error) {
 }
 
 func (c *Client) runLocked(command string, timeout time.Duration) (string, error) {
+	if err := validateCLILine(command); err != nil {
+		return "", err
+	}
 	if err := c.ensure(); err != nil {
 		return "", err
 	}
@@ -206,6 +323,17 @@ func (c *Client) runLocked(command string, timeout time.Duration) (string, error
 // attempts to return the session to the top-level prompt before releasing
 // the lock (see unwindLocked).
 func (c *Client) RunSequence(lines []string, timeout time.Duration, stopOnError bool) ([]LineResult, error) {
+	// Validated before anything is sent: a line break anywhere in the
+	// batch must not leave half of it applied.
+	for _, line := range lines {
+		if err := validateCLILine(line); err != nil {
+			return nil, err
+		}
+	}
+	// Every config write goes through here, and any of them can change
+	// what `show config` says — drop the fallback CloudConfig cache so the
+	// next read re-derives it.
+	c.invalidateDerivedConfig()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if err := c.ensure(); err != nil {
@@ -263,6 +391,15 @@ func (c *Client) Snapshot() Config {
 }
 
 func (c *Client) ApplyConfig(cfg Config) error {
+	// A different device (profile switch) may well support
+	// cloud-json-config even if this one didn't, and its config is
+	// certainly not the one we cached.
+	c.capMu.Lock()
+	c.noCloudJSON = false
+	c.cloudJSONMisses = 0
+	c.derivedCfgOK = false
+	c.capMu.Unlock()
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Cfg = cfg

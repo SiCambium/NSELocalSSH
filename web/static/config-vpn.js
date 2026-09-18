@@ -42,6 +42,7 @@
       ${stat("Tailscale", ts.enable ? "Enabled" : "Disabled")}
       ${stat("Accept routes", ts.accept_routes ? "Enabled" : "Disabled")}
       ${stat("Advertise routes", ts.advertise_routes || "-")}
+      ${stat("Auth key", cache.tailscale_auth_key_set ? "Set" : "Not set")}
     </div>`;
     panel.innerHTML = `
       <h2>Tailscale</h2>
@@ -84,17 +85,34 @@
 
   function editTailscale() {
     const ts = cache.tailscale || {};
+    const keySet = !!cache.tailscale_auth_key_set;
     const body = `
       <label class="check-row"><input id="cfg-ts-enable" type="checkbox" ${ts.enable ? "checked" : ""}> Tailscale enabled</label>
       <label class="check-row"><input id="cfg-ts-accept" type="checkbox" ${ts.accept_routes ? "checked" : ""}> Accept routes from peers</label>
       <label>Advertise routes (comma-separated CIDRs)
         <input id="cfg-ts-advertise" type="text" value="${esc(ts.advertise_routes || "")}" placeholder="e.g. 172.21.0.0/16,172.23.0.0/16">
       </label>
-      <p class="muted">Joining a tailnet requires an auth key, which isn't handled here — authorize this device from your Tailscale admin console after enabling.</p>
+      <label>Auth key${keySet ? " (replace)" : ""}
+        <input id="cfg-ts-authkey" type="password" autocomplete="off" placeholder="${keySet ? "leave blank to keep the current key" : "tskey-auth-…"}">
+      </label>
+      <p class="muted">${
+        keySet
+          ? "An auth key is already set. Enter a new one only to re-key; the existing key is never displayed."
+          : "Generate a key in your Tailscale admin console under Settings → Keys. It is sent to the device and never read back or shown again."
+      }</p>
       <div id="cfg-ts-outcome"></div>
     `;
     openModal("Edit Tailscale", body, async (el) => {
       const outcomeEl = el.querySelector("#cfg-ts-outcome");
+
+      // The key goes first: enabling Tailscale without one joins no
+      // tailnet, so on a fresh setup the order matters.
+      const authKey = el.querySelector("#cfg-ts-authkey").value.trim();
+      if (authKey) {
+        const outcome = await postJSON("/api/config/vpn", { action: "tailscale_auth_key", auth_key: authKey });
+        await renderOutcome(outcomeEl, outcome);
+      }
+
       const enable = el.querySelector("#cfg-ts-enable").checked;
       if (enable !== !!ts.enable) {
         const outcome = await postJSON("/api/config/vpn", { action: "tailscale_enable", enable });

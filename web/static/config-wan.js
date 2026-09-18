@@ -80,7 +80,14 @@
           ${stat("PPPoE service name", pppoe.service_name || "-")}
         </div>`
       : "";
-    return `<h2>${esc(w.name)} <span class="muted">(${esc(w.lan_intf)})</span></h2>
+    // A device that has never had a "wan-name" set prints no such leaf, so
+    // in show-config fallback mode the name can be empty — fall back to the
+    // physical port rather than rendering a headless card. "Change port"
+    // still needs a real name and says so if one is missing.
+    const heading = w.name
+      ? `${esc(w.name)} <span class="muted">(${esc(w.lan_intf)})</span>`
+      : `<span class="muted">Unnamed WAN</span> (${esc(w.lan_intf)})`;
+    return `<h2>${heading}</h2>
       <div class="grid">
         ${stat("IP mode", pppoe ? "pppoe" : w.ip_mode)}
         ${stat("Source NAT", w.source_nat)}
@@ -163,7 +170,7 @@
       </label>
       <label>Uplink Mbps <input id="cfg-wan-up" type="number" min="1" value="${esc(bw.uplink_bandwidth || "")}"></label>
       <label>Downlink Mbps <input id="cfg-wan-down" type="number" min="1" value="${esc(bw.downlink_bandwidth || "")}"></label>
-      <p class="warn">WAN changes are applied through the safe-apply path: they're verified reachable over a fresh connection before being kept, and rolled back automatically within 60 seconds if not confirmed or if the device becomes unreachable.</p>
+      <p class="warn">WAN changes go through the safe-apply path: the device must still accept a fresh connection afterwards, and the change is undone within 60 seconds unless you confirm it. If a change cuts off access entirely, that undo cannot reach the device either — but the change is not saved until you confirm, so power-cycling the device restores the previous configuration.</p>
       <div id="cfg-wan-outcome"></div>
     `;
     const modalEl = openModal(`Edit ${w.name}`, body, async (el) => {
@@ -353,10 +360,10 @@
       </div>
       <label>Uplink Mbps (optional) <input id="cfg-chg-up" type="number" min="1" value="${esc(bw.uplink_bandwidth || "")}"></label>
       <label>Downlink Mbps (optional) <input id="cfg-chg-down" type="number" min="1" value="${esc(bw.downlink_bandwidth || "")}"></label>
-      <p class="warn">This reassigns two physical ports at once and is applied through the safe-apply path: verified reachable over a fresh connection before being kept, and rolled back automatically (restoring both ports to their exact prior config) within 60 seconds if not confirmed or if the device becomes unreachable. Whether "type lan" fully clears the old port's WAN-only settings is unconfirmed — if this port looks odd afterward, its exact prior config is only ever a rollback away.</p>
+      <p class="warn">This reassigns two physical ports at once, through the safe-apply path: the device must still accept a fresh connection afterwards, and both ports are restored to their exact prior config within 60 seconds unless you confirm. If the change cuts off access entirely, that undo cannot reach the device either — but nothing is saved until you confirm, so power-cycling restores the previous configuration. Whether "type lan" fully clears the old port's WAN-only settings is unconfirmed; if this port looks odd afterward, its prior config is one undo away.</p>
       <div id="cfg-chg-outcome"></div>
     `;
-    const modalEl = openModal(`Change port for ${w.name}`, body, async (el) => {
+    const modalEl = openModal(`Change port for ${w.name || w.lan_intf}`, body, async (el) => {
       const newPortStr = el.querySelector("#cfg-chg-port").value;
       const newPort = parseInt(/^eth(\d+)$/.exec(newPortStr)[1], 10);
       const mode = el.querySelector("#cfg-chg-mode").value;

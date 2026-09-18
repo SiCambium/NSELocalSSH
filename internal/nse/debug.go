@@ -164,8 +164,13 @@ func redactSecretLine(line string) string {
 	if len(fields) == 0 {
 		return indent + "<redacted>"
 	}
+	// Keep enough leading words to say *what* was redacted where the
+	// first word alone would not: "wireguard <redacted>" hides whether it
+	// was the private key or something harmless, while "wireguard
+	// private-key <redacted>" is both safe and informative.
 	keep := 1
-	if len(fields) >= 2 && (fields[0] == "tailscale" || fields[0] == "management" || fields[0] == "radius-server") {
+	if len(fields) >= 2 && (fields[0] == "tailscale" || fields[0] == "management" ||
+		fields[0] == "radius-server" || fields[0] == "wireguard") {
 		keep = 2
 	}
 	if keep > len(fields) {

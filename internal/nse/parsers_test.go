@@ -1,6 +1,7 @@
 package nse
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -533,5 +534,60 @@ firewall geo-ip-restrictions outbound countries CN
 	}
 	if len(outbound.Exceptions) != 0 {
 		t.Errorf("outbound.Exceptions = %v, want none", outbound.Exceptions)
+	}
+}
+
+// TestParseTunnelConfigUnaffectedByWiderRedaction guards the other half of
+// secretLine's job. It is not only a display filter — ParseTunnelConfig
+// uses a match to skip a line and infer that something is set — so adding
+// patterns to it could in principle change parsing. These lines are ones
+// the parser never matched anyway, so skipping them must be a no-op.
+func TestParseTunnelConfigUnaffectedByWiderRedaction(t *testing.T) {
+	raw := `interface eth 1
+ type wan
+ wan-name wan1
+ starlink
+ starlink dish-ip 192.168.100.1
+!
+vpn-server
+ interface wan1
+ shared-secret somesecret
+ address-range 172.22.200.10 172.22.200.30
+ mfa
+ exit
+!
+vpn-client 
+ wireguard private-key VEVTVC1QUklWQVRFLUtFWS1OT1QtUkVBTC0wMDAwMDA=
+ wireguard peer-public-key VEVTVC1QRUVSLVBVQkxJQy1LRVktTk9ULVJFQUwtMDA=
+!
+radius-server client-list 1
+ secret SUPERSECRET
+!
+tailscale
+tailscale auth-key tskey-abc
+tailscale accept-routes
+!`
+	cfg := ParseTunnelConfig(raw)
+	if !cfg.VPNServer.Enabled || cfg.VPNServer.Interface != "wan1" {
+		t.Errorf("VPN server = %+v, want enabled on wan1", cfg.VPNServer)
+	}
+	if cfg.VPNServer.AddressRange == "" {
+		t.Errorf("VPN server lost its address range: %+v", cfg.VPNServer)
+	}
+	if !cfg.Tailscale.Enabled || !cfg.Tailscale.AuthKeySet || !cfg.Tailscale.AcceptRoutes {
+		t.Errorf("tailscale = %+v, want enabled with a key set", cfg.Tailscale)
+	}
+	if !cfg.Starlink.Enabled || cfg.Starlink.DishIP != "192.168.100.1" {
+		t.Errorf("starlink = %+v", cfg.Starlink)
+	}
+	// Nothing structured should ever carry the key material itself.
+	blob, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"VEVTVC1Q", "SUPERSECRET", "somesecret", "tskey-abc"} {
+		if strings.Contains(string(blob), secret) {
+			t.Errorf("TunnelConfig leaks %q: %s", secret, blob)
+		}
 	}
 }

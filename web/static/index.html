@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NSE 3000 Status</title>
+  <title>NSE Status</title>
   <link rel="icon" href="/static/icon.png">
   <link rel="stylesheet" href="/static/style.css">
   <link rel="stylesheet" href="/static/config.css">
@@ -13,13 +13,25 @@
     <div class="brand">
       <img class="brand-icon" src="/static/icon.png" alt="NSE firewall">
       <div>
-        <p class="kicker">Cambium NSE 3000</p>
+        <p class="kicker" id="kicker">Cambium NSE</p>
         <h1 id="title">Status</h1>
+      </div>
+      <div class="conn-switcher" id="conn-switcher">
+        <button type="button" id="conn-current" aria-haspopup="true" aria-expanded="false" title="Switch to another site">
+          <span class="conn-dot" id="conn-dot"></span>
+          <span class="conn-current-text">
+            <span class="conn-current-kicker">Connected to</span>
+            <span id="conn-current-label">—</span>
+          </span>
+          <span class="conn-caret" aria-hidden="true">▾</span>
+        </button>
+        <div class="conn-menu" id="conn-menu" hidden></div>
       </div>
     </div>
     <nav class="menu" aria-label="Main">
       <button type="button" data-page="status" class="active">Status</button>
       <button type="button" data-page="config">Configuration</button>
+      <button type="button" data-page="connections">Connections</button>
       <button type="button" data-page="settings">Settings</button>
     </nav>
     <div class="top-meta">
@@ -100,14 +112,21 @@
       <section class="config-section" data-section="vpn" id="config-vpn-panel" hidden></section>
     </section>
 
-    <section id="page-settings" hidden>
-      <h2>Saved connections</h2>
-      <p class="muted">Up to 5 NSE logins. Each saved slot is named after its IP address. Click a saved IP to open it.</p>
-      <div class="profile-slots" id="profile-slots"></div>
-      <h2>Connection</h2>
-      <p class="muted">Edit the selected slot, then save. The slot name becomes the IP address.</p>
+    <section id="page-connections" hidden>
+      <h2>Connections</h2>
+      <p class="muted">Every site you manage. Click one to connect to it — the previous connection is closed.</p>
+      <div class="conn-toolbar">
+        <input id="conn-filter" type="search" placeholder="Filter by name or address" spellcheck="false" autocomplete="off">
+        <button type="button" id="conn-new">Add connection</button>
+      </div>
+      <div class="conn-list" id="conn-list"></div>
+      <h2 id="conn-form-heading">Connection</h2>
       <form id="settings-form" class="settings-form" autocomplete="off">
-        <input type="hidden" id="set-slot" value="1">
+        <input type="hidden" id="set-slot" value="0">
+        <label>
+          Name
+          <input id="set-name" name="name" type="text" spellcheck="false" placeholder="e.g. Leeds branch — defaults to the address">
+        </label>
         <label>
           IP address / host
           <input id="set-host" name="host" type="text" spellcheck="false" required>
@@ -126,12 +145,14 @@
         </label>
         <div class="settings-actions">
           <button type="submit" id="settings-save">Save and connect</button>
-          <button type="button" id="settings-clear">Clear slot</button>
+          <button type="button" id="settings-clear">Delete connection</button>
           <span id="settings-note" class="muted"></span>
         </div>
       </form>
       <p id="settings-file" class="muted mono"></p>
+    </section>
 
+    <section id="page-settings" hidden>
       <h2>Conn tracking</h2>
       <label class="check-row">
         <input type="checkbox" id="set-live-conntrack">

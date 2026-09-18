@@ -1,5 +1,5 @@
 // Management configuration section: hostname, timezone, NTP, remote
-// syslog. Read-only by default; a single Edit button opens every field at
+// syslog, and the cnMaestro link. Read-only by default; a single Edit button opens every field at
 // once since there are only a handful and they're independent singleton
 // settings, not a list. None of these are lockout-risk (see
 // ClassifyRisk("management") in safe_apply.go), so changes apply
@@ -43,10 +43,43 @@
         ${stat("NTP server", firstNTP() || "-")}
         ${stat("Syslog host", syslog.ip ? `${syslog.ip}:${syslog.port}` : "-")}
         ${stat("Syslog severity", cache.logging_syslog)}
+        ${stat("cnMaestro", cache.cambium_remote ? "Linked" : "Delinked")}
       </div>
       <p><button type="button" class="row-edit" id="edit-management-btn">Edit</button></p>
+
+      <h3>cnMaestro</h3>
+      <p class="muted">${
+        cache.cambium_remote
+          ? "This device is linked to cnMaestro for cloud management."
+          : "This device is not linked to cnMaestro. It is managed locally only."
+      }</p>
+      <p><button type="button" class="row-edit" id="cambium-remote-btn">${
+        cache.cambium_remote ? "Delink from cnMaestro" : "Link to cnMaestro"
+      }</button></p>
     `;
     document.getElementById("edit-management-btn").addEventListener("click", editManagement);
+    document.getElementById("cambium-remote-btn").addEventListener("click", toggleCambiumRemote);
+  }
+
+  // Delinking is kept out of the Edit modal and behind its own explicit
+  // confirmation. It is not a lockout risk — local access is unaffected,
+  // so it applies and saves immediately — but it is awkward to undo: the
+  // config leaf comes back by sending the positive line, while actually
+  // reconnecting generally needs the device re-claimed in cnMaestro,
+  // which this app cannot do.
+  function toggleCambiumRemote() {
+    const enable = !cache.cambium_remote;
+    const body = enable
+      ? `<p class="warn">This re-adds the <span class="mono">management cambium-remote</span> setting. The device may still need to be claimed in cnMaestro before it actually reconnects — that part cannot be done from here.</p>
+         <div id="cfg-cambium-outcome"></div>`
+      : `<p class="warn">This sends <span class="mono">no management cambium-remote</span>, ending cloud management of this device. Local access over SSH and this app are unaffected.</p>
+         <p class="muted">Re-linking sets the option back, but the device will generally also need to be re-claimed in cnMaestro, which cannot be done from here. cnMaestro will no longer push configuration to this device, so any local changes stop being overwritten — and stop being backed up.</p>
+         <div id="cfg-cambium-outcome"></div>`;
+    openModal(enable ? "Link to cnMaestro" : "Delink from cnMaestro", body, async (el) => {
+      const outcome = await postJSON("/api/config/management", { action: "cambium_remote", enable });
+      await renderOutcome(el.querySelector("#cfg-cambium-outcome"), outcome);
+      await load();
+    });
   }
 
   function editManagement() {

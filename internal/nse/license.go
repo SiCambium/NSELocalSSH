@@ -56,3 +56,18 @@ func ParseFeatureLicense(raw string) FeatureLicense {
 	}
 	return fl
 }
+
+// AsMap renders the license flags with the same keys cloud-json-config's
+// feature_license object uses, so a license read via `show feature-license`
+// is a drop-in for the inline one (see handleProfileExport).
+func (fl FeatureLicense) AsMap() map[string]bool {
+	return map[string]bool{
+		"device_fingerprint": fl.DeviceFingerprint,
+		"port_scan":          fl.PortScan,
+		"dns_filter":         fl.DNSFilter,
+		"high_availability":  fl.HighAvailability,
+		"geoip_firewall":     fl.GeoIPFirewall,
+		"tailscale":          fl.Tailscale,
+		"overlay_wan":        fl.OverlayWAN,
+	}
+}

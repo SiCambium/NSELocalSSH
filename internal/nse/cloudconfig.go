@@ -21,6 +21,13 @@ import (
 // oinkcodes, shared secrets) is modeled here — it is never exposed to the
 // frontend because it was never unmarshaled in the first place.
 type CloudConfig struct {
+	// Source records which device command this was built from —
+	// CloudSourceJSON or CloudSourceShowConfig. Set by FetchCloudConfig,
+	// never unmarshaled from the device, and surfaced to the frontend so a
+	// section that loses fields in fallback mode can say so instead of
+	// rendering a derived zero value as if it were fact.
+	Source string `json:"-"`
+
 	SystemName        string          `json:"system_name"`
 	DHCPAuthoritative bool            `json:"dhcp_authoritative"`
 	WANInterfaces     []WANInterface  `json:"wan_interfaces"`
@@ -29,6 +36,12 @@ type CloudConfig struct {
 
 	// Management (safe subset only — see config_management.go for what's
 	// deliberately excluded, e.g. admin password and SSH/HTTPS toggles).
+	// CambiumRemote is whether the device is linked to cnMaestro, from the
+	// "management cambium-remote" leaf. Tagged json:"-" because it is read
+	// from `show config` rather than the cloud snapshot — a device being
+	// delinked is exactly the moment that snapshot stops being updated.
+	CambiumRemote bool `json:"-"`
+
 	TZName        string       `json:"tz_name"`
 	NTPServer     []NTPServer  `json:"ntp_server"`
 	SyslogServer  []SyslogHost `json:"syslog_server"`
@@ -219,6 +232,19 @@ type DHCPPoolConfig struct {
 	// the next read (observed live). Treat `show config` as authoritative
 	// for which reservations exist, and this only as the source of Desc.
 	BindList []DHCPBind `json:"dhcp_pool_bind_list"`
+
+	// Options are the pool's custom DHCP options, read from `show config`
+	// (see fallbackDHCPPool). cloud-json-config carries a dhcp_options
+	// array of its own, but its field names have never been observed
+	// populated, so it is not unmarshaled here — these come from the CLI.
+	Options []DHCPPoolOption `json:"dhcp_options"`
+}
+
+// DHCPPoolOption is one custom option as the frontend sees it.
+type DHCPPoolOption struct {
+	Code  int    `json:"code"`
+	Type  string `json:"type"`
+	Value string `json:"value"`
 }
 
 type RateLimitRules struct {
@@ -254,19 +280,178 @@ func extractJSONObject(raw string) string {
 	return raw[start : end+1]
 }
 
-// FetchCloudConfig runs `service show cloud-json-config` and parses it.
+const cloudJSONCommand = "service show cloud-json-config"
+
+// Values for CloudConfig.Source.
+const (
+	CloudSourceShowConfig = "show-config"
+	// CloudSourceEnriched means `show config` supplied the configuration
+	// and cloud-json-config filled in the few cnMaestro-side labels the
+	// CLI has no words for.
+	CloudSourceEnriched = "show-config+cloud-json"
+)
+
+// configTTL is how long a freshly read configuration is reused.
+// Deliberately short — just long enough to collapse one page load's burst
+// of FetchCloudConfig calls into a single `show config` (see
+// Client.cachedDerivedConfig). Every write clears it (see RunSequence).
+const configTTL = 3 * time.Second
+
+// FetchCloudConfig returns the device's configuration, read from
+// `show config`.
+//
+// It used to prefer `service show cloud-json-config`, whose JSON maps
+// field-for-field onto cnMaestro's Group export schema, and fall back to
+// `show config` only where that command was unavailable. That was
+// backwards. Measured live on an NSE4000 running 2.4-r1: after a
+// load-balance monitor-host change, `show config` showed the new list
+// immediately while cloud-json-config went on reporting the old one for
+// about seven minutes — through an explicit `save` that returned
+// "[Config Save OK]" — before catching up. The JSON is a periodically
+// regenerated cnMaestro-facing snapshot, not the running config.
+//
+// Minutes of lag is fatal for a read-back. SafeApplier holds a
+// lockout-risk change provisional for sixty seconds, so a UI reading that
+// snapshot cannot show such a change as applied inside the window it has
+// to be confirmed in: the operator sees the old value, has no reason to
+// press Confirm, and the change is genuinely rolled back. A successful
+// edit that reverts itself is far worse than a slow one. On a unit that
+// is never cloud-managed the snapshot may never populate at all.
+//
+// cloud-json-config is still consulted, but only to fill in fields that no
+// CLI command can express and that no local edit can change — VLAN labels
+// and rate-limit rules, plus the display-only WAN fields the profile
+// export carries. enrichFromCloudJSON is the whitelist, and nothing the
+// CLI can write may ever be added to it.
 func FetchCloudConfig(c *Client, timeout time.Duration) (CloudConfig, error) {
-	raw, err := c.Run("service show cloud-json-config", timeout)
+	if cfg, ok := c.cachedDerivedConfig(configTTL); ok {
+		return cfg, nil
+	}
+	showTimeout := timeout
+	if showTimeout < 25*time.Second {
+		showTimeout = 25 * time.Second
+	}
+	raw, err := c.Run("show config", showTimeout)
 	if err != nil {
-		return CloudConfig{}, err
+		return CloudConfig{}, fmt.Errorf("reading `show config`: %w", err)
 	}
-	body := extractJSONObject(raw)
-	if body == "" {
-		return CloudConfig{}, fmt.Errorf("no JSON object found in cloud-json-config output")
+	cfg := CloudConfigFromShowConfig(raw)
+	if len(cfg.LANInterfaces) == 0 && len(cfg.WANInterfaces) == 0 && cfg.SystemName == "" {
+		return CloudConfig{}, fmt.Errorf("`show config` returned nothing recognizable")
 	}
-	var cfg CloudConfig
-	if err := json.Unmarshal([]byte(body), &cfg); err != nil {
-		return CloudConfig{}, fmt.Errorf("parsing cloud-json-config: %w", err)
+	if cloud, ok := fetchCloudJSON(c, timeout); ok {
+		enrichFromCloudJSON(&cfg, cloud)
+		cfg.Source = CloudSourceEnriched
 	}
+	c.storeDerivedConfig(cfg)
 	return cfg, nil
+}
+
+// fetchCloudJSON reads cloud-json-config, reporting whether it produced
+// anything usable. Every failure is non-fatal: the configuration has
+// already been read by this point, and all this can add is labels.
+func fetchCloudJSON(c *Client, timeout time.Duration) (CloudConfig, bool) {
+	if c.CloudJSONUnsupported() {
+		return CloudConfig{}, false
+	}
+	raw, err := c.Run(cloudJSONCommand, timeout)
+	if err != nil {
+		return CloudConfig{}, false
+	}
+	if body := extractJSONObject(raw); body != "" {
+		var cloud CloudConfig
+		if err := json.Unmarshal([]byte(body), &cloud); err != nil {
+			return CloudConfig{}, false
+		}
+		c.noteCloudJSONHit()
+		return cloud, true
+	}
+	rejected := classifyLine(cloudJSONCommand, raw)
+	c.noteCloudJSONMiss(!rejected.OK)
+	return CloudConfig{}, false
+}
+
+// enrichFromCloudJSON copies across the only fields worth taking from a
+// snapshot that may be arbitrarily out of date: ones the CLI cannot
+// express, so no local change can ever make the snapshot disagree with the
+// device.
+//
+// Every field here must satisfy that test. A VLAN's label and rate-limit
+// rule are cnMaestro-side metadata with no `show config` leaf. The WAN
+// fields are display-only values the profile export carries and this app
+// never writes. Adding anything the CLI can set would reintroduce exactly
+// the bug this function exists alongside — a stale read overwriting a
+// change that actually applied.
+//
+// Existing values always win: `show config` is the authority, and a blank
+// is only filled, never overwritten.
+func enrichFromCloudJSON(cfg *CloudConfig, cloud CloudConfig) {
+	byVLAN := make(map[int]LANInterface, len(cloud.LANInterfaces))
+	for _, v := range cloud.LANInterfaces {
+		byVLAN[v.VLANID] = v
+	}
+	for i := range cfg.LANInterfaces {
+		src, ok := byVLAN[cfg.LANInterfaces[i].VLANID]
+		if !ok {
+			continue
+		}
+		if cfg.LANInterfaces[i].Name == "" {
+			cfg.LANInterfaces[i].Name = src.Name
+		}
+		if cfg.LANInterfaces[i].RateLimitRules.RateLimit == "" {
+			cfg.LANInterfaces[i].RateLimitRules = src.RateLimitRules
+		}
+	}
+
+	byPort := make(map[string]WANInterface, len(cloud.WANInterfaces))
+	for _, w := range cloud.WANInterfaces {
+		byPort[w.LANIntf] = w
+	}
+	for i := range cfg.WANInterfaces {
+		src, ok := byPort[cfg.WANInterfaces[i].LANIntf]
+		if !ok {
+			continue
+		}
+		w := &cfg.WANInterfaces[i]
+		if w.Name == "" {
+			w.Name = src.Name
+		}
+		if w.SpareIPMode == "" {
+			w.SpareIPMode = src.SpareIPMode
+		}
+		if w.TrafficShaping == "" {
+			w.TrafficShaping = src.TrafficShaping
+		}
+		if w.VLAN == "" {
+			w.VLAN = src.VLAN
+		}
+		if w.DynDNSConfig.Mode == "" {
+			w.DynDNSConfig.Mode = src.DynDNSConfig.Mode
+		}
+	}
+}
+
+// cloudJSONDetail renders the device's own rejection of cloud-json-config
+// for an error message, so the failure explains itself instead of leaving
+// the operator to guess. The CLI's error lines carry no secrets (they are
+// "%Error ..." / "Invalid arguments"), but the value is length-capped and
+// single-lined regardless.
+func cloudJSONDetail(r *LineResult) string {
+	if r == nil {
+		return ""
+	}
+	// A non-conventional reply ("could not open file") is not recorded as
+	// an Error, but it is still exactly what the operator needs to see.
+	detail := r.Error
+	if detail == "" {
+		detail = r.Output
+	}
+	if detail == "" {
+		return ""
+	}
+	detail = strings.Join(strings.Fields(detail), " ")
+	if len(detail) > 120 {
+		detail = detail[:120]
+	}
+	return " (" + detail + ")"
 }

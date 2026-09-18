@@ -27,6 +27,15 @@ func (s *Server) handleProfileExport(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// cloud-json-config carries feature_license inline; the `show config`
+	// fallback can't, so fill it from its own command rather than exporting
+	// a profile that silently claims every licensed feature is off.
+	if cloud.FeatureLicense == nil {
+		if lic, err := s.currentLicense(); err == nil {
+			cloud.FeatureLicense = lic.AsMap()
+		}
+	}
+
 	lan := ParseLANConfig(cfgRaw)
 	groups := ParseGroupsConfig(cfgRaw)
 	profile := BuildGroupProfile(cloud, groups, lan, cfgRaw)

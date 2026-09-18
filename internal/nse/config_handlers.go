@@ -2,6 +2,7 @@ package nse
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -19,6 +20,49 @@ func (s *Server) handleLicense(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"license": ParseFeatureLicense(raw)})
+}
+
+// containsCLILineBreak reports whether a free-text value would break out
+// of the CLI line it is interpolated into.
+//
+// The guarantee lives lower down, in Client.validateCLILine, which every
+// command passes through: a line break can no longer reach the device
+// from any path, present or future, without a handler having to remember
+// to check. This is only for handlers that want to reject the value up
+// front with a specific 400 rather than let it fail as an apply error.
+func containsCLILineBreak(s string) bool {
+	return strings.ContainsAny(s, "\r\n")
+}
+
+// writeDeviceError answers a request that failed while talking to the
+// device, whether reading or applying. Most such failures are the
+// device's — unreachable, or it rejected the command — which is a 502.
+// A command refused for spanning lines is the caller's, and answering
+// "bad gateway" when nothing was wrong with the gateway sends whoever is
+// debugging it in the wrong direction.
+func writeDeviceError(w http.ResponseWriter, err error) {
+	if errors.Is(err, ErrCLILineBreak) {
+		writeSettingsError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeSettingsError(w, http.StatusBadGateway, err.Error())
+}
+
+// redactOutcome strips secret values out of the CLI lines an ApplyOutcome
+// echoes back. SafeApplier returns the exact lines it sent so the UI can
+// show what was applied, but for a write-only secret — a Tailscale auth
+// key, an IPS oinkcode, a RADIUS shared secret — that line contains the
+// secret itself, and returning it unaltered would put it back on the wire
+// and into whatever the frontend renders or a caller logs. Handlers that
+// can carry a secret pass their outcome through this first.
+func redactOutcome(o ApplyOutcome) ApplyOutcome {
+	for i, l := range o.Lines {
+		if secretLine(l.Line) {
+			o.Lines[i].Line = redactSecretLine(l.Line)
+		}
+		o.Lines[i].Output = SanitizeCLIOutput(l.Output)
+	}
+	return o
 }
 
 type confirmRequest struct {
@@ -68,7 +112,7 @@ func (s *Server) handleConfigNetwork(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetConfigNetwork(w http.ResponseWriter, _ *http.Request) {
 	cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	cfgRaw, ok := s.cli(w, "show config", 25*time.Second)
@@ -85,10 +129,14 @@ func (s *Server) handleGetConfigNetwork(w http.ResponseWriter, _ *http.Request) 
 	}
 	lan := ParseLANConfig(cfgRaw)
 	writeJSON(w, map[string]any{
-		"vlans":    cloud.LANInterfaces,
-		"ports":    lan.Ports,
-		"bindings": bindingsByVLAN(cloud, lan),
-		"link":     linkByInterface(ParseInterfaceBrief(brief)),
+		// config_source tells the frontend whether VLAN names are real
+		// values or simply absent — see CloudConfigFromShowConfig for what
+		// the fallback can't express.
+		"config_source": cloud.Source,
+		"vlans":         cloud.LANInterfaces,
+		"ports":         lan.Ports,
+		"bindings":      bindingsByVLAN(cloud, lan),
+		"link":          linkByInterface(ParseInterfaceBrief(brief)),
 	})
 }
 
@@ -128,7 +176,11 @@ func bindingsByVLAN(cloud CloudConfig, lan LANConfig) map[string][]MACBinding {
 }
 
 type dhcpOptionRequest struct {
-	Code  int    `json:"code"`
+	Code int `json:"code"`
+	// Type is the device's type token ("IP"/"text"). Optional: an empty
+	// value is inferred from Value (see InferDHCPOptionType), so the UI
+	// can keep accepting a plain "<code> <value>" line.
+	Type  string `json:"type"`
 	Value string `json:"value"`
 }
 
@@ -153,7 +205,7 @@ func (d dhcpScopeRequest) options() []DHCPOption {
 	out := make([]DHCPOption, 0, len(d.Options))
 	for _, o := range d.Options {
 		if o.Code > 0 && o.Value != "" {
-			out = append(out, DHCPOption{Code: o.Code, Value: o.Value})
+			out = append(out, DHCPOption{Code: o.Code, Type: o.Type, Value: o.Value})
 		}
 	}
 	return out
@@ -359,7 +411,7 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 		if req.DHCP != nil && req.DHCP.valid() {
 			pools, err := s.currentDHCPPools()
 			if err != nil {
-				writeSettingsError(w, http.StatusBadGateway, err.Error())
+				writeDeviceError(w, err)
 				return
 			}
 			netIP, err := NetworkAddress(req.IP, req.Mask)
@@ -386,7 +438,7 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 		}
 		cloud, pools, err := s.currentNetworkState()
 		if err != nil {
-			writeSettingsError(w, http.StatusBadGateway, err.Error())
+			writeDeviceError(w, err)
 			return
 		}
 		pool := poolNumberForVLAN(req.VLANID, cloud, pools)
@@ -478,7 +530,7 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 
 	outcome, err := s.safeApplier().Apply(block)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	writeJSON(w, outcome)
@@ -534,7 +586,7 @@ func (s *Server) handleConfigWAN(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetConfigWAN(w http.ResponseWriter, _ *http.Request) {
 	cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	cfgRaw, ok := s.cli(w, "show config", 25*time.Second)
@@ -563,11 +615,10 @@ type PPPoEStatus struct {
 func pppoeStatusByPort(cfgRaw string) map[int]PPPoEStatus {
 	tree := ParseBlockTree(cfgRaw)
 	out := map[int]PPPoEStatus{}
-	for n := 1; n <= 6; n++ {
-		blk := tree.Find(fmt.Sprintf("interface eth %d", n))
-		if blk == nil {
-			continue
-		}
+	// Every eth block the device printed — port counts are model-specific
+	// (six on an NSE3000, ten on an NSE4000), so no fixed range here.
+	for _, eth := range ethInterfaceBlocks(tree) {
+		n, blk := eth.port, eth.block
 		if _, ok := blk.Leaf("pppoe-server enable"); !ok {
 			continue
 		}
@@ -726,7 +777,7 @@ func (s *Server) handlePostConfigWAN(w http.ResponseWriter, r *http.Request) {
 		}
 		outcome, err := s.safeApplier().Apply(block)
 		if err != nil {
-			writeSettingsError(w, http.StatusBadGateway, err.Error())
+			writeDeviceError(w, err)
 			return
 		}
 		writeJSON(w, outcome)
@@ -756,13 +807,13 @@ func (s *Server) handlePostConfigWAN(w http.ResponseWriter, r *http.Request) {
 		}
 		cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
 		if err != nil {
-			writeSettingsError(w, http.StatusBadGateway, err.Error())
+			writeDeviceError(w, err)
 			return
 		}
 		if len(cloud.WANInterfaces) >= 2 {
 			lic, err := s.currentLicense()
 			if err != nil {
-				writeSettingsError(w, http.StatusBadGateway, err.Error())
+				writeDeviceError(w, err)
 				return
 			}
 			if !lic.OverlayWAN {
@@ -825,7 +876,7 @@ func (s *Server) handlePostConfigWAN(w http.ResponseWriter, r *http.Request) {
 	}
 	outcome, err := s.safeApplier().Apply(block)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	writeJSON(w, outcome)

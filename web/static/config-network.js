@@ -63,6 +63,15 @@
     return `<p class="muted">Currently negotiated: ${esc(speed || "unknown")}, ${esc(pretty)} duplex. Leaving these unset keeps auto-negotiation, which is what the device does today.</p>`;
   }
 
+  // Config is read from `show config`, which has no leaf for a VLAN's
+  // label — that only exists in cloud-json-config, and only on a device
+  // that has been cloud-managed. Fall back to the id so a row is never
+  // blank; everything else in this table comes from the live config.
+  function vlanName(v) {
+    if (v.name) return esc(v.name);
+    return `<span class="muted">VLAN ${v.vlan_id}</span>`;
+  }
+
   function render() {
     const panel = document.getElementById("config-network-panel");
     const vlans = cache.vlans || [];
@@ -77,7 +86,7 @@
         );
         return `<tr>
           <td>${v.vlan_id}</td>
-          <td>${esc(v.name)}</td>
+          <td>${vlanName(v)}</td>
           <td class="mono">${esc(v.ip_addr)}</td>
           <td class="mono">${esc(v.subnet_mask)}</td>
           <td>${v.management_access === "enable" ? "Enabled" : "Disabled"}</td>
@@ -133,7 +142,12 @@
     const port = parseInt(/^eth(\d+)$/.exec(iface)[1], 10);
     const mode = p.mode === "trunk" ? "trunk" : "access";
     const vlanOptions = (cache.vlans || [])
-      .map((v) => `<option value="${v.vlan_id}" ${String(v.vlan_id) === p.access_vlan ? "selected" : ""}>${v.vlan_id} (${esc(v.name)})</option>`)
+      .map(
+        (v) =>
+          `<option value="${v.vlan_id}" ${String(v.vlan_id) === p.access_vlan ? "selected" : ""}>${
+            v.name ? `${v.vlan_id} (${esc(v.name)})` : v.vlan_id
+          }</option>`
+      )
       .join("");
     const body = `
       <label>Mode
@@ -233,7 +247,7 @@
           <label>Minutes <input id="${prefix}-lease-m" type="number" min="0" max="59" value="${d.leaseMins}"></label>
         </span>
       </div>
-      <label>Custom DHCP options (one per line, "&lt;code&gt; &lt;value&gt;", e.g. "15 example.local")
+      <label>Custom DHCP options (one per line, "&lt;code&gt; &lt;value&gt;" or "&lt;code&gt; IP|text &lt;value&gt;", e.g. "15 example.local" or "43 IP 192.168.200.1")
         <textarea id="${prefix}-options" rows="3" style="background:var(--bg-2);color:var(--text);border:1px solid var(--line);padding:8px 10px;font:inherit;text-transform:none">${esc(d.optionsText || "")}</textarea>
       </label>`;
   }
@@ -246,11 +260,21 @@
       .map((line) => line.trim())
       .filter(Boolean)
       .map((line) => {
-        const sp = line.indexOf(" ");
-        if (sp < 0) return null;
-        const code = parseInt(line.slice(0, sp), 10);
-        const value = line.slice(sp + 1).trim();
-        return Number.isNaN(code) || !value ? null : { code, value };
+        // "<code> <value>" or "<code> <type> <value>". The device prints
+        // the typed form; the untyped one is accepted and the backend
+        // infers the token, so an existing entry can be edited without
+        // knowing the convention.
+        const parts = line.split(/\s+/);
+        const code = parseInt(parts[0], 10);
+        if (Number.isNaN(code) || parts.length < 2) return null;
+        let type = "";
+        let rest = parts.slice(1);
+        if (rest.length > 1 && (rest[0] === "IP" || rest[0] === "text")) {
+          type = rest[0];
+          rest = rest.slice(1);
+        }
+        const value = rest.join(" ").trim();
+        return value ? { code, type, value } : null;
       })
       .filter(Boolean);
     return {
@@ -267,15 +291,15 @@
     };
   }
 
-  // formatOptionsText turns the device's dhcp_options array back into the
-  // "<code> <value>" textarea form. Best-effort: this device has never
-  // been observed with a populated dhcp_options array, so the exact field
-  // names it would use (assumed here to be .code/.value) are unconfirmed —
-  // falls back to an empty line rather than guessing wrong if the shape
-  // doesn't match.
+  // formatOptionsText turns the pool's options back into the textarea
+  // form, keeping the device's own type token so a round trip through
+  // this form does not silently rewrite it.
   function formatOptionsText(options) {
     return (options || [])
-      .map((o) => (o && o.code != null && o.value != null ? `${o.code} ${o.value}` : null))
+      .map((o) => {
+        if (!o || o.code == null || o.value == null) return null;
+        return o.type ? `${o.code} ${o.type} ${o.value}` : `${o.code} ${o.value}`;
+      })
       .filter(Boolean)
       .join("\n");
   }
@@ -412,7 +436,7 @@
       ${macBindingSectionHTML(bindingsFor(vlanID))}
       <div id="cfg-vlan-outcome"></div>
     `;
-    openModal(`Edit VLAN ${vlanID} (${v.name})`, body, async (modalEl) => {
+    openModal(v.name ? `Edit VLAN ${vlanID} (${v.name})` : `Edit VLAN ${vlanID}`, body, async (modalEl) => {
       const ip = modalEl.querySelector("#cfg-vlan-ip").value.trim();
       const mask = modalEl.querySelector("#cfg-vlan-mask").value.trim();
       const mgmt = modalEl.querySelector("#cfg-vlan-mgmt").checked;

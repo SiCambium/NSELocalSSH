@@ -56,19 +56,76 @@ func TestDHCPPoolLinesIncludesOptionalDomain(t *testing.T) {
 	}
 }
 
+// TestDHCPPoolLinesIncludesOptions pins the option form a live NSE prints
+// in `show config` — "option <code> <type> <value>". This test previously
+// asserted "dhcp-option <code> <value>", which was wrong on both counts:
+// the keyword had been taken from a cnMaestro JSON export (which cannot
+// evidence a CLI keyword) and the type token was missing entirely.
 func TestDHCPPoolLinesIncludesOptions(t *testing.T) {
 	lines := DHCPPoolLines(DHCPScope{
 		StartIP: "172.21.1.30", EndIP: "172.21.1.250",
 		Router: "172.21.0.1", DNS: "172.21.0.1",
 		LeaseDays: 0, LeaseHours: 2, LeaseMins: 0,
 		NetworkIP: "172.21.0.0", NetworkMask: "255.255.0.0",
-		Options: []DHCPOption{{Code: 6, Value: "10.110.12.111"}, {Code: 15, Value: "example.local"}},
+		Options: []DHCPOption{
+			{Code: 6, Value: "10.110.12.111"},              // type inferred: IP
+			{Code: 15, Value: "example.local"},             // type inferred: text
+			{Code: 43, Type: "IP", Value: "192.168.200.1"}, // explicit
+		},
 	})
-	last2 := lines[len(lines)-2:]
-	want := []string{"dhcp-option 6 10.110.12.111", "dhcp-option 15 example.local"}
+	last3 := lines[len(lines)-3:]
+	want := []string{
+		"option 6 IP 10.110.12.111",
+		"option 15 text example.local",
+		"option 43 IP 192.168.200.1",
+	}
 	for i := range want {
-		if last2[i] != want[i] {
-			t.Errorf("option line %d = %q, want %q", i, last2[i], want[i])
+		if last3[i] != want[i] {
+			t.Errorf("option line %d = %q, want %q", i, last3[i], want[i])
+		}
+	}
+}
+
+// TestDHCPOptionRoundTrip checks that what we write parses back to what we
+// started with — the property the rollback path relies on, since
+// ExtractStanza replays `show config` lines straight back through
+// ApplyLines.
+func TestDHCPOptionRoundTrip(t *testing.T) {
+	for _, want := range []DHCPOption{
+		{Code: 43, Type: "IP", Value: "192.168.200.1"},
+		{Code: 60, Type: "text", Value: "something.cambium.com"},
+		{Code: 15, Type: "text", Value: "example.local"},
+	} {
+		line := DHCPOptionLine(want.Code, want.Type, want.Value)
+		got, ok := ParseDHCPOptionLeaf(line)
+		if !ok {
+			t.Errorf("%q did not parse back", line)
+			continue
+		}
+		if got != want {
+			t.Errorf("round trip of %q gave %+v, want %+v", line, got, want)
+		}
+	}
+}
+
+// TestParseDHCPOptionLeafTolerates covers the forms this might meet: a
+// device that prints no type token, a value containing spaces, and lines
+// that are not options at all.
+func TestParseDHCPOptionLeafTolerates(t *testing.T) {
+	if got, ok := ParseDHCPOptionLeaf("option 15 example.local"); !ok ||
+		got.Code != 15 || got.Type != "text" || got.Value != "example.local" {
+		t.Errorf("two-token form = %+v, ok=%v", got, ok)
+	}
+	if got, ok := ParseDHCPOptionLeaf("option 6 IP 10.0.0.1"); !ok || got.Type != "IP" {
+		t.Errorf("typed form = %+v, ok=%v", got, ok)
+	}
+	if got, ok := ParseDHCPOptionLeaf("option 252 text http://wpad/wpad.dat auto"); !ok ||
+		got.Value != "http://wpad/wpad.dat auto" {
+		t.Errorf("value with spaces = %+v, ok=%v", got, ok)
+	}
+	for _, bad := range []string{"option", "option 15", "option abc text x", "lease 0 2 0"} {
+		if _, ok := ParseDHCPOptionLeaf(bad); ok {
+			t.Errorf("%q should not parse as an option", bad)
 		}
 	}
 }
