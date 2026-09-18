@@ -59,7 +59,15 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${GITHUB_REF_NAME}" build/* --clobber
+        run: |
+          # Pushing a tag does not create a release, and `gh release upload`
+          # needs one — this is why the v0.2 tag built four artifacts and
+          # attached none of them. Jobs run in parallel, so whichever gets
+          # here first creates it and the rest harmlessly lose the race.
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 \
+            || gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag \
+            || true
+          gh release upload "${GITHUB_REF_NAME}" build/* --clobber
       - uses: actions/upload-artifact@v4
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
@@ -81,7 +89,15 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${GITHUB_REF_NAME}" build/NSE-Status-macOS-universal.zip --clobber
+        run: |
+          # Pushing a tag does not create a release, and `gh release upload`
+          # needs one — this is why the v0.2 tag built four artifacts and
+          # attached none of them. Jobs run in parallel, so whichever gets
+          # here first creates it and the rest harmlessly lose the race.
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 \
+            || gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag \
+            || true
+          gh release upload "${GITHUB_REF_NAME}" build/NSE-Status-macOS-universal.zip --clobber
       - uses: actions/upload-artifact@v4
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
@@ -108,7 +124,13 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${env:GITHUB_REF_NAME}" build/NSE-Status-windows-amd64.exe --clobber
+        run: |
+          # See the portable job: a tag alone creates no release, and
+          # `gh release upload` requires one.
+          if (-not (gh release view "${env:GITHUB_REF_NAME}" 2>$null)) {
+            gh release create "${env:GITHUB_REF_NAME}" --generate-notes --verify-tag
+          }
+          gh release upload "${env:GITHUB_REF_NAME}" build/NSE-Status-windows-amd64.exe --clobber
       - uses: actions/upload-artifact@v4
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
@@ -137,7 +159,15 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${GITHUB_REF_NAME}" build/NSE-Status-linux-amd64 --clobber
+        run: |
+          # Pushing a tag does not create a release, and `gh release upload`
+          # needs one — this is why the v0.2 tag built four artifacts and
+          # attached none of them. Jobs run in parallel, so whichever gets
+          # here first creates it and the rest harmlessly lose the race.
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 \
+            || gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag \
+            || true
+          gh release upload "${GITHUB_REF_NAME}" build/NSE-Status-linux-amd64 --clobber
       - uses: actions/upload-artifact@v4
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
