@@ -381,8 +381,10 @@ func maskedIP(ip, mask string) string {
 func fallbackDHCPPool(blk *Block) DHCPPoolConfig {
 	leaves := blockLeaves(blk)
 	// A pool that exists in the running config is a pool that's enabled;
-	// the device drops the whole block when it isn't.
-	out := DHCPPoolConfig{Enable: true}
+	// the device drops the whole block when it isn't. Options start as an
+	// empty slice rather than nil so the shape matches what
+	// cloud-json-config produces and the frontend always sees a list.
+	out := DHCPPoolConfig{Enable: true, Options: []DHCPPoolOption{}}
 	if r := strings.Fields(valueAfter(leaves, "address-range ")); len(r) >= 2 {
 		out.StartAddress, out.EndAddress = r[0], r[1]
 	}
@@ -394,6 +396,17 @@ func fallbackDHCPPool(blk *Block) DHCPPoolConfig {
 		out.LeaseTimeDay, _ = strconv.Atoi(lease[0])
 		out.LeaseTimeHour, _ = strconv.Atoi(lease[1])
 		out.LeaseTimeMinute, _ = strconv.Atoi(lease[2])
+	}
+	// Custom options, which nothing read before: the frontend showed an
+	// always-empty list because they were only ever modeled on the write
+	// side. A pool can carry several, so every matching leaf is taken.
+	for _, leaf := range leaves {
+		if !strings.HasPrefix(leaf, "option ") {
+			continue
+		}
+		if opt, ok := ParseDHCPOptionLeaf(leaf); ok {
+			out.Options = append(out.Options, DHCPPoolOption{Code: opt.Code, Type: opt.Type, Value: opt.Value})
+		}
 	}
 	return out
 }

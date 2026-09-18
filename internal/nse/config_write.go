@@ -244,9 +244,30 @@ func VLANCreateLines(ip, mask string, managementAccess bool) []string {
 }
 
 // DHCPOption is one custom "dhcp-option <code> <value>" line.
+// DHCPOption is one custom option inside an "ip dhcp pool N" block. Type
+// is the device's own type token ("IP", "text") — see DHCPOptionLine. An
+// empty Type is inferred from the value.
 type DHCPOption struct {
 	Code  int
+	Type  string
 	Value string
+}
+
+// DHCP option type tokens observed in a real `show config`.
+const (
+	DHCPOptionTypeIP   = "IP"
+	DHCPOptionTypeText = "text"
+)
+
+// InferDHCPOptionType picks a type token for a value that arrived without
+// one — the UI accepts "15 example.local" as well as "43 IP 10.0.0.1".
+// Only the two tokens this device has been seen to print are produced; a
+// value that is not an IPv4 address is treated as text.
+func InferDHCPOptionType(value string) string {
+	if ip := net.ParseIP(strings.TrimSpace(value)); ip != nil && ip.To4() != nil {
+		return DHCPOptionTypeIP
+	}
+	return DHCPOptionTypeText
 }
 
 // DHCPScope is the set of fields the CONFIRMED "ip dhcp pool N" block
@@ -285,17 +306,60 @@ func DHCPPoolLines(s DHCPScope) []string {
 		fmt.Sprintf("network %s %s", s.NetworkIP, s.NetworkMask),
 	)
 	for _, opt := range s.Options {
-		lines = append(lines, DHCPOptionLine(opt.Code, opt.Value))
+		lines = append(lines, DHCPOptionLine(opt.Code, opt.Type, opt.Value))
 	}
 	return lines
 }
 
-// DHCPOptionLine returns the CONFIRMED "dhcp-option <code> <value>" leaf
-// line for a custom DHCP option inside an "ip dhcp pool N" block. String
-// values are emitted unquoted, matching the real 2.3 export (e.g. option
-// 15 "example.local" appears with no quotes) — do not add quoting here.
-func DHCPOptionLine(code int, value string) string {
-	return fmt.Sprintf("dhcp-option %d %s", code, value)
+// DHCPOptionLine builds the leaf line for a custom DHCP option inside an
+// "ip dhcp pool N" block:
+//
+//	option 43 IP 192.168.200.1
+//	option 60 text something.cambium.com
+//
+// That three-token form — "option <code> <type> <value>" — is what a live
+// NSE prints in `show config`, and this file's rollback machinery already
+// depends on `show config` lines being replayable as input (ExtractStanza
+// feeds them straight back through ApplyLines), so it is the best-evidenced
+// write form available. It has not yet been round-tripped live.
+//
+// It previously emitted "dhcp-option <code> <value>" and was marked
+// CONFIRMED on the strength of a cnMaestro Group export — but that export
+// is JSON, not CLI, so it could never have confirmed a CLI keyword. Both
+// the keyword and the missing type token were wrong.
+//
+// Values are emitted unquoted, matching the real capture.
+func DHCPOptionLine(code int, optionType, value string) string {
+	if optionType == "" {
+		optionType = InferDHCPOptionType(value)
+	}
+	return fmt.Sprintf("option %d %s %s", code, optionType, value)
+}
+
+// ParseDHCPOptionLeaf parses an "option <code> <type> <value>" leaf back
+// into a DHCPOption. The two-token "option <code> <value>" form is also
+// accepted and its type inferred, so a device that prints options without
+// a type token still round-trips.
+func ParseDHCPOptionLeaf(line string) (DHCPOption, bool) {
+	rest := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "option "))
+	fields := strings.Fields(rest)
+	if len(fields) < 2 {
+		return DHCPOption{}, false
+	}
+	code, err := strconv.Atoi(fields[0])
+	if err != nil {
+		return DHCPOption{}, false
+	}
+	switch fields[1] {
+	case DHCPOptionTypeIP, DHCPOptionTypeText:
+		if len(fields) < 3 {
+			return DHCPOption{}, false
+		}
+		return DHCPOption{Code: code, Type: fields[1], Value: strings.Join(fields[2:], " ")}, true
+	default:
+		value := strings.Join(fields[1:], " ")
+		return DHCPOption{Code: code, Type: InferDHCPOptionType(value), Value: value}, true
+	}
 }
 
 // BuildDHCPPoolLines wraps leaf lines with the confirmed

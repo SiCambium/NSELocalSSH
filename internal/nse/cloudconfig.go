@@ -210,6 +210,19 @@ type DHCPPoolConfig struct {
 	LeaseTimeDay    int    `json:"dhcp_pool_lease_time_day"`
 	LeaseTimeHour   int    `json:"dhcp_pool_lease_time_hour"`
 	LeaseTimeMinute int    `json:"dhcp_pool_lease_time_minute"`
+
+	// Options are the pool's custom DHCP options, read from `show config`
+	// (see fallbackDHCPPool). cloud-json-config carries a dhcp_options
+	// array of its own, but its field names have never been observed
+	// populated, so it is not unmarshaled here — these come from the CLI.
+	Options []DHCPPoolOption `json:"dhcp_options"`
+}
+
+// DHCPPoolOption is one custom option as the frontend sees it.
+type DHCPPoolOption struct {
+	Code  int    `json:"code"`
+	Type  string `json:"type"`
+	Value string `json:"value"`
 }
 
 type RateLimitRules struct {

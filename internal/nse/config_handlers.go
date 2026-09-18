@@ -122,7 +122,11 @@ func (s *Server) handleGetConfigNetwork(w http.ResponseWriter, _ *http.Request) 
 }
 
 type dhcpOptionRequest struct {
-	Code  int    `json:"code"`
+	Code int `json:"code"`
+	// Type is the device's type token ("IP"/"text"). Optional: an empty
+	// value is inferred from Value (see InferDHCPOptionType), so the UI
+	// can keep accepting a plain "<code> <value>" line.
+	Type  string `json:"type"`
 	Value string `json:"value"`
 }
 
@@ -146,7 +150,7 @@ func (d dhcpScopeRequest) options() []DHCPOption {
 	out := make([]DHCPOption, 0, len(d.Options))
 	for _, o := range d.Options {
 		if o.Code > 0 && o.Value != "" {
-			out = append(out, DHCPOption{Code: o.Code, Value: o.Value})
+			out = append(out, DHCPOption{Code: o.Code, Type: o.Type, Value: o.Value})
 		}
 	}
 	return out
