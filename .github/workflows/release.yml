@@ -13,12 +13,27 @@ permissions:
 jobs:
   # Gates everything below it. A tagged release used to ship whatever
   # compiled, because nothing here ever ran the tests.
+  #
+  # Runs on macOS, which is not the obvious choice for a Go project. The
+  # reason is cmd/nse-app: it imports the webview binding, which needs the
+  # platform's GUI headers, so `go vet ./...` and `go test ./...` fail on a
+  # bare Linux runner with "Package 'gtk+-3.0' ... not found". macOS has
+  # Cocoa and WebKit built in and needs no packages installed. The
+  # alternatives are worse: pinning to ubuntu-22.04 to get the
+  # libwebkit2gtk-4.0-dev that 24.04 dropped ties the gate to an image
+  # that is itself being retired, and excluding cmd/nse-app by name would
+  # silently skip the next package that needs a toolchain — including the
+  # tests covering the Windows and Linux browser launchers, which cannot
+  # be cross-compiled and have no other automated check.
+  #
+  # This is free while the repository is public; if it ever goes private,
+  # macOS minutes bill at 10x and this is the job to reconsider.
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
       - name: gofmt
@@ -35,8 +50,8 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
       - run: sh scripts/build-portable.sh "${GITHUB_REF_NAME}"
@@ -57,8 +72,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
       - run: sh scripts/build-macos-app.sh "${GITHUB_REF_NAME}"
@@ -79,8 +94,8 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
       - name: Ensure a C++ toolchain is available (webview.cc needs g++)
@@ -109,8 +124,8 @@ jobs:
     # depends on.
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
       - run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev pkg-config
