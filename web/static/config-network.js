@@ -232,6 +232,105 @@
       .join("\n");
   }
 
+  // --- MAC binding list -------------------------------------------------
+  // Mirrors cnMaestro, which nests this under a VLAN's DHCP tab. On the
+  // device the reservations actually live on the DHCP *pool*, not the VLAN
+  // SVI; the backend does the VLAN-to-pool lookup so the UI can stay
+  // VLAN-shaped.
+  //
+  // Add and Remove apply immediately rather than on the modal's Save,
+  // because each reservation is its own CLI line and the device reports
+  // per-line errors (a duplicate MAC, say) that belong next to the row
+  // that caused them.
+
+  function bindingsFor(vlanID) {
+    return (cache.bindings || {})[String(vlanID)] || [];
+  }
+
+  function macBindingRowsHTML(bindings) {
+    if (!bindings.length) {
+      return `<tr><td colspan="4" class="muted">No reservations on this VLAN.</td></tr>`;
+    }
+    return bindings
+      .map(
+        (b) => `<tr>
+          <td class="mono">${esc(b.mac)}</td>
+          <td class="mono">${esc(b.ip)}</td>
+          <td>${esc(b.description || "-")}</td>
+          <td><button type="button" class="row-edit" data-unbind-mac="${esc(b.mac)}" data-unbind-ip="${esc(b.ip)}">Remove</button></td>
+        </tr>`
+      )
+      .join("");
+  }
+
+  function macBindingSectionHTML(bindings) {
+    return `
+      <h3>MAC binding list</h3>
+      <p class="muted">DHCP reservations for this VLAN. The address must be inside the VLAN's subnet and outside the DHCP range above — the device accepts addresses that are neither, and silently never hands them out. Descriptions come from cnMaestro and are read-only: the device CLI has no command that sets them.</p>
+      <table class="table">
+        <thead><tr><th>MAC</th><th>IP address</th><th>Description</th><th></th></tr></thead>
+        <tbody id="cfg-bind-rows">${macBindingRowsHTML(bindings)}</tbody>
+      </table>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:8px">
+        <label style="flex:1 1 200px;margin:0">MAC
+          <input id="cfg-bind-mac" type="text" placeholder="aa:bb:cc:dd:ee:ff" style="text-transform:none">
+        </label>
+        <label style="flex:1 1 160px;margin:0">IP address
+          <input id="cfg-bind-ip" type="text" placeholder="192.168.40.200" style="text-transform:none">
+        </label>
+        <button type="button" class="row-edit" id="cfg-bind-add">Add</button>
+      </div>
+      <div id="cfg-bind-outcome"></div>`;
+  }
+
+  function wireMACBindings(vlanID) {
+    const modalEl = document.querySelector(".modal");
+    if (!modalEl) return;
+    const outcomeEl = modalEl.querySelector("#cfg-bind-outcome");
+    const rowsEl = modalEl.querySelector("#cfg-bind-rows");
+
+    const post = async (body) => {
+      outcomeEl.innerHTML = "";
+      try {
+        const outcome = await postJSON("/api/config/network", body);
+        await renderOutcome(outcomeEl, outcome);
+        // Re-read rather than patching locally: the device is the only
+        // authority on the stored MAC spelling, which a later Remove has
+        // to match exactly.
+        cache = await getJSON("/api/config/network");
+        rowsEl.innerHTML = macBindingRowsHTML(bindingsFor(vlanID));
+        wireRemove();
+        render();
+      } catch (e) {
+        outcomeEl.innerHTML = `<p class="apply-error">${esc(e.message)}</p>`;
+      }
+    };
+
+    const wireRemove = () => {
+      rowsEl.querySelectorAll("[data-unbind-mac]").forEach((btn) => {
+        btn.addEventListener("click", () =>
+          post({
+            action: "mac_bind_delete",
+            vlan_id: vlanID,
+            mac: btn.dataset.unbindMac,
+            bind_ip: btn.dataset.unbindIp,
+          })
+        );
+      });
+    };
+
+    wireRemove();
+    modalEl.querySelector("#cfg-bind-add").addEventListener("click", () => {
+      const mac = modalEl.querySelector("#cfg-bind-mac").value.trim();
+      const ip = modalEl.querySelector("#cfg-bind-ip").value.trim();
+      if (!mac || !ip) {
+        outcomeEl.innerHTML = `<p class="apply-error">Enter both a MAC address and an IP address.</p>`;
+        return;
+      }
+      post({ action: "mac_bind_add", vlan_id: vlanID, mac, bind_ip: ip });
+    });
+  }
+
   function editVLAN(vlanID) {
     const v = (cache.vlans || []).find((x) => x.vlan_id === vlanID);
     if (!v) return;
@@ -261,6 +360,7 @@
       <p class="warn">Changing management access on the VLAN carrying this session can lock you out. This change is applied through the safe-apply path: it's verified reachable over a fresh connection before it's kept, and rolled back automatically if not confirmed within 60 seconds.</p>
       <h3>DHCP scope</h3>
       ${dhcpScopeFieldsHTML("cfg-vlan-dhcp", dhcp)}
+      ${macBindingSectionHTML(bindingsFor(vlanID))}
       <div id="cfg-vlan-outcome"></div>
     `;
     openModal(`Edit VLAN ${vlanID} (${v.name})`, body, async (modalEl) => {
@@ -318,6 +418,9 @@
 
       await load();
     });
+    // Wired after openModal so the buttons exist in the DOM. Add/Remove
+    // act immediately and are independent of this modal's Save.
+    wireMACBindings(vlanID);
   }
 
   function addVLAN() {

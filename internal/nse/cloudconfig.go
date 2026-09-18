@@ -195,6 +195,15 @@ func (w WANInterface) PortNumber() int {
 	return out
 }
 
+// DHCPBind is one entry of dhcp_pool_bind_list. This is the only place a
+// reservation's human-readable label exists on the device — `show config`
+// emits just "bind <MAC> <IP>", and no CLI verb reads or writes "desc".
+type DHCPBind struct {
+	IP   string `json:"ip"`
+	MAC  string `json:"mac"`
+	Desc string `json:"desc"`
+}
+
 type DHCPPoolConfig struct {
 	Enable          bool   `json:"dhcp_pool_enable"`
 	StartAddress    string `json:"dhcp_pool_start_address"`
@@ -203,6 +212,12 @@ type DHCPPoolConfig struct {
 	LeaseTimeDay    int    `json:"dhcp_pool_lease_time_day"`
 	LeaseTimeHour   int    `json:"dhcp_pool_lease_time_hour"`
 	LeaseTimeMinute int    `json:"dhcp_pool_lease_time_minute"`
+
+	// BindList lags `show config`: a reservation written over the CLI
+	// shows up in `show config` immediately but was still absent here on
+	// the next read (observed live). Treat `show config` as authoritative
+	// for which reservations exist, and this only as the source of Desc.
+	BindList []DHCPBind `json:"dhcp_pool_bind_list"`
 }
 
 type RateLimitRules struct {

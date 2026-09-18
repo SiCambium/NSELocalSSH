@@ -481,8 +481,14 @@ func TestParseLANConfig(t *testing.T) {
 	if lan.Bindings[0].MAC != "bc:a9:93:0d:89:62" || lan.Bindings[0].IP != "172.21.1.10" {
 		t.Fatalf("bind0 %+v", lan.Bindings[0])
 	}
-	if lan.Bindings[1].Description != "camera-porch" {
-		t.Fatalf("desc %+v", lan.Bindings[1])
+	// Trailing fields on a bind line are DHCP options, not a description:
+	// the device rejects free text there.
+	if lan.Bindings[1].Options != "60 text Cambium-WiFi-AP" || lan.Bindings[1].Description != "" {
+		t.Fatalf("options %+v", lan.Bindings[1])
+	}
+	// MAC case must survive parsing — `no bind` matches case-sensitively.
+	if lan.Bindings[2].MAC != "AA:BB:CC:DD:EE:FF" {
+		t.Fatalf("expected device casing preserved, got %+v", lan.Bindings[2])
 	}
 }
 

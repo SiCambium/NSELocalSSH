@@ -19,10 +19,15 @@ var promptBytes = regexp.MustCompile(`[A-Za-z0-9._-]+\([^)]*\)#\s*$`)
 // has fully unwound back to the root.
 var topPromptBytes = regexp.MustCompile(`[A-Za-z0-9._-]+\(config\)#\s*$`)
 
-// cliErrorLineRE matches the two error conventions observed live on this
-// CLI: "%Error processing cli command" and "Invalid arguments". There is
-// no known success token, so success is inferred as "no error line".
-var cliErrorLineRE = regexp.MustCompile(`(?m)^\s*(%.*|Invalid .*)\s*$`)
+// cliErrorLineRE matches the error conventions observed live on this CLI:
+// "%Error processing cli command", "Invalid arguments", and the bare
+// "Error <...>" form that the DHCP pool context uses (CONFIRMED on NSE
+// 4000 firmware 2.3: "Error setting dhcp pool parameters: The input mac
+// is already bound"). That third form has no "%" prefix, so before it was
+// listed here a rejected `bind` was classified OK and reported to the user
+// as applied. There is no known success token, so success is still
+// inferred as "no error line".
+var cliErrorLineRE = regexp.MustCompile(`(?m)^\s*(%.*|Invalid .*|Error .*)\s*$`)
 
 // LineResult is the outcome of sending one line within a RunSequence.
 type LineResult struct {
