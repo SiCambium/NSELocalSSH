@@ -467,12 +467,16 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 			break
 		}
 
-		// Appended last, which is where cnMaestro puts it too. Deleting the
-		// previous rule first keeps one rule per VLAN rather than stacking
-		// limits that all match the same subnet.
+		// A new rule is appended last, which is where cnMaestro puts it
+		// too. Changing an existing one reuses its slot instead: deleting
+		// does not renumber, so allocating a fresh precedence every time
+		// would walk the rule down the table and leave a gap behind on
+		// each edit. Rewriting in place keeps one rule per VLAN, at a
+		// stable position.
 		precedence := maxFilterPrecedence(rules) + 1
 		var leaves, undo []string
 		if existing != nil {
+			precedence = existingPrec
 			leaves = append(leaves, FilterRuleDeleteLine(existingPrec))
 		}
 		leaves = append(leaves, FilterRuleLeafLines(precedence, VLANRateLimitRule(spec, req.RateLimitMbps))...)
@@ -481,6 +485,7 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 		// the new rule should not exist), so the inverse is explicit.
 		undo = append(undo, FilterRuleDeleteLine(precedence))
 		if existing != nil {
+			// Same slot, so this puts the original rule back exactly.
 			undo = append(undo, FilterRuleLeafLines(existingPrec, *existing)...)
 		}
 		block = ConfigBlock{
