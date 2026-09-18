@@ -20,7 +20,8 @@ build_status() {
 	[ "$os" = "windows" ] && name="${name}.exe"
 	echo "  $name"
 	env CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" ${goarm:+GOARM=$goarm} \
-		go build -trimpath -ldflags "-s -w" -o "$out/$name" ./cmd/nse-status
+		go build -trimpath -ldflags "-s -w -X nse-cli/internal/nse.BuildVersion=$version" \
+		-o "$out/$name" ./cmd/nse-status
 }
 
 # Desktop/server OSes.

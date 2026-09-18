@@ -1,16 +1,38 @@
-name: Release builds
+name: CI and release
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
+  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  # Gates everything below it. A tagged release used to ship whatever
+  # compiled, because nothing here ever ran the tests.
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt'd:"; echo "$unformatted"; exit 1
+          fi
+      - run: go vet ./...
+      - run: go test ./...
+
   portable:
     name: Portable server (all platforms)
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,13 +53,15 @@ jobs:
 
   macos-app:
     name: Desktop app (macOS universal)
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      - run: sh scripts/build-macos-app.sh
+      - run: sh scripts/build-macos-app.sh "${GITHUB_REF_NAME}"
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -51,6 +75,8 @@ jobs:
 
   windows-app:
     name: Desktop app (Windows amd64)
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +88,7 @@ jobs:
       - name: Build
         env:
           CGO_ENABLED: '1'
-        run: go build -ldflags "-H windowsgui -s -w" -o build/NSE-Status-windows-amd64.exe ./cmd/nse-app
+        run: go build -ldflags "-H windowsgui -s -w -X nse-cli/internal/nse.BuildVersion=${env:GITHUB_REF_NAME}" -o build/NSE-Status-windows-amd64.exe ./cmd/nse-app
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -76,6 +102,8 @@ jobs:
 
   linux-app:
     name: Desktop app (Linux amd64, GTK)
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     # Pinned to 22.04: 24.04 dropped the libwebkit2gtk-4.0-dev package
     # that webview_go's Linux build (#cgo pkg-config: ... webkit2gtk-4.0)
     # depends on.
@@ -89,7 +117,7 @@ jobs:
       - name: Build
         env:
           CGO_ENABLED: '1'
-        run: go build -ldflags "-s -w" -o build/NSE-Status-linux-amd64 ./cmd/nse-app
+        run: go build -ldflags "-s -w -X nse-cli/internal/nse.BuildVersion=${GITHUB_REF_NAME}" -o build/NSE-Status-linux-amd64 ./cmd/nse-app
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
         env:
@@ -100,3 +128,29 @@ jobs:
         with:
           name: nse-app-linux
           path: build/NSE-Status-linux-amd64
+
+  # Runs last, over the assets actually attached to the release, so the
+  # sums cover exactly what a user downloads rather than a local build.
+  checksums:
+    name: Publish SHA256SUMS
+    needs: [portable, macos-app, windows-app, linux-app]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      # No checkout needed — gh works from GITHUB_REPOSITORY alone.
+      - name: Download the release assets, sum them, attach the list
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist && cd dist
+          gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --pattern '*'
+          # Re-running a release must not sum a previous SHA256SUMS, and
+          # only regular files are summed so a stray directory cannot fail
+          # the job.
+          rm -f SHA256SUMS
+          find . -maxdepth 1 -type f -printf '%P\0' \
+            | sort -z \
+            | xargs -0 sha256sum > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "${GITHUB_REF_NAME}" SHA256SUMS --repo "${GITHUB_REPOSITORY}" --clobber

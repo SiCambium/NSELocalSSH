@@ -17,7 +17,7 @@ echo "=== nse-status (portable server, all platforms) ==="
 sh scripts/build-portable.sh "$version"
 
 echo "=== nse-app (native desktop, macOS universal) ==="
-sh scripts/build-macos-app.sh
+sh scripts/build-macos-app.sh "$version"
 
 echo
 echo "Done. Artifacts in $root/build:"

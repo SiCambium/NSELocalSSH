@@ -1,11 +1,13 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"html"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"runtime"
 
@@ -16,6 +18,13 @@ import (
 )
 
 func main() {
+	showVersion := flag.Bool("version", false, "print the version and exit")
+	flag.Parse()
+	if *showVersion {
+		fmt.Printf("nse-app %s\n", nse.BuildVersion)
+		os.Exit(0)
+	}
+
 	cfg := nse.LoadConfig()
 	w := webview.New(false)
 	defer w.Destroy()
@@ -62,7 +71,7 @@ func main() {
 		log.Printf("bind nseOpenInBrowser: %v", err)
 	}
 
-	log.Printf("NSE desktop app serving %s (device %s)", url, cfg.Addr())
+	log.Printf("NSE desktop app %s serving %s (device %s)", nse.BuildVersion, url, cfg.Addr())
 	w.Navigate(url)
 	w.Run()
 }

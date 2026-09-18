@@ -116,6 +116,22 @@ CGO_ENABLED=1 go build -o NSE-Status ./cmd/nse-app
 
 CI pins this job to Ubuntu 22.04: 24.04 dropped the `libwebkit2gtk-4.0-dev` package the binding depends on.
 
+### Verifying a download
+
+Each release carries a `SHA256SUMS` file covering every attached artifact:
+
+```bash
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+Every binary also reports the release it came from, which the filename alone cannot be trusted to tell you once it has been renamed or moved:
+
+```bash
+./nse-status --version          # e.g. "nse-status v0.3.0"
+```
+
+A build made straight from a working tree reports `dev`.
+
 ### Dev probe utilities
 
 `cmd/nse-probe` and `cmd/nse-statsprobe` are small ad-hoc tools for running specific read-only `show` commands against a live device during development — not part of the app itself.

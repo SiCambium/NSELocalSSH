@@ -8,6 +8,7 @@ set -eu
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
+version="${1:-dev}"
 out="$root/build"
 work="$out/.macos-work"
 app_name="NSE Status"
@@ -21,13 +22,30 @@ mkdir -p "$macos_dir" "$resources"
 
 export CGO_ENABLED=1
 echo "  building arm64 slice"
-GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o "$out/.nse-app-arm64" ./cmd/nse-app
+GOOS=darwin GOARCH=arm64 go build -trimpath \
+	-ldflags "-s -w -X nse-cli/internal/nse.BuildVersion=$version" \
+	-o "$out/.nse-app-arm64" ./cmd/nse-app
 echo "  building amd64 slice"
-GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$out/.nse-app-amd64" ./cmd/nse-app
+GOOS=darwin GOARCH=amd64 go build -trimpath \
+	-ldflags "-s -w -X nse-cli/internal/nse.BuildVersion=$version" \
+	-o "$out/.nse-app-amd64" ./cmd/nse-app
 lipo -create -output "$macos_dir/nse-app" "$out/.nse-app-arm64" "$out/.nse-app-amd64"
 rm -f "$out/.nse-app-arm64" "$out/.nse-app-amd64"
 
+# Info.plist carries a hardcoded CFBundleShortVersionString that drifts
+# from reality the moment a release is cut. Substitute the real version
+# when it looks like one; a "dev" build keeps whatever the file says,
+# since Finder rejects a non-numeric version string.
 cp "$root/macos/Info.plist" "$app/Contents/Info.plist"
+plist_version="$(printf %s "$version" | sed 's/^v//')"
+case "$plist_version" in
+	[0-9]*)
+		/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $plist_version" \
+			"$app/Contents/Info.plist" >/dev/null 2>&1 || true
+		/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $plist_version" \
+			"$app/Contents/Info.plist" >/dev/null 2>&1 || true
+		;;
+esac
 
 if [ -f "$root/macos/icon.png" ]; then
 	iconset="$out/.AppIcon.iconset"
