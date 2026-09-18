@@ -49,7 +49,7 @@ ip dhcp pool 1
  lease 0 2 0
  network 172.21.0.0 255.255.0.0
  bind bc:a9:93:0d:89:62 172.21.1.10
- bind 00:11:22:33:44:55 172.21.1.11 camera-porch
+ bind 00:11:22:33:44:55 172.21.1.11 60 text Cambium-WiFi-AP
  exit
 !
 ip dhcp pool 3
@@ -59,7 +59,7 @@ ip dhcp pool 3
  domain-name home.lan
  lease 1 0 0
  network 172.23.0.0 255.255.0.0
- hardware-address aa:bb:cc:dd:ee:ff 172.23.1.5
+ bind AA:BB:CC:DD:EE:FF 172.23.1.5
  exit
 !
 NSE-Caravan(config)#

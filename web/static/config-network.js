@@ -19,6 +19,50 @@
     }
   }
 
+  // Speed and duplex appear in `show config` only when they have been
+  // FORCED. An auto-negotiating port emits no speed/duplex/advertise lines
+  // at all, so reading the config alone showed every port as "auto" / "-"
+  // even while the link was up and negotiated. These cells prefer the
+  // forced value when there is one and fall back to the negotiated state
+  // from `show interface brief`, labelling which is which.
+
+  function linkFor(iface) {
+    return (cache.link || {})[String(iface || "").toLowerCase()] || {};
+  }
+
+  // The device writes "N/A" into every column of a down port.
+  function liveValue(v) {
+    return !v || v === "N/A" ? "" : v;
+  }
+
+  function speedCell(p) {
+    if (p.speed) return `${esc(p.speed)} Mbps <span class="muted">forced</span>`;
+    const live = liveValue(linkFor(p.interface).speed);
+    return live ? `${esc(live)} <span class="muted">negotiated</span>` : "-";
+  }
+
+  function duplexCell(p) {
+    if (p.duplex) return `${esc(p.duplex)} <span class="muted">forced</span>`;
+    const live = liveValue(linkFor(p.interface).duplex);
+    if (!live) return "-";
+    const pretty = live.charAt(0).toUpperCase() + live.slice(1).toLowerCase();
+    return `${esc(pretty)} <span class="muted">negotiated</span>`;
+  }
+
+  // "Not set" says nothing about what the port is actually doing, so the
+  // negotiated state is shown alongside it. Reads as empty on a down port,
+  // where the device reports N/A for every column.
+  function linkStateHintHTML(iface) {
+    const l = linkFor(iface);
+    const speed = liveValue(l.speed);
+    const duplex = liveValue(l.duplex);
+    if (!speed && !duplex) {
+      return `<p class="muted">Link is down, so there is no negotiated speed or duplex to report.</p>`;
+    }
+    const pretty = duplex ? duplex.charAt(0).toUpperCase() + duplex.slice(1).toLowerCase() : "unknown";
+    return `<p class="muted">Currently negotiated: ${esc(speed || "unknown")}, ${esc(pretty)} duplex. Leaving these unset keeps auto-negotiation, which is what the device does today.</p>`;
+  }
+
   // Config is read from `show config`, which has no leaf for a VLAN's
   // label — that only exists in cloud-json-config, and only on a device
   // that has been cloud-managed. Fall back to the id so a row is never
@@ -60,8 +104,8 @@
           <td>${esc(p.mode || "-")}</td>
           <td>${esc(p.mode === "trunk" ? p.native_vlan || "-" : p.access_vlan || "-")}</td>
           <td>${esc(p.allowed_vlans || "-")}</td>
-          <td>${esc(p.speed || "auto")}</td>
-          <td>${esc(p.duplex || "-")}</td>
+          <td>${speedCell(p)}</td>
+          <td>${duplexCell(p)}</td>
           <td><button type="button" class="row-edit" data-port="${esc(p.interface)}">Edit</button></td>
         </tr>`
       )
@@ -131,11 +175,12 @@
       </label>
       <label>Duplex
         <select id="cfg-port-duplex">
-          <option value="" ${!p.duplex ? "selected" : ""}>Not set</option>
+          <option value="" ${!p.duplex ? "selected" : ""}>Not set (auto-negotiate)</option>
           <option value="full" ${p.duplex === "full" ? "selected" : ""}>Full</option>
           <option value="half" ${p.duplex === "half" ? "selected" : ""}>Half</option>
         </select>
       </label>
+      ${linkStateHintHTML(p.interface)}
       <label>Advertise (auto-negotiation)
         <select id="cfg-port-advertise">
           <option value="auto" ${(!p.advertise || p.advertise === "auto") ? "selected" : ""}>Auto</option>
@@ -191,15 +236,17 @@
       <label>DHCP start address <input id="${prefix}-start" type="text" value="${esc(d.start)}"></label>
       <label>DHCP end address <input id="${prefix}-end" type="text" value="${esc(d.end)}"></label>
       <label>Router (default gateway) <input id="${prefix}-router" type="text" value="${esc(d.router)}"></label>
-      <label>DNS server <input id="${prefix}-dns" type="text" value="${esc(d.dns)}"></label>
+      <label>Primary DNS <input id="${prefix}-dns" type="text" value="${esc(d.dns)}"></label>
+      <label>Secondary DNS (optional) <input id="${prefix}-dns2" type="text" value="${esc(d.dnsSecondary || "")}"></label>
       <label>Domain (optional) <input id="${prefix}-domain" type="text" value="${esc(d.domain)}"></label>
-      <label>Lease time
-        <span style="display:flex;gap:8px">
-          <input id="${prefix}-lease-d" type="number" min="0" value="${d.leaseDays}" style="width:70px" title="days">
-          <input id="${prefix}-lease-h" type="number" min="0" max="23" value="${d.leaseHours}" style="width:70px" title="hours">
-          <input id="${prefix}-lease-m" type="number" min="0" max="59" value="${d.leaseMins}" style="width:70px" title="minutes">
+      <div class="field-group">
+        <span class="field-legend">Lease time</span>
+        <span class="field-row">
+          <label>Days <input id="${prefix}-lease-d" type="number" min="0" value="${d.leaseDays}"></label>
+          <label>Hours <input id="${prefix}-lease-h" type="number" min="0" max="23" value="${d.leaseHours}"></label>
+          <label>Minutes <input id="${prefix}-lease-m" type="number" min="0" max="59" value="${d.leaseMins}"></label>
         </span>
-      </label>
+      </div>
       <label>Custom DHCP options (one per line, "&lt;code&gt; &lt;value&gt;" or "&lt;code&gt; IP|text &lt;value&gt;", e.g. "15 example.local" or "43 IP 192.168.200.1")
         <textarea id="${prefix}-options" rows="3" style="background:var(--bg-2);color:var(--text);border:1px solid var(--line);padding:8px 10px;font:inherit;text-transform:none">${esc(d.optionsText || "")}</textarea>
       </label>`;
@@ -235,6 +282,7 @@
       end_ip: val("end"),
       router: val("router"),
       dns: val("dns"),
+      dns_secondary: val("dns2"),
       domain: val("domain"),
       lease_days: num("lease-d"),
       lease_hours: num("lease-h"),
@@ -256,6 +304,105 @@
       .join("\n");
   }
 
+  // --- MAC binding list -------------------------------------------------
+  // Mirrors cnMaestro, which nests this under a VLAN's DHCP tab. On the
+  // device the reservations actually live on the DHCP *pool*, not the VLAN
+  // SVI; the backend does the VLAN-to-pool lookup so the UI can stay
+  // VLAN-shaped.
+  //
+  // Add and Remove apply immediately rather than on the modal's Save,
+  // because each reservation is its own CLI line and the device reports
+  // per-line errors (a duplicate MAC, say) that belong next to the row
+  // that caused them.
+
+  function bindingsFor(vlanID) {
+    return (cache.bindings || {})[String(vlanID)] || [];
+  }
+
+  function macBindingRowsHTML(bindings) {
+    if (!bindings.length) {
+      return `<tr><td colspan="4" class="muted">No reservations on this VLAN.</td></tr>`;
+    }
+    return bindings
+      .map(
+        (b) => `<tr>
+          <td class="mono">${esc(b.mac)}</td>
+          <td class="mono">${esc(b.ip)}</td>
+          <td>${esc(b.description || "-")}</td>
+          <td><button type="button" class="row-edit" data-unbind-mac="${esc(b.mac)}" data-unbind-ip="${esc(b.ip)}">Remove</button></td>
+        </tr>`
+      )
+      .join("");
+  }
+
+  function macBindingSectionHTML(bindings) {
+    return `
+      <h3>MAC binding list</h3>
+      <p class="muted">DHCP reservations for this VLAN. The address must be inside the VLAN's subnet and outside the DHCP range above — the device accepts addresses that are neither, and silently never hands them out. Descriptions come from cnMaestro and are read-only: the device CLI has no command that sets them.</p>
+      <table class="table">
+        <thead><tr><th>MAC</th><th>IP address</th><th>Description</th><th></th></tr></thead>
+        <tbody id="cfg-bind-rows">${macBindingRowsHTML(bindings)}</tbody>
+      </table>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:8px">
+        <label style="flex:1 1 200px;margin:0">MAC
+          <input id="cfg-bind-mac" type="text" placeholder="aa:bb:cc:dd:ee:ff" style="text-transform:none">
+        </label>
+        <label style="flex:1 1 160px;margin:0">IP address
+          <input id="cfg-bind-ip" type="text" placeholder="192.168.40.200" style="text-transform:none">
+        </label>
+        <button type="button" class="row-edit" id="cfg-bind-add">Add</button>
+      </div>
+      <div id="cfg-bind-outcome"></div>`;
+  }
+
+  function wireMACBindings(vlanID) {
+    const modalEl = document.querySelector(".modal");
+    if (!modalEl) return;
+    const outcomeEl = modalEl.querySelector("#cfg-bind-outcome");
+    const rowsEl = modalEl.querySelector("#cfg-bind-rows");
+
+    const post = async (body) => {
+      outcomeEl.innerHTML = "";
+      try {
+        const outcome = await postJSON("/api/config/network", body);
+        await renderOutcome(outcomeEl, outcome);
+        // Re-read rather than patching locally: the device is the only
+        // authority on the stored MAC spelling, which a later Remove has
+        // to match exactly.
+        cache = await getJSON("/api/config/network");
+        rowsEl.innerHTML = macBindingRowsHTML(bindingsFor(vlanID));
+        wireRemove();
+        render();
+      } catch (e) {
+        outcomeEl.innerHTML = `<p class="apply-error">${esc(e.message)}</p>`;
+      }
+    };
+
+    const wireRemove = () => {
+      rowsEl.querySelectorAll("[data-unbind-mac]").forEach((btn) => {
+        btn.addEventListener("click", () =>
+          post({
+            action: "mac_bind_delete",
+            vlan_id: vlanID,
+            mac: btn.dataset.unbindMac,
+            bind_ip: btn.dataset.unbindIp,
+          })
+        );
+      });
+    };
+
+    wireRemove();
+    modalEl.querySelector("#cfg-bind-add").addEventListener("click", () => {
+      const mac = modalEl.querySelector("#cfg-bind-mac").value.trim();
+      const ip = modalEl.querySelector("#cfg-bind-ip").value.trim();
+      if (!mac || !ip) {
+        outcomeEl.innerHTML = `<p class="apply-error">Enter both a MAC address and an IP address.</p>`;
+        return;
+      }
+      post({ action: "mac_bind_add", vlan_id: vlanID, mac, bind_ip: ip });
+    });
+  }
+
   function editVLAN(vlanID) {
     const v = (cache.vlans || []).find((x) => x.vlan_id === vlanID);
     if (!v) return;
@@ -265,6 +412,7 @@
       end: dp.dhcp_pool_end_address || "",
       router: v.ip_addr || "",
       dns: dp.dhcp_pool_primary_dns_server || "",
+      dnsSecondary: dp.dhcp_pool_secondary_dns_server || "",
       domain: "",
       leaseDays: dp.dhcp_pool_lease_time_day || 0,
       leaseHours: dp.dhcp_pool_lease_time_hour ?? 2,
@@ -285,6 +433,7 @@
       <p class="warn">Changing management access on the VLAN carrying this session can lock you out. This change is applied through the safe-apply path: it's verified reachable over a fresh connection before it's kept, and rolled back automatically if not confirmed within 60 seconds.</p>
       <h3>DHCP scope</h3>
       ${dhcpScopeFieldsHTML("cfg-vlan-dhcp", dhcp)}
+      ${macBindingSectionHTML(bindingsFor(vlanID))}
       <div id="cfg-vlan-outcome"></div>
     `;
     openModal(v.name ? `Edit VLAN ${vlanID} (${v.name})` : `Edit VLAN ${vlanID}`, body, async (modalEl) => {
@@ -324,6 +473,7 @@
         scope.end_ip !== dhcp.end ||
         scope.router !== dhcp.router ||
         scope.dns !== dhcp.dns ||
+        scope.dns_secondary !== dhcp.dnsSecondary ||
         scope.domain !== dhcp.domain ||
         scope.lease_days !== dhcp.leaseDays ||
         scope.lease_hours !== dhcp.leaseHours ||
@@ -342,10 +492,13 @@
 
       await load();
     });
+    // Wired after openModal so the buttons exist in the DOM. Add/Remove
+    // act immediately and are independent of this modal's Save.
+    wireMACBindings(vlanID);
   }
 
   function addVLAN() {
-    const dhcp = { start: "", end: "", router: "", dns: "", domain: "", leaseDays: 0, leaseHours: 2, leaseMins: 0 };
+    const dhcp = { start: "", end: "", router: "", dns: "", dnsSecondary: "", domain: "", leaseDays: 0, leaseHours: 2, leaseMins: 0 };
     const body = `
       <label>VLAN ID (1-4094)
         <input id="cfg-new-vlan-id" type="number" min="1" max="4094">

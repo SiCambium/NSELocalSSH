@@ -1111,11 +1111,24 @@ type PortVLAN struct {
 	Shutdown     bool   `json:"shutdown"`
 }
 
+// MACBinding is one DHCP reservation ("bind <MAC> <IP>") inside an
+// "ip dhcp pool N" block.
+//
+// MAC is kept exactly as the device spelled it. This matters: `no bind`
+// matches the MAC case-sensitively (CONFIRMED live — "no bind
+// AA:BB:CC:DD:EE:FF <ip>" does not remove an entry stored as
+// "aa:bb:cc:dd:ee:ff"), so a normalized MAC would build delete lines the
+// device refuses.
+//
+// Description has no CLI representation at all; it is merged in from
+// cloud-json-config by MergeBindingDescriptions. Options holds the
+// trailing per-reservation DHCP option fields, which the CLI does accept.
 type MACBinding struct {
 	Pool        int    `json:"pool"`
 	MAC         string `json:"mac"`
 	IP          string `json:"ip"`
 	Description string `json:"description,omitempty"`
+	Options     string `json:"options,omitempty"`
 }
 
 type DHCPPoolSettings struct {
@@ -1145,32 +1158,63 @@ func formatLease(raw string) string {
 	return raw
 }
 
+// parseBindLine parses a DHCP reservation leaf inside an "ip dhcp pool N"
+// block. CONFIRMED live on NSE 4000 firmware 2.3, the only spelling this
+// CLI emits or accepts is:
+//
+//	bind <MAC> <IP> [<option-code> <option-type> <option-value>]
+//
+// The trailing fields are per-reservation DHCP options, not a description
+// — passing free text there makes the device print its usage and reject
+// the line. Earlier revisions of this function also accepted
+// "mac-binding", "bind-list", "hardware-address" and "reserved-address";
+// those were guesses, none exist on this firmware, and "reserved-address"
+// read the fields in the opposite order, so a wrong guess would have
+// silently swapped MAC and IP. Only the confirmed spelling is parsed now.
 func parseBindLine(line string, pool int) (MACBinding, bool) {
 	fields := strings.Fields(line)
-	if len(fields) < 3 {
+	if len(fields) < 3 || strings.ToLower(fields[0]) != "bind" {
 		return MACBinding{}, false
 	}
-	cmd := strings.ToLower(fields[0])
-	var mac, ip string
-	restStart := 3
-	switch cmd {
-	case "bind", "mac-binding", "bind-list":
-		mac, ip = fields[1], fields[2]
-	case "hardware-address":
-		mac, ip = fields[1], fields[2]
-	case "reserved-address":
-		ip, mac = fields[1], fields[2]
-	default:
-		return MACBinding{}, false
-	}
+	mac, ip := fields[1], fields[2]
 	if !macRe.MatchString(mac) {
 		return MACBinding{}, false
 	}
-	desc := ""
-	if restStart < len(fields) {
-		desc = strings.Join(fields[restStart:], " ")
+	b := MACBinding{Pool: pool, MAC: mac, IP: ip}
+	if len(fields) > 3 {
+		b.Options = strings.Join(fields[3:], " ")
 	}
-	return MACBinding{Pool: pool, MAC: strings.ToLower(mac), IP: ip, Description: desc}, true
+	return b, true
+}
+
+// MergeBindingDescriptions copies the human-readable label for each
+// reservation out of cloud-json-config into bindings parsed from
+// `show config`. The CLI has no verb that reads or writes this label, so
+// it is display-only: a reservation added through this tool shows a blank
+// description until cnMaestro sets one.
+//
+// Matching is by MAC, case-insensitively, because the two sources do not
+// agree on case.
+func MergeBindingDescriptions(bindings []MACBinding, cloud CloudConfig) []MACBinding {
+	desc := map[string]string{}
+	for _, lan := range cloud.LANInterfaces {
+		for _, b := range lan.DHCPPoolConfig.BindList {
+			if b.Desc != "" {
+				desc[strings.ToLower(b.MAC)] = b.Desc
+			}
+		}
+	}
+	if len(desc) == 0 {
+		return bindings
+	}
+	out := make([]MACBinding, len(bindings))
+	copy(out, bindings)
+	for i := range out {
+		if d, ok := desc[strings.ToLower(out[i].MAC)]; ok {
+			out[i].Description = d
+		}
+	}
+	return out
 }
 
 func ParseLANConfig(raw string) LANConfig {

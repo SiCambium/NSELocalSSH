@@ -116,6 +116,24 @@
   border-color: var(--accent);
 }
 .modal-body .check-row { max-width: none; }
+/* Lease time renders as three separately labelled steppers (Days / Hours
+   / Minutes), matching how cnMaestro presents the same field. The group
+   heading cannot itself be a <label>, because each stepper carries one and
+   labels must not nest — hence .field-legend, which just borrows the
+   label's typography. */
+.modal-body .field-group { margin-bottom: 14px; }
+.modal-body .field-legend {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.modal-body .field-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.modal-body .field-row label { margin-bottom: 0; flex: 0 0 88px; }
+.modal-body .field-row input[type="number"] { width: 100%; }
+
 .modal-error {
   color: var(--down);
   font-size: 13px;

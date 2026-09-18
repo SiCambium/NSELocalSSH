@@ -1,6 +1,7 @@
 package nse
 
 import (
+	"bytes"
 	"fmt"
 	"net"
 	"strconv"
@@ -275,17 +276,18 @@ func InferDHCPOptionType(value string) string {
 // domain-name, lease, network, custom options) — see
 // NSE3000-CLI-REFERENCE.md and DHCPOptionLine.
 type DHCPScope struct {
-	StartIP     string
-	EndIP       string
-	Router      string
-	DNS         string
-	Domain      string // optional
-	LeaseDays   int
-	LeaseHours  int
-	LeaseMins   int
-	NetworkIP   string
-	NetworkMask string
-	Options     []DHCPOption // optional
+	StartIP      string
+	EndIP        string
+	Router       string
+	DNS          string
+	DNSSecondary string // optional
+	Domain       string // optional
+	LeaseDays    int
+	LeaseHours   int
+	LeaseMins    int
+	NetworkIP    string
+	NetworkMask  string
+	Options      []DHCPOption // optional
 }
 
 // DHCPPoolLines builds the leaf lines for an "ip dhcp pool N" block. The
@@ -296,7 +298,7 @@ func DHCPPoolLines(s DHCPScope) []string {
 	lines := []string{
 		fmt.Sprintf("address-range %s %s", s.StartIP, s.EndIP),
 		fmt.Sprintf("default-router %s", s.Router),
-		fmt.Sprintf("dns-server %s", s.DNS),
+		dnsServerLine(s.DNS, s.DNSSecondary),
 	}
 	if s.Domain != "" {
 		lines = append(lines, fmt.Sprintf("domain-name %s", s.Domain))
@@ -309,6 +311,22 @@ func DHCPPoolLines(s DHCPScope) []string {
 		lines = append(lines, DHCPOptionLine(opt.Code, opt.Type, opt.Value))
 	}
 	return lines
+}
+
+// dnsServerLine renders the CONFIRMED "dns-server" leaf. The device takes
+// both servers on a single line separated by a space — that is how it
+// emits them in `show config` — so a secondary is appended rather than
+// given a line of its own.
+//
+// Emitting only the primary is what the scope editor used to do, and it
+// does not merely omit the secondary: the line replaces the whole
+// dns-server value, so the second server was silently dropped from any
+// pool that had one.
+func dnsServerLine(primary, secondary string) string {
+	if secondary == "" {
+		return fmt.Sprintf("dns-server %s", primary)
+	}
+	return fmt.Sprintf("dns-server %s %s", primary, secondary)
 }
 
 // DHCPOptionLine builds the leaf line for a custom DHCP option inside an
@@ -373,6 +391,90 @@ func BuildDHCPPoolLines(pool int, leaves []string) []string {
 	out = append(out, leaves...)
 	out = append(out, "exit")
 	return out
+}
+
+// DHCPBindLine returns the CONFIRMED "bind <MAC> <IP>" leaf for a DHCP
+// reservation inside an "ip dhcp pool N" block.
+//
+// The MAC must be spelled the way it will be stored, because removal is
+// case-sensitive (see DHCPNoBindLine). The device also accepts trailing
+// per-reservation DHCP option fields; this tool does not write them.
+func DHCPBindLine(mac, ip string) string {
+	return fmt.Sprintf("bind %s %s", mac, ip)
+}
+
+// DHCPNoBindLine returns the CONFIRMED removal leaf for a reservation.
+//
+// Two live-verified constraints are baked in here. The IP is mandatory —
+// "no bind <MAC>" alone makes the device print its usage and remove
+// nothing. And the MAC must match the stored spelling exactly, including
+// case: removing an entry stored as "aa:bb:cc:dd:ee:ff" with
+// "no bind AA:BB:CC:DD:EE:FF <ip>" fails with "The input ip is already
+// bound" while leaving the entry in place. Callers must pass the MAC as
+// parsed from `show config`, never a normalized one.
+func DHCPNoBindLine(mac, ip string) string {
+	return fmt.Sprintf("no bind %s %s", mac, ip)
+}
+
+// ipInRange reports whether ip falls within the inclusive [start, end]
+// IPv4 range, comparing as 4-byte big-endian values.
+func ipInRange(ip, start, end net.IP) bool {
+	a, b, c := ip.To4(), start.To4(), end.To4()
+	if a == nil || b == nil || c == nil {
+		return false
+	}
+	return bytes.Compare(a, b) >= 0 && bytes.Compare(a, c) <= 0
+}
+
+// ValidateMACBinding checks a proposed reservation before it is sent.
+//
+// Every guard here is ours, because the device performs none of its own.
+// CONFIRMED live: it accepted a reservation for an IP inside the pool's
+// own dynamic address-range, and one for 10.99.99.99 against a
+// 192.168.40.0/24 pool, both without complaint. The only thing it rejects
+// is a duplicate MAC ("The input mac is already bound"), and even that is
+// reported on a line this CLI does not prefix with "%".
+//
+// vlanIP/vlanMask describe the VLAN's SVI, pool describes the DHCP scope
+// bound to it, and existing is the set of reservations already present.
+func ValidateMACBinding(mac, ip, vlanIP, vlanMask string, pool DHCPPoolSettings, existing []MACBinding) error {
+	if !macRe.MatchString(mac) {
+		return fmt.Errorf("%q is not a MAC address in aa:bb:cc:dd:ee:ff form", mac)
+	}
+	target := net.ParseIP(ip).To4()
+	if target == nil {
+		return fmt.Errorf("%q is not an IPv4 address", ip)
+	}
+
+	maskIP := net.ParseIP(vlanMask).To4()
+	svi := net.ParseIP(vlanIP).To4()
+	if maskIP == nil || svi == nil {
+		return fmt.Errorf("this VLAN has no usable IP address and mask, so %s cannot be checked against it", ip)
+	}
+	mask := net.IPMask(maskIP)
+	if !svi.Mask(mask).Equal(target.Mask(mask)) {
+		return fmt.Errorf("%s is outside this VLAN's subnet (%s/%s); the device would accept it and the reservation would never be handed out", ip, svi.Mask(mask), vlanMask)
+	}
+	if target.Equal(svi) {
+		return fmt.Errorf("%s is this VLAN's own gateway address", ip)
+	}
+
+	if fields := strings.Fields(pool.AddressRange); len(fields) == 2 {
+		start, end := net.ParseIP(fields[0]), net.ParseIP(fields[1])
+		if start != nil && end != nil && ipInRange(target, start, end) {
+			return fmt.Errorf("%s is inside the pool's dynamic range (%s-%s); reserve an address outside it", ip, fields[0], fields[1])
+		}
+	}
+
+	for _, b := range existing {
+		if strings.EqualFold(b.MAC, mac) {
+			return fmt.Errorf("%s is already bound to %s", mac, b.IP)
+		}
+		if b.IP == ip {
+			return fmt.Errorf("%s is already bound to %s", ip, b.MAC)
+		}
+	}
+	return nil
 }
 
 // WANLoadBalanceModeLine sets a WAN's load-balance mode. CONFIRMED values:

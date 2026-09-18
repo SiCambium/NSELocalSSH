@@ -693,3 +693,41 @@ func TestIPSOinkcodeLine(t *testing.T) {
 		t.Errorf("IPSOinkcodeLine() = %q, want %q", got, want)
 	}
 }
+
+// The scope editor used to send only the primary, and because the
+// dns-server line replaces the whole value, any pool configured with two
+// servers silently lost its secondary on the next edit.
+func TestDHCPPoolLinesKeepsSecondaryDNS(t *testing.T) {
+	lines := DHCPPoolLines(DHCPScope{
+		StartIP: "192.168.40.50", EndIP: "192.168.40.99",
+		Router: "192.168.40.1",
+		DNS:    "192.168.20.240", DNSSecondary: "192.168.20.241",
+		NetworkIP: "192.168.40.0", NetworkMask: "255.255.255.0",
+	})
+	want := "dns-server 192.168.20.240 192.168.20.241"
+	found := false
+	for _, l := range lines {
+		if l == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing %q in %v", want, lines)
+	}
+}
+
+func TestDHCPPoolLinesOmitsEmptySecondaryDNS(t *testing.T) {
+	lines := DHCPPoolLines(DHCPScope{
+		StartIP: "192.168.40.50", EndIP: "192.168.40.99",
+		Router: "192.168.40.1", DNS: "192.168.20.240",
+		NetworkIP: "192.168.40.0", NetworkMask: "255.255.255.0",
+	})
+	for _, l := range lines {
+		if l == "dns-server 192.168.20.240 " || l == "dns-server 192.168.20.240  " {
+			t.Fatalf("trailing separator with no secondary: %q", l)
+		}
+	}
+	if got := dnsServerLine("192.168.20.240", ""); got != "dns-server 192.168.20.240" {
+		t.Fatalf("dnsServerLine %q", got)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -118,6 +119,14 @@ func (s *Server) handleGetConfigNetwork(w http.ResponseWriter, _ *http.Request) 
 	if !ok {
 		return
 	}
+	// `show config` only carries speed/duplex/advertise when they have been
+	// FORCED — an auto-negotiating port has no such lines at all, which is
+	// why the ports table could only ever show "auto" and "-". The
+	// negotiated values live in `show interface brief`.
+	brief, ok := s.cli(w, "show interface brief", 20*time.Second)
+	if !ok {
+		return
+	}
 	lan := ParseLANConfig(cfgRaw)
 	writeJSON(w, map[string]any{
 		// config_source tells the frontend whether VLAN names are real
@@ -126,7 +135,44 @@ func (s *Server) handleGetConfigNetwork(w http.ResponseWriter, _ *http.Request) 
 		"config_source": cloud.Source,
 		"vlans":         cloud.LANInterfaces,
 		"ports":         lan.Ports,
+		"bindings":      bindingsByVLAN(cloud, lan),
+		"link":          linkByInterface(ParseInterfaceBrief(brief)),
 	})
+}
+
+// linkByInterface keys operational link state by interface name, lowercased
+// so it can be looked up from the configured port list regardless of how
+// either side spells it.
+func linkByInterface(rows []Interface) map[string]Interface {
+	out := map[string]Interface{}
+	for _, r := range rows {
+		out[strings.ToLower(r.Interface)] = r
+	}
+	return out
+}
+
+// bindingsByVLAN regroups DHCP reservations under the VLAN they belong to.
+// The CLI keys reservations by pool number, but both cnMaestro and this UI
+// present them per-VLAN, and the pool a VLAN owns is only discoverable by
+// matching its scope — poolNumberForVLAN does that matching.
+//
+// The keys are strings because this map is serialized to JSON, where
+// object keys are strings regardless.
+func bindingsByVLAN(cloud CloudConfig, lan LANConfig) map[string][]MACBinding {
+	merged := MergeBindingDescriptions(lan.Bindings, cloud)
+	byPool := map[int][]MACBinding{}
+	for _, b := range merged {
+		byPool[b.Pool] = append(byPool[b.Pool], b)
+	}
+	out := map[string][]MACBinding{}
+	for _, v := range cloud.LANInterfaces {
+		list := byPool[poolNumberForVLAN(v.VLANID, cloud, lan.DHCPPools)]
+		if list == nil {
+			list = []MACBinding{}
+		}
+		out[strconv.Itoa(v.VLANID)] = list
+	}
+	return out
 }
 
 type dhcpOptionRequest struct {
@@ -139,15 +185,16 @@ type dhcpOptionRequest struct {
 }
 
 type dhcpScopeRequest struct {
-	StartIP    string              `json:"start_ip"`
-	EndIP      string              `json:"end_ip"`
-	Router     string              `json:"router"`
-	DNS        string              `json:"dns"`
-	Domain     string              `json:"domain"`
-	LeaseDays  int                 `json:"lease_days"`
-	LeaseHours int                 `json:"lease_hours"`
-	LeaseMins  int                 `json:"lease_mins"`
-	Options    []dhcpOptionRequest `json:"options"`
+	StartIP      string              `json:"start_ip"`
+	EndIP        string              `json:"end_ip"`
+	Router       string              `json:"router"`
+	DNS          string              `json:"dns"`
+	DNSSecondary string              `json:"dns_secondary"`
+	Domain       string              `json:"domain"`
+	LeaseDays    int                 `json:"lease_days"`
+	LeaseHours   int                 `json:"lease_hours"`
+	LeaseMins    int                 `json:"lease_mins"`
+	Options      []dhcpOptionRequest `json:"options"`
 }
 
 func (d dhcpScopeRequest) valid() bool {
@@ -179,6 +226,10 @@ type networkRequest struct {
 	NativeVLAN   string `json:"native_vlan"`
 	AllowedVLANs string `json:"allowed_vlans"`
 	Enabled      *bool  `json:"enabled"`
+
+	// MAC binding fields, used by "mac_bind_add"/"mac_bind_delete".
+	MAC    string `json:"mac"`
+	BindIP string `json:"bind_ip"`
 
 	// LAN port PHY fields, used by "port_speed".
 	Speed     string `json:"speed"`     // "10" | "100" | "auto"
@@ -371,7 +422,8 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 			pool := nextAvailablePoolNumber(pools)
 			lines = append(lines, BuildDHCPPoolLines(pool, DHCPPoolLines(DHCPScope{
 				StartIP: req.DHCP.StartIP, EndIP: req.DHCP.EndIP,
-				Router: req.DHCP.Router, DNS: req.DHCP.DNS, Domain: req.DHCP.Domain,
+				Router: req.DHCP.Router, DNS: req.DHCP.DNS, DNSSecondary: req.DHCP.DNSSecondary,
+				Domain:    req.DHCP.Domain,
 				LeaseDays: req.DHCP.LeaseDays, LeaseHours: req.DHCP.LeaseHours, LeaseMins: req.DHCP.LeaseMins,
 				NetworkIP: netIP, NetworkMask: req.Mask, Options: req.DHCP.options(),
 			}))...)
@@ -410,11 +462,66 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 			Name: "dhcp-scope",
 			Lines: BuildDHCPPoolLines(pool, DHCPPoolLines(DHCPScope{
 				StartIP: req.DHCP.StartIP, EndIP: req.DHCP.EndIP,
-				Router: req.DHCP.Router, DNS: req.DHCP.DNS, Domain: req.DHCP.Domain,
+				Router: req.DHCP.Router, DNS: req.DHCP.DNS, DNSSecondary: req.DHCP.DNSSecondary,
+				Domain:    req.DHCP.Domain,
 				LeaseDays: req.DHCP.LeaseDays, LeaseHours: req.DHCP.LeaseHours, LeaseMins: req.DHCP.LeaseMins,
 				NetworkIP: netIP, NetworkMask: vlanMask, Options: req.DHCP.options(),
 			})),
 			Risk: RiskNone,
+		}
+	case "mac_bind_add", "mac_bind_delete":
+		if req.MAC == "" || req.BindIP == "" {
+			writeSettingsError(w, http.StatusBadRequest, "mac and bind_ip are required")
+			return
+		}
+		cloud, pools, err := s.currentNetworkState()
+		if err != nil {
+			writeSettingsError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		pool := poolNumberForVLAN(req.VLANID, cloud, pools)
+		if pool == 0 {
+			writeSettingsError(w, http.StatusBadRequest, "this VLAN has no DHCP pool, so it cannot hold reservations")
+			return
+		}
+		var scope DHCPPoolSettings
+		for _, p := range pools {
+			if p.Pool == pool {
+				scope = p
+			}
+		}
+
+		if req.Action == "mac_bind_delete" {
+			// The device matches the MAC case-sensitively on removal, so
+			// the stored spelling is resolved here rather than trusting
+			// whatever case the browser sent back.
+			stored, ok := findBinding(scope.Bindings, req.MAC, req.BindIP)
+			if !ok {
+				writeSettingsError(w, http.StatusBadRequest, fmt.Sprintf("no reservation for %s on this VLAN", req.MAC))
+				return
+			}
+			block = ConfigBlock{
+				Name:  "dhcp-mac-binding",
+				Lines: BuildDHCPPoolLines(pool, []string{DHCPNoBindLine(stored.MAC, stored.IP)}),
+				Risk:  RiskNone,
+			}
+			break
+		}
+
+		var vlanIP, vlanMask string
+		for _, v := range cloud.LANInterfaces {
+			if v.VLANID == req.VLANID {
+				vlanIP, vlanMask = v.IPAddr, v.SubnetMask
+			}
+		}
+		if err := ValidateMACBinding(req.MAC, req.BindIP, vlanIP, vlanMask, scope, scope.Bindings); err != nil {
+			writeSettingsError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		block = ConfigBlock{
+			Name:  "dhcp-mac-binding",
+			Lines: BuildDHCPPoolLines(pool, []string{DHCPBindLine(req.MAC, req.BindIP)}),
+			Risk:  RiskNone,
 		}
 	default:
 		writeSettingsError(w, http.StatusBadRequest, "unknown action")
@@ -427,6 +534,20 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, outcome)
+}
+
+// findBinding locates an existing reservation by MAC (case-insensitively,
+// since the browser round-trips whatever case it was shown) and returns it
+// with the device's own spelling intact, which is what a removal line
+// needs. The IP is checked too so a stale UI cannot delete a reservation
+// that has since been re-pointed at a different address.
+func findBinding(bindings []MACBinding, mac, ip string) (MACBinding, bool) {
+	for _, b := range bindings {
+		if strings.EqualFold(b.MAC, mac) && b.IP == ip {
+			return b, true
+		}
+	}
+	return MACBinding{}, false
 }
 
 func (s *Server) currentNetworkState() (CloudConfig, []DHCPPoolSettings, error) {

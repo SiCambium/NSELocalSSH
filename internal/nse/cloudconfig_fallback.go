@@ -387,12 +387,17 @@ func fallbackDHCPPool(blk *Block) DHCPPoolConfig {
 	// the device drops the whole block when it isn't. Options start as an
 	// empty slice rather than nil so the shape matches what
 	// cloud-json-config produces and the frontend always sees a list.
-	out := DHCPPoolConfig{Enable: true, Options: []DHCPPoolOption{}}
+	out := DHCPPoolConfig{Enable: true, Options: []DHCPPoolOption{}, BindList: []DHCPBind{}}
 	if r := strings.Fields(valueAfter(leaves, "address-range ")); len(r) >= 2 {
 		out.StartAddress, out.EndAddress = r[0], r[1]
 	}
+	// "dns-server <primary> [secondary]" — both servers share one leaf, so
+	// reading only the first field silently lost the secondary.
 	if dns := strings.Fields(valueAfter(leaves, "dns-server ")); len(dns) >= 1 {
 		out.PrimaryDNS = dns[0]
+		if len(dns) >= 2 {
+			out.SecondaryDNS = dns[1]
+		}
 	}
 	// "lease <days> <hours> <minutes>".
 	if lease := strings.Fields(valueAfter(leaves, "lease ")); len(lease) >= 3 {
@@ -409,6 +414,14 @@ func fallbackDHCPPool(blk *Block) DHCPPoolConfig {
 		}
 		if opt, ok := ParseDHCPOptionLeaf(leaf); ok {
 			out.Options = append(out.Options, DHCPPoolOption{Code: opt.Code, Type: opt.Type, Value: opt.Value})
+		}
+	}
+	// Reservations. `show config` carries the MAC and IP but has no leaf
+	// for a binding's label, so Desc stays empty here — it exists only in
+	// cloud-json-config.
+	for _, leaf := range leaves {
+		if b, ok := parseBindLine(leaf, 0); ok {
+			out.BindList = append(out.BindList, DHCPBind{IP: b.IP, MAC: b.MAC})
 		}
 	}
 	return out
