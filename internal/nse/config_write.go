@@ -1378,6 +1378,16 @@ func BuildFilterGlobalFilterLines(leaves []string) []string {
 // layer3-filter line exactly. See the package-level note above for why
 // every edit goes through a full delete-and-recreate rather than
 // in-place renumbering.
+//
+// Rules are rebuilt through FilterRuleLeafLines so that a rule carrying
+// neither unique_id nor rule-name is recreated without them. That matters
+// because the absence of a unique_id is what marks a rule as a VLAN's
+// per-client rate limit rather than an operator's own (see
+// VLANRateLimitRule): rebuilding one with BuildFilterRuleCreateLines
+// stamped a unique_id and an empty "rule-name" onto it, which both broke
+// that identification and emitted a nameless rule-name leaf. Reordering
+// any rule on the firewall page rewrites the whole table, so every VLAN
+// rate limit on the device was one reorder away from being orphaned.
 func ReplaceFilterRulesLines(current []FilterRule, newOrder []FilterRule) []string {
 	var leaves []string
 	for _, r := range current {
@@ -1385,9 +1395,23 @@ func ReplaceFilterRulesLines(current []FilterRule, newOrder []FilterRule) []stri
 		leaves = append(leaves, FilterRuleDeleteLine(precedence))
 	}
 	for i, r := range newOrder {
-		leaves = append(leaves, BuildFilterRuleCreateLines(i+1, r.Name, r.FullLine(), r.Extra...)...)
+		leaves = append(leaves, FilterRuleLeafLines(i+1, r)...)
 	}
 	return BuildFilterGlobalFilterLines(leaves)
+}
+
+// MarkOperatorRule flags a rule as operator-authored, so it is written
+// with a unique_id and is never mistaken for a VLAN's rate limit.
+//
+// The value is irrelevant — ReplaceFilterRulesLines renumbers unique_id to
+// the rule's new precedence — only its presence carries meaning. Rules
+// built for the firewall page's own editor have no id yet, so they are
+// marked before being written.
+func MarkOperatorRule(r FilterRule) FilterRule {
+	if r.ID == "" {
+		r.ID = "pending"
+	}
+	return r
 }
 
 // --- GEO IP filtering --------------------------------------------------

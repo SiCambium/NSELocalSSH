@@ -331,7 +331,10 @@ func (s *Server) handlePostOutboundFilterRule(w http.ResponseWriter, req firewal
 	var newOrder []FilterRule
 	switch req.Action {
 	case "filter_add":
-		newOrder = append(append([]FilterRule{}, current...), newRule)
+		// Marked so the rewrite gives it a unique_id: an unmarked rule is
+		// how a VLAN's rate limit is identified, and a rule added here is
+		// the operator's own.
+		newOrder = append(append([]FilterRule{}, current...), MarkOperatorRule(newRule))
 	case "filter_delete":
 		for _, rule := range current {
 			if rule.Precedence != strconv.Itoa(req.Precedence) {
