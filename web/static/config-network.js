@@ -179,13 +179,14 @@
       <label>Router (default gateway) <input id="${prefix}-router" type="text" value="${esc(d.router)}"></label>
       <label>DNS server <input id="${prefix}-dns" type="text" value="${esc(d.dns)}"></label>
       <label>Domain (optional) <input id="${prefix}-domain" type="text" value="${esc(d.domain)}"></label>
-      <label>Lease time
-        <span style="display:flex;gap:8px">
-          <input id="${prefix}-lease-d" type="number" min="0" value="${d.leaseDays}" style="width:70px" title="days">
-          <input id="${prefix}-lease-h" type="number" min="0" max="23" value="${d.leaseHours}" style="width:70px" title="hours">
-          <input id="${prefix}-lease-m" type="number" min="0" max="59" value="${d.leaseMins}" style="width:70px" title="minutes">
+      <div class="field-group">
+        <span class="field-legend">Lease time</span>
+        <span class="field-row">
+          <label>Days <input id="${prefix}-lease-d" type="number" min="0" value="${d.leaseDays}"></label>
+          <label>Hours <input id="${prefix}-lease-h" type="number" min="0" max="23" value="${d.leaseHours}"></label>
+          <label>Minutes <input id="${prefix}-lease-m" type="number" min="0" max="59" value="${d.leaseMins}"></label>
         </span>
-      </label>
+      </div>
       <label>Custom DHCP options (one per line, "&lt;code&gt; &lt;value&gt;", e.g. "15 example.local")
         <textarea id="${prefix}-options" rows="3" style="background:var(--bg-2);color:var(--text);border:1px solid var(--line);padding:8px 10px;font:inherit;text-transform:none">${esc(d.optionsText || "")}</textarea>
       </label>`;
