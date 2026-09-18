@@ -190,12 +190,19 @@ jobs:
           set -euo pipefail
           mkdir -p dist && cd dist
           gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --pattern '*'
-          # Re-running a release must not sum a previous SHA256SUMS, and
-          # only regular files are summed so a stray directory cannot fail
-          # the job.
+          # SHA256SUMS is excluded by name, not just deleted first: the
+          # `> SHA256SUMS` redirection creates the file before the pipeline
+          # runs, so find would otherwise pick up the file being written
+          # and sum it mid-write. That is exactly what v0.3 shipped. The
+          # same exclusion covers a real SHA256SUMS left by a re-run.
           rm -f SHA256SUMS
-          find . -maxdepth 1 -type f -printf '%P\0' \
+          find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%P\0' \
             | sort -z \
             | xargs -0 sha256sum > SHA256SUMS
+          # A sums file that lists itself is broken; fail loudly rather
+          # than publish it.
+          if grep -q ' SHA256SUMS$' SHA256SUMS; then
+            echo "SHA256SUMS lists itself"; exit 1
+          fi
           cat SHA256SUMS
           gh release upload "${GITHUB_REF_NAME}" SHA256SUMS --repo "${GITHUB_REPOSITORY}" --clobber
