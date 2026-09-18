@@ -18,7 +18,10 @@ func main() {
 	cfg := nse.LoadConfig()
 	w := webview.New(false)
 	defer w.Destroy()
-	w.SetTitle("NSE 3000 Status")
+	// The window title is set before the device is contacted, so it stays
+	// model-neutral; the page header shows the real model once show version
+	// comes back.
+	w.SetTitle("Cambium NSE Status")
 	w.SetSize(1280, 860, webview.HintNone)
 
 	client := nse.NewClient(cfg)
@@ -66,7 +69,7 @@ func main() {
 
 func errorHTML(title, detail string) string {
 	return fmt.Sprintf(`<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>NSE 3000 Status</title>
+<html><head><meta charset="utf-8"><title>Cambium NSE Status</title>
 <style>
 body{font:15px/1.45 -apple-system,BlinkMacSystemFont,sans-serif;background:#111827;color:#e5e7eb;margin:0;padding:48px}
 h1{font-size:22px;margin:0 0 12px}
