@@ -12,7 +12,7 @@ This is a personal tool, not an official Cambium product.
 
 **License-aware UI**: reads `show feature-license` and greys out (rather than hides) any control gated behind NSE Security Plus, matching cnMaestro's own convention.
 
-**Multi-site connections**: saved connections for every site you manage, each with its own label, address, username and SSH port. Switch between them from the header, or manage the list in Settings. One connection is live at a time — opening a site closes the previous SSH session — and a switch is refused while a configuration change on the current device is still awaiting confirmation, since its rollback snapshot belongs to that device and must not be replayed onto another. Connections live in `profiles.json` next to the settings `.env`, **including their passwords in cleartext** (file mode `0600`); treat that file accordingly.
+**Multi-site connections**: saved connections for every site you manage, each with its own label, address, username and SSH port. The header always shows which device you are looking at and drops down to switch; **Connections** is a top-level tab for adding, renaming and deleting them. One connection is live at a time — opening a site closes the previous SSH session — and a switch is refused while a configuration change on the current device is still awaiting confirmation, since its rollback snapshot belongs to that device and must not be replayed onto another. Connections live in `profiles.json` next to the settings `.env`, **including their passwords in cleartext** (file mode `0600`); treat that file accordingly.
 
 **Profile export**: produces a JSON profile in the same schema as cnMaestro's own NSE Group export, so a profile built here is interchangeable with cnMaestro's profile library.
 

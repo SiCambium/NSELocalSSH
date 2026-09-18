@@ -42,7 +42,9 @@ func main() {
 
 	url := "http://" + ln.Addr().String()
 	if cfg.Password == "" {
-		url += "/#settings"
+		// Nothing configured yet: open on Connections, which is where a
+		// device is added, rather than on the preferences page.
+		url += "/#connections"
 	}
 
 	// Exposed to the page as window.nseOpenInBrowser() so the UI's "Open in

@@ -952,11 +952,18 @@ function showPage(next, force = false) {
   });
   document.getElementById("page-status").hidden = next !== "status";
   document.getElementById("page-settings").hidden = next !== "settings";
+  document.getElementById("page-connections").hidden = next !== "connections";
   const configPage = document.getElementById("page-config");
   if (configPage) configPage.hidden = next !== "config";
   document.getElementById("status-tabs").hidden = next !== "status";
   document.getElementById("refresh").hidden = next !== "status";
   document.getElementById("auto-refresh-label").hidden = next !== "status";
+  if (next === "connections") {
+    document.getElementById("title").textContent = "Connections";
+    loadSettings();
+    location.hash = "connections";
+    return;
+  }
   if (next === "settings") {
     document.getElementById("title").textContent = "Settings";
     loadSettings();
@@ -1014,22 +1021,31 @@ function activeConn() {
 }
 
 function renderConnSwitcher() {
-  const wrap = document.getElementById("conn-switcher");
   const label = document.getElementById("conn-current-label");
   const menu = document.getElementById("conn-menu");
-  // With a single connection there is nothing to switch between, so the
-  // control stays out of the way rather than being a permanent no-op.
-  wrap.hidden = connections.length < 2;
   const cur = activeConn();
   label.textContent = cur ? cur.label : "No connection";
-  menu.innerHTML = connections
+  // Always rendered, including with a single site. It is the only
+  // persistent indication of *which device* everything on screen refers
+  // to, and hiding it until a second connection exists meant there was
+  // nothing to discover the feature from in the state every new user
+  // starts in.
+  const items = connections
     .map(
       (c) => `<button type="button" class="conn-menu-item${c.active ? " active" : ""}" data-conn="${c.id}">
-        <span class="conn-menu-name">${esc(c.label)}</span>
-        <span class="conn-menu-host mono">${esc(c.host)}</span>
+        <span class="conn-dot${c.active ? " on" : ""}"></span>
+        <span class="conn-menu-text">
+          <span class="conn-menu-name">${esc(c.label)}</span>
+          <span class="conn-menu-host mono">${esc(c.user)}@${esc(c.host)}:${esc(c.port)}</span>
+        </span>
       </button>`
     )
     .join("");
+  menu.innerHTML = `${items || '<p class="conn-menu-empty muted">No saved connections yet.</p>'}
+    <div class="conn-menu-sep"></div>
+    <button type="button" class="conn-menu-item conn-menu-manage" data-conn-manage="1">
+      ${connections.length ? "Manage connections…" : "Add a connection…"}
+    </button>`;
 }
 
 function renderConnList(data) {
@@ -1116,13 +1132,31 @@ async function openConnection(id) {
 
 // Header switcher.
 const connMenu = document.getElementById("conn-menu");
-document.getElementById("conn-current").addEventListener("click", () => {
-  connMenu.hidden = !connMenu.hidden;
+const connCurrentBtn = document.getElementById("conn-current");
+
+function closeConnMenu() {
+  connMenu.hidden = true;
+  connCurrentBtn.setAttribute("aria-expanded", "false");
+}
+
+connCurrentBtn.addEventListener("click", () => {
+  const opening = connMenu.hidden;
+  connMenu.hidden = !opening;
+  connCurrentBtn.setAttribute("aria-expanded", opening ? "true" : "false");
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape") closeConnMenu();
 });
 connMenu.addEventListener("click", async (ev) => {
+  const manage = ev.target.closest("[data-conn-manage]");
+  if (manage) {
+    closeConnMenu();
+    showPage("connections");
+    return;
+  }
   const btn = ev.target.closest("[data-conn]");
   if (!btn) return;
-  connMenu.hidden = true;
+  closeConnMenu();
   const id = Number(btn.dataset.conn);
   if (id === (activeConn() || {}).id) return;
   await openConnection(id);
@@ -1130,7 +1164,7 @@ connMenu.addEventListener("click", async (ev) => {
 document.addEventListener("click", (ev) => {
   if (connMenu.hidden) return;
   if (ev.target.closest("#conn-switcher")) return;
-  connMenu.hidden = true;
+  closeConnMenu();
 });
 
 // Settings-page list: clicking a row selects it for editing and connects.
@@ -1338,6 +1372,8 @@ autoInterval.addEventListener("change", () => {
 
 if (location.hash === "#settings") {
   showPage("settings");
+} else if (location.hash === "#connections") {
+  setTimeout(() => showPage("connections"), 0);
 } else if (location.hash === "#config") {
   // Deferred: config-common.js (and the section modules it hosts) load via
   // later <script> tags that haven't run yet at this point in app.js's own
@@ -1348,12 +1384,20 @@ if (location.hash === "#settings") {
   setTimeout(() => showPage("config"), 0);
 } else {
   activate("overview", true);
-  fetch("/api/settings")
-    .then((r) => r.json())
-    .then((d) => {
-      applyLiveConntrack(d.live_conntrack);
-      if (!d.password_set) showPage("settings");
-    })
-    .catch(() => {});
 }
+
+// The switcher lives in the header, so it has to know the connection list
+// on every page — not just the two that call loadSettings(). This runs
+// unconditionally at startup for that reason; it used to be tucked inside
+// the no-hash branch, which left the switcher showing "—" and an empty
+// menu whenever the app opened straight onto Status.
+fetch("/api/settings")
+  .then((r) => r.json())
+  .then((d) => {
+    renderProfileSlots(d);
+    applyLiveConntrack(d.live_conntrack);
+    if (!d.password_set && !location.hash) showPage("connections");
+  })
+  .catch(() => {});
+
 startAutoRefresh();
