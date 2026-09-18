@@ -494,11 +494,15 @@
           Enable Inter-VLAN Routing
         </label>
         <p class="muted">Routes traffic between this VLAN and the others. Enabled is the device default.</p>
-        ${readOnlyRow(
-          "Rate Limit (per client)",
-          rateLimitText(v),
-          "Read-only here. The device stores this as a filter rule matching the VLAN's subnet, not as a VLAN setting, so changing it means editing the firewall table."
-        )}
+        <label class="check-row">
+          <input id="cfg-vlan-rl" type="checkbox" ${(v.rate_limit_rules || {}).rate_limit === "enable" ? "checked" : ""}>
+          Enable Rate Limit
+        </label>
+        <p class="muted">Per client rate limit.</p>
+        <label>Rate Limit (Mbps)
+          <input id="cfg-vlan-rl-mbps" type="number" min="1" value="${esc((v.rate_limit_rules || {}).limit || "100")}">
+        </label>
+        <p class="muted">Stored as a filter rule matching this VLAN's subnet, appended last — the same shape cnMaestro writes. Operator-authored firewall rules carry a unique_id and are never touched by this.</p>
         ${readOnlyRow(
           "Vulnerability Scan",
           licenseGate(
@@ -531,6 +535,19 @@
           action: "vlan_management_access",
           vlan_id: vlanID,
           management_access: mgmt,
+        });
+        await renderOutcome(outcomeEl, outcome);
+      }
+      const rl = modalEl.querySelector("#cfg-vlan-rl").checked;
+      const rlMbps = parseInt(modalEl.querySelector("#cfg-vlan-rl-mbps").value, 10) || 0;
+      const rlWas = (v.rate_limit_rules || {}).rate_limit === "enable";
+      const rlMbpsWas = parseInt((v.rate_limit_rules || {}).limit, 10) || 0;
+      if (rl !== rlWas || (rl && rlMbps !== rlMbpsWas)) {
+        const outcome = await postJSON("/api/config/network", {
+          action: "vlan_rate_limit",
+          vlan_id: vlanID,
+          rate_limit: rl,
+          rate_limit_mbps: rlMbps,
         });
         await renderOutcome(outcomeEl, outcome);
       }

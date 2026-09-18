@@ -218,6 +218,8 @@ type networkRequest struct {
 	Mask             string            `json:"mask"`
 	ManagementAccess *bool             `json:"management_access"`
 	InterVLANRouting *bool             `json:"inter_vlan_routing"`
+	RateLimit        *bool             `json:"rate_limit"`
+	RateLimitMbps    int               `json:"rate_limit_mbps"`
 	DHCP             *dhcpScopeRequest `json:"dhcp"`
 
 	// LAN port switchport fields, used by "port_switchport"/"port_shutdown".
@@ -417,6 +419,76 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 			Keys:  []string{key},
 			Undo:  BuildInterfaceVLANLines(req.VLANID, []string{VLANInterVLANRoutingLine(!*req.InterVLANRouting)}),
 		}
+	case "vlan_rate_limit":
+		if req.RateLimit == nil {
+			writeSettingsError(w, http.StatusBadRequest, "rate_limit is required")
+			return
+		}
+		if *req.RateLimit && req.RateLimitMbps < 1 {
+			writeSettingsError(w, http.StatusBadRequest, "rate_limit_mbps must be a positive number of Mbps when enabling")
+			return
+		}
+		cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
+		if err != nil {
+			writeSettingsError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		var vlanIP, vlanMask string
+		for _, v := range cloud.LANInterfaces {
+			if v.VLANID == req.VLANID {
+				vlanIP, vlanMask = v.IPAddr, v.SubnetMask
+			}
+		}
+		network, err := NetworkAddress(vlanIP, vlanMask)
+		if err != nil {
+			writeSettingsError(w, http.StatusBadRequest, "could not determine this VLAN's network address: "+err.Error())
+			return
+		}
+		spec := FilterAddrSpec(network, vlanMask)
+
+		cfgRaw, ok := s.cli(w, "show config", 25*time.Second)
+		if !ok {
+			return
+		}
+		rules := sortedFilterRules(cfgRaw)
+		existing, existingPrec := rateLimitRuleForSubnet(rules, spec)
+
+		if !*req.RateLimit {
+			if existing == nil {
+				writeSettingsError(w, http.StatusBadRequest, "this VLAN has no rate limit rule to remove")
+				return
+			}
+			block = ConfigBlock{
+				Name:  "vlan-rate-limit",
+				Lines: BuildFilterRuleRemoveLines(existingPrec),
+				Risk:  ClassifyRisk("outbound-filter"),
+				Undo:  BuildFilterRuleAppendLines(existingPrec, *existing),
+			}
+			break
+		}
+
+		// Appended last, which is where cnMaestro puts it too. Deleting the
+		// previous rule first keeps one rule per VLAN rather than stacking
+		// limits that all match the same subnet.
+		precedence := maxFilterPrecedence(rules) + 1
+		var leaves, undo []string
+		if existing != nil {
+			leaves = append(leaves, FilterRuleDeleteLine(existingPrec))
+		}
+		leaves = append(leaves, FilterRuleLeafLines(precedence, VLANRateLimitRule(spec, req.RateLimitMbps))...)
+
+		// The stanza pre-image cannot undo an append (nothing in it says
+		// the new rule should not exist), so the inverse is explicit.
+		undo = append(undo, FilterRuleDeleteLine(precedence))
+		if existing != nil {
+			undo = append(undo, FilterRuleLeafLines(existingPrec, *existing)...)
+		}
+		block = ConfigBlock{
+			Name:  "vlan-rate-limit",
+			Lines: BuildFilterGlobalFilterLines(leaves),
+			Risk:  ClassifyRisk("outbound-filter"),
+			Undo:  BuildFilterGlobalFilterLines(undo),
+		}
 	case "vlan_create":
 		if req.IP == "" || req.Mask == "" {
 			writeSettingsError(w, http.StatusBadRequest, "ip and mask are required")
@@ -564,6 +636,43 @@ func findBinding(bindings []MACBinding, mac, ip string) (MACBinding, bool) {
 		}
 	}
 	return MACBinding{}, false
+}
+
+// rateLimitRuleForSubnet finds the rule carrying this VLAN's per-client
+// rate limit: a layer3 rule sourced from the VLAN's subnet with a
+// rate-limit leaf. Returns the rule and its precedence, or nil.
+func rateLimitRuleForSubnet(rules []FilterRule, spec string) (*FilterRule, int) {
+	for i, r := range rules {
+		hasLimit := false
+		for _, e := range r.Extra {
+			if strings.HasPrefix(e, "rate-limit ") {
+				hasLimit = true
+			}
+		}
+		// A rule with a unique_id is operator-authored. Only the
+		// unmarked rule is a VLAN's rate limit, so a hand-written rule
+		// that happens to shape this subnet is never edited or deleted
+		// from the VLAN page.
+		if r.ID != "" || !hasLimit || layer3FilterSource([]string{r.FullLine()}) != spec {
+			continue
+		}
+		precedence, err := strconv.Atoi(r.Precedence)
+		if err != nil {
+			continue
+		}
+		return &rules[i], precedence
+	}
+	return nil, 0
+}
+
+func maxFilterPrecedence(rules []FilterRule) int {
+	max := 0
+	for _, r := range rules {
+		if p, err := strconv.Atoi(r.Precedence); err == nil && p > max {
+			max = p
+		}
+	}
+	return max
 }
 
 func (s *Server) currentNetworkState() (CloudConfig, []DHCPPoolSettings, error) {

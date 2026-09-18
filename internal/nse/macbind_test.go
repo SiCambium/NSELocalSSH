@@ -1,6 +1,9 @@
 package nse
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // scope mirrors VLAN 40 on the live NSE 4000 this was verified against:
 // 192.168.40.0/24, SVI .1, dynamic range .50-.99.
@@ -107,5 +110,63 @@ func TestBindingsByVLANGroupsThroughPoolLookup(t *testing.T) {
 	// rather than a missing key, so the UI renders an empty table.
 	if got["30"] == nil || len(got["30"]) != 0 {
 		t.Fatalf("vlan 30 %+v", got["30"])
+	}
+}
+
+// A VLAN's rate limit is the rule with no unique_id. An operator-authored
+// rule shaping the same subnet carries one, and must never be matched as a
+// VLAN's rate limit — editing the VLAN would otherwise delete it.
+func TestRateLimitRuleForSubnetIgnoresOperatorRules(t *testing.T) {
+	spec := "192.168.30.0/255.255.255.0"
+	operator := FilterRule{
+		ID: "16", Name: "Everything_Allow", Precedence: "16", Kind: "layer3",
+		Rule:  "permit ip " + spec + " any any",
+		Extra: []string{"rate-limit sta Mbps 50"},
+	}
+	vlanRule := FilterRule{
+		Precedence: "17", Kind: "layer3",
+		Rule:  "permit ip " + spec + " any any",
+		Extra: []string{"rate-limit sta Mbps 100"},
+	}
+	got, prec := rateLimitRuleForSubnet([]FilterRule{operator, vlanRule}, spec)
+	if got == nil || prec != 17 {
+		t.Fatalf("expected the unmarked rule at 17, got %+v prec=%d", got, prec)
+	}
+	// With only the operator rule present there is nothing to match.
+	if got, _ := rateLimitRuleForSubnet([]FilterRule{operator}, spec); got != nil {
+		t.Fatalf("operator rule must not match: %+v", got)
+	}
+	// Nor should a different subnet.
+	if got, _ := rateLimitRuleForSubnet([]FilterRule{vlanRule}, "192.168.99.0/255.255.255.0"); got != nil {
+		t.Fatalf("wrong subnet matched: %+v", got)
+	}
+}
+
+// The generated rule must carry neither unique_id nor rule-name, matching
+// what cnMaestro writes — that absence is what marks it as a VLAN's limit.
+func TestVLANRateLimitRuleShape(t *testing.T) {
+	lines := FilterRuleLeafLines(18, VLANRateLimitRule("192.168.30.0/255.255.255.0", 100))
+	want := []string{
+		"filter precedence 18",
+		"layer3-filter permit ip 192.168.30.0/255.255.255.0 any any",
+		"rate-limit sta Mbps 100",
+		"exit",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("got %d lines: %v", len(lines), lines)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Fatalf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+}
+
+// An operator rule keeps both markers when replayed.
+func TestFilterRuleLeafLinesKeepsOperatorMarkers(t *testing.T) {
+	lines := FilterRuleLeafLines(5, FilterRule{ID: "5", Name: "Block_IoT", Kind: "layer3", Rule: "deny ip any any any"})
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "unique_id 5") || !strings.Contains(joined, "rule-name Block_IoT") {
+		t.Fatalf("operator markers dropped:\n%s", joined)
 	}
 }

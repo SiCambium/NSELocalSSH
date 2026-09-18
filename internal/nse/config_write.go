@@ -228,6 +228,75 @@ func VLANInterVLANRoutingLine(enable bool) string {
 	return "no inter-vlan-routing"
 }
 
+// VLANRateLimitLine is the per-client rate limit leaf inside a filter
+// rule. CONFIRMED live on an NSE 4000: "sta" is per-station, which is what
+// cnMaestro labels "per client".
+func VLANRateLimitLine(mbps int) string {
+	return fmt.Sprintf("rate-limit sta Mbps %d", mbps)
+}
+
+// VLANRateLimitRuleContent is the rule body a rate limit hangs off: a
+// permit matching everything sourced from the VLAN's subnet.
+//
+// This uses the "ip" form rather than FilterRuleContent's "proto" form
+// because that is exactly what cnMaestro generates for this rule —
+// "permit ip 192.168.40.0/255.255.255.0 any any" — and matching it keeps
+// the two tools reading each other's rules the same way.
+func VLANRateLimitRuleContent(src string) string {
+	return fmt.Sprintf("permit ip %s any any", src)
+}
+
+// FilterRuleLeafLines renders one rule's leaves at the given precedence,
+// preserving whether it carries a unique_id and a rule-name.
+//
+// That distinction is load-bearing. A VLAN's rate limit is written by
+// cnMaestro as a rule with NEITHER — just the layer3-filter body and the
+// rate-limit leaf — while every operator-authored rule has both. It is the
+// only thing separating "this rule belongs to a VLAN's rate limit" from
+// "this is someone's firewall rule that happens to shape traffic", so
+// emitting a unique_id onto one would make it indistinguishable from a
+// hand-written rule and put it in reach of the wrong editor.
+func FilterRuleLeafLines(precedence int, r FilterRule) []string {
+	lines := []string{fmt.Sprintf("filter precedence %d", precedence)}
+	if r.ID != "" {
+		lines = append(lines, fmt.Sprintf("unique_id %d", precedence))
+	}
+	if r.Name != "" {
+		lines = append(lines, "rule-name "+r.Name)
+	}
+	lines = append(lines, r.FullLine())
+	lines = append(lines, r.Extra...)
+	return append(lines, "exit")
+}
+
+// VLANRateLimitRule is the rule a VLAN's per-client rate limit is stored
+// as: no unique_id, no rule-name, matching what cnMaestro writes.
+func VLANRateLimitRule(src string, mbps int) FilterRule {
+	return FilterRule{
+		Kind:  "layer3",
+		Rule:  VLANRateLimitRuleContent(src),
+		Extra: []string{VLANRateLimitLine(mbps)},
+	}
+}
+
+// BuildFilterRuleAppendLines adds one rule to the global filter table
+// without touching the rules already there.
+//
+// ReplaceFilterRulesLines is the alternative and it rewrites the whole
+// table — every rule deleted and recreated — to change one. That is a poor
+// trade for an append, and it would also stamp a unique_id and an empty
+// rule-name onto the unnamed rules described above.
+func BuildFilterRuleAppendLines(precedence int, r FilterRule) []string {
+	return BuildFilterGlobalFilterLines(FilterRuleLeafLines(precedence, r))
+}
+
+// BuildFilterRuleRemoveLines deletes a single rule by precedence. Deleting
+// does not renumber the rules after it, so a gap is left rather than every
+// later rule shifting under callers that remembered a precedence.
+func BuildFilterRuleRemoveLines(precedence int) []string {
+	return BuildFilterGlobalFilterLines([]string{FilterRuleDeleteLine(precedence)})
+}
+
 // NetworkAddress computes the network address for an IP/dotted-decimal
 // mask pair (e.g. 172.21.0.1 + 255.255.0.0 -> 172.21.0.0), needed for the
 // DHCP pool "network" line, which is confirmed to want the network
