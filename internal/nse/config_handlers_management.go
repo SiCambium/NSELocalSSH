@@ -25,7 +25,7 @@ func (s *Server) handleConfigManagement(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleGetConfigManagement(w http.ResponseWriter, _ *http.Request) {
 	cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	writeJSON(w, map[string]any{
@@ -96,7 +96,7 @@ func (s *Server) handlePostConfigManagement(w http.ResponseWriter, r *http.Reque
 	block := ConfigBlock{Name: "management-" + req.Action, Lines: lines, Risk: ClassifyRisk("management")}
 	outcome, err := s.safeApplier().Apply(block)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	writeJSON(w, outcome)

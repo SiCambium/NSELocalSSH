@@ -40,7 +40,7 @@ type radiusClientWithID struct {
 func (s *Server) handleGetConfigVPN(w http.ResponseWriter, _ *http.Request) {
 	cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	clients := make([]radiusClientWithID, 0, len(cloud.RADIUSClientList))
@@ -132,7 +132,7 @@ func (s *Server) handlePostConfigVPN(w http.ResponseWriter, r *http.Request) {
 		}
 		cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
 		if err != nil {
-			writeSettingsError(w, http.StatusBadGateway, err.Error())
+			writeDeviceError(w, err)
 			return
 		}
 		id := len(cloud.RADIUSClientList) + 1
@@ -162,7 +162,7 @@ func (s *Server) handlePostConfigVPN(w http.ResponseWriter, r *http.Request) {
 	block := ConfigBlock{Name: "vpn-" + req.Action, Lines: lines, Risk: ClassifyRisk("vpn")}
 	outcome, err := s.safeApplier().Apply(block)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	writeJSON(w, redactOutcome(outcome))

@@ -2,6 +2,7 @@ package nse
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -21,20 +22,29 @@ func (s *Server) handleLicense(w http.ResponseWriter, _ *http.Request) {
 }
 
 // containsCLILineBreak reports whether a free-text value would break out
-// of the CLI line it is interpolated into. Client.runLocked terminates
-// every command with a carriage return, so an embedded CR or LF in a
-// user-supplied value (a secret, a name) would reach the device as the
-// start of a second command of the submitter's choosing.
+// of the CLI line it is interpolated into.
 //
-// NOT yet applied everywhere it should be. Right now only the Tailscale
-// auth key is checked. Other handlers put request text straight into a
-// CLI line unguarded — hostname, timezone, a RADIUS client's name/secret/
-// address, the IPS oinkcode among them. Reaching those needs same-origin
-// access to this app, so it is not remotely exploitable, but the value
-// still ends up as a command on a firewall and every one of those paths
-// should call this first.
+// The guarantee lives lower down, in Client.validateCLILine, which every
+// command passes through: a line break can no longer reach the device
+// from any path, present or future, without a handler having to remember
+// to check. This is only for handlers that want to reject the value up
+// front with a specific 400 rather than let it fail as an apply error.
 func containsCLILineBreak(s string) bool {
 	return strings.ContainsAny(s, "\r\n")
+}
+
+// writeDeviceError answers a request that failed while talking to the
+// device, whether reading or applying. Most such failures are the
+// device's — unreachable, or it rejected the command — which is a 502.
+// A command refused for spanning lines is the caller's, and answering
+// "bad gateway" when nothing was wrong with the gateway sends whoever is
+// debugging it in the wrong direction.
+func writeDeviceError(w http.ResponseWriter, err error) {
+	if errors.Is(err, ErrCLILineBreak) {
+		writeSettingsError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeSettingsError(w, http.StatusBadGateway, err.Error())
 }
 
 // redactOutcome strips secret values out of the CLI lines an ApplyOutcome
@@ -101,7 +111,7 @@ func (s *Server) handleConfigNetwork(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetConfigNetwork(w http.ResponseWriter, _ *http.Request) {
 	cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	cfgRaw, ok := s.cli(w, "show config", 25*time.Second)
@@ -350,7 +360,7 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 		if req.DHCP != nil && req.DHCP.valid() {
 			pools, err := s.currentDHCPPools()
 			if err != nil {
-				writeSettingsError(w, http.StatusBadGateway, err.Error())
+				writeDeviceError(w, err)
 				return
 			}
 			netIP, err := NetworkAddress(req.IP, req.Mask)
@@ -376,7 +386,7 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 		}
 		cloud, pools, err := s.currentNetworkState()
 		if err != nil {
-			writeSettingsError(w, http.StatusBadGateway, err.Error())
+			writeDeviceError(w, err)
 			return
 		}
 		pool := poolNumberForVLAN(req.VLANID, cloud, pools)
@@ -413,7 +423,7 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 
 	outcome, err := s.safeApplier().Apply(block)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	writeJSON(w, outcome)
@@ -455,7 +465,7 @@ func (s *Server) handleConfigWAN(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetConfigWAN(w http.ResponseWriter, _ *http.Request) {
 	cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	cfgRaw, ok := s.cli(w, "show config", 25*time.Second)
@@ -646,7 +656,7 @@ func (s *Server) handlePostConfigWAN(w http.ResponseWriter, r *http.Request) {
 		}
 		outcome, err := s.safeApplier().Apply(block)
 		if err != nil {
-			writeSettingsError(w, http.StatusBadGateway, err.Error())
+			writeDeviceError(w, err)
 			return
 		}
 		writeJSON(w, outcome)
@@ -676,13 +686,13 @@ func (s *Server) handlePostConfigWAN(w http.ResponseWriter, r *http.Request) {
 		}
 		cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
 		if err != nil {
-			writeSettingsError(w, http.StatusBadGateway, err.Error())
+			writeDeviceError(w, err)
 			return
 		}
 		if len(cloud.WANInterfaces) >= 2 {
 			lic, err := s.currentLicense()
 			if err != nil {
-				writeSettingsError(w, http.StatusBadGateway, err.Error())
+				writeDeviceError(w, err)
 				return
 			}
 			if !lic.OverlayWAN {
@@ -745,7 +755,7 @@ func (s *Server) handlePostConfigWAN(w http.ResponseWriter, r *http.Request) {
 	}
 	outcome, err := s.safeApplier().Apply(block)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	writeJSON(w, outcome)

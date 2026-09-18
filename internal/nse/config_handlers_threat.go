@@ -47,7 +47,7 @@ func (s *Server) handleConfigThreat(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetConfigThreat(w http.ResponseWriter, _ *http.Request) {
 	cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	writeJSON(w, map[string]any{
@@ -137,7 +137,7 @@ func (s *Server) handlePostConfigThreat(w http.ResponseWriter, r *http.Request) 
 	block := ConfigBlock{Name: "threat-" + req.Action, Lines: lines, Risk: ClassifyRisk("threat-protection")}
 	outcome, err := s.safeApplier().Apply(block)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	// The oinkcode action's applied line carries the code itself.

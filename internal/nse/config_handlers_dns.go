@@ -26,12 +26,12 @@ func (s *Server) handleConfigDNS(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetConfigDNS(w http.ResponseWriter, _ *http.Request) {
 	cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	cfgRaw, err := s.Client.Run("show config", 25*time.Second)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	adv := ParseDNSAdvancedConfig(cfgRaw)
@@ -122,7 +122,7 @@ func (s *Server) handlePostConfigDNS(w http.ResponseWriter, r *http.Request) {
 	case "name_server":
 		cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
 		if err != nil {
-			writeSettingsError(w, http.StatusBadGateway, err.Error())
+			writeDeviceError(w, err)
 			return
 		}
 		current := make([]string, 0, len(cloud.NameServer))
@@ -216,7 +216,7 @@ func (s *Server) handlePostConfigDNS(w http.ResponseWriter, r *http.Request) {
 	block := ConfigBlock{Name: "dns-" + req.Action, Lines: lines, Risk: ClassifyRisk("dns")}
 	outcome, err := s.safeApplier().Apply(block)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	writeJSON(w, outcome)

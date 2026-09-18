@@ -31,7 +31,7 @@ func (s *Server) handleConfigFirewall(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetConfigFirewall(w http.ResponseWriter, _ *http.Request) {
 	cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	cfgRaw, ok := s.cli(w, "show config", 25*time.Second)
@@ -152,7 +152,7 @@ func (s *Server) handlePostConfigFirewall(w http.ResponseWriter, r *http.Request
 		block := ConfigBlock{Name: "firewall-" + req.Action, Lines: []string{line}, Risk: ClassifyRisk("firewall")}
 		outcome, err := s.safeApplier().Apply(block)
 		if err != nil {
-			writeSettingsError(w, http.StatusBadGateway, err.Error())
+			writeDeviceError(w, err)
 			return
 		}
 		writeJSON(w, outcome)
@@ -208,7 +208,7 @@ func (s *Server) handlePostGeoIP(w http.ResponseWriter, req firewallRequest) {
 	block := ConfigBlock{Name: "geo-ip-" + req.Action, Lines: lines, Risk: ClassifyRisk("geo-ip")}
 	outcome, err := s.safeApplier().Apply(block)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	writeJSON(w, outcome)
@@ -323,7 +323,7 @@ func (s *Server) handlePostOutboundFilterRule(w http.ResponseWriter, req firewal
 
 	cfgRaw, err := s.Client.Run("show config", 25*time.Second)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	current := sortedFilterRules(cfgRaw)
@@ -374,7 +374,7 @@ func (s *Server) handlePostOutboundFilterRule(w http.ResponseWriter, req firewal
 	}
 	outcome, err := s.safeApplier().Apply(block)
 	if err != nil {
-		writeSettingsError(w, http.StatusBadGateway, err.Error())
+		writeDeviceError(w, err)
 		return
 	}
 	writeJSON(w, outcome)

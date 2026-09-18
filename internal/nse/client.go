@@ -2,6 +2,7 @@ package nse
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -245,6 +246,36 @@ func (c *Client) ensure() error {
 	return c.connect()
 }
 
+// ErrCLILineBreak marks a command rejected for spanning lines. It is a
+// bad request, not a device failure, so the API layer can answer 400
+// rather than reporting it as a gateway error.
+var ErrCLILineBreak = errors.New("refusing to send a CLI command containing a line break")
+
+// validateCLILine rejects a command that would not stay on its own line.
+// runLocked terminates every command with a carriage return, so an
+// embedded CR or LF makes the remainder a second command of whoever
+// supplied the value — and this app builds command lines by interpolating
+// request text in dozens of places (a hostname, a RADIUS client's name, a
+// secret, a DNS domain). Guarding each of those individually would only
+// hold until the next one was written, so the check lives here, where
+// every command without exception passes through.
+//
+// The offending line is quoted with %q so the newline cannot mangle the
+// error itself, and redacted first if it carries a secret.
+func validateCLILine(command string) error {
+	if !strings.ContainsAny(command, "\r\n") {
+		return nil
+	}
+	shown := command
+	if secretLine(shown) {
+		shown = redactSecretLine(shown)
+	}
+	if len(shown) > 80 {
+		shown = shown[:80] + "…"
+	}
+	return fmt.Errorf("%w: the remainder would run as a separate command: %q", ErrCLILineBreak, shown)
+}
+
 func (c *Client) Run(command string, timeout time.Duration) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -252,6 +283,9 @@ func (c *Client) Run(command string, timeout time.Duration) (string, error) {
 }
 
 func (c *Client) runLocked(command string, timeout time.Duration) (string, error) {
+	if err := validateCLILine(command); err != nil {
+		return "", err
+	}
 	if err := c.ensure(); err != nil {
 		return "", err
 	}
@@ -284,6 +318,13 @@ func (c *Client) runLocked(command string, timeout time.Duration) (string, error
 // attempts to return the session to the top-level prompt before releasing
 // the lock (see unwindLocked).
 func (c *Client) RunSequence(lines []string, timeout time.Duration, stopOnError bool) ([]LineResult, error) {
+	// Validated before anything is sent: a line break anywhere in the
+	// batch must not leave half of it applied.
+	for _, line := range lines {
+		if err := validateCLILine(line); err != nil {
+			return nil, err
+		}
+	}
 	// Every config write goes through here, and any of them can change
 	// what `show config` says — drop the fallback CloudConfig cache so the
 	// next read re-derives it.
