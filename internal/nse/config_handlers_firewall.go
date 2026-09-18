@@ -160,7 +160,7 @@ func (s *Server) handlePostConfigFirewall(w http.ResponseWriter, r *http.Request
 	}
 
 	switch req.Action {
-	case "filter_add", "filter_delete", "filter_move":
+	case "filter_add", "filter_edit", "filter_delete", "filter_move":
 		s.handlePostOutboundFilterRule(w, req)
 	case "geo_mode", "geo_countries", "geo_exception_add", "geo_exception_delete":
 		s.handlePostGeoIP(w, req)
@@ -256,7 +256,11 @@ func filterEndpointSpec(kind, addr, mask, group string) (string, error) {
 // why a full delete-and-recreate is used instead of in-place renumbering.
 func (s *Server) handlePostOutboundFilterRule(w http.ResponseWriter, req firewallRequest) {
 	var newRule FilterRule
-	if req.Action == "filter_add" {
+	if req.Action == "filter_add" || req.Action == "filter_edit" {
+		if req.Action == "filter_edit" && req.Precedence < 1 {
+			writeSettingsError(w, http.StatusBadRequest, "precedence is required")
+			return
+		}
 		if req.Name == "" {
 			writeSettingsError(w, http.StatusBadRequest, "name is required")
 			return
@@ -265,10 +269,12 @@ func (s *Server) handlePostOutboundFilterRule(w http.ResponseWriter, req firewal
 		if action == "" {
 			action = "deny"
 		}
-		if action != "deny" && action != "allow" {
+		if action != "deny" && action != "allow" && action != "permit" {
 			writeSettingsError(w, http.StatusBadRequest, "rule_action must be 'deny' or 'allow'")
 			return
 		}
+		// The CLI keyword is "permit"; "allow" is the UI's word for it.
+		action = NormalizeFilterAction(action)
 		switch req.RuleType {
 		case "application_group":
 			if req.AppGroupName == "" {
@@ -331,7 +337,36 @@ func (s *Server) handlePostOutboundFilterRule(w http.ResponseWriter, req firewal
 	var newOrder []FilterRule
 	switch req.Action {
 	case "filter_add":
-		newOrder = append(append([]FilterRule{}, current...), newRule)
+		// Marked so the rewrite gives it a unique_id: an unmarked rule is
+		// how a VLAN's rate limit is identified, and a rule added here is
+		// the operator's own.
+		newOrder = append(append([]FilterRule{}, current...), MarkOperatorRule(newRule))
+	case "filter_edit":
+		idx := -1
+		for i, rule := range current {
+			if rule.Precedence == strconv.Itoa(req.Precedence) {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			writeSettingsError(w, http.StatusBadRequest, "no rule at that precedence")
+			return
+		}
+		// A rule with no unique_id is a VLAN's per-client rate limit, not
+		// an operator rule. Editing it here would rewrite it as one and
+		// orphan it from the VLAN that owns it, so it is refused rather
+		// than silently reassigned.
+		if current[idx].ID == "" {
+			writeSettingsError(w, http.StatusBadRequest, "this rule holds a VLAN's rate limit — change it from that VLAN instead")
+			return
+		}
+		// Leaves this editor does not model (a DPI rule's
+		// "allowed-sources user-group", say) would otherwise be dropped.
+		newRule.ID = current[idx].ID
+		newRule.Extra = current[idx].Extra
+		newOrder = append([]FilterRule{}, current...)
+		newOrder[idx] = newRule
 	case "filter_delete":
 		for _, rule := range current {
 			if rule.Precedence != strconv.Itoa(req.Precedence) {

@@ -25,8 +25,11 @@ import (
 //
 //   - FeatureLicense — a separate command (`show feature-license`), see
 //     Server.currentLicense; callers that need it should fetch it there.
-//   - LANInterface.Name / RateLimitRules — the device prints no leaf for
-//     these even when cloud-json-config reports them set.
+//   - LANInterface.Name — the device prints no leaf for it even when
+//     cloud-json-config reports it set. (RateLimitRules used to be listed
+//     here too. It is not a VLAN leaf, but it IS expressed — as a filter
+//     rule carrying "rate-limit sta Mbps <n>" — so fallbackRateLimits
+//     derives it rather than leaving it blank.)
 //   - WANInterface.SpareIPMode / Speedtest / TrafficShaping /
 //     FailoverPolicyState / VLAN — no confirmed leaf.
 //   - DynDNSConfig.Mode — confirmed NOT derivable: the capture has
@@ -308,6 +311,7 @@ func applyFallbackVPN(cfg *CloudConfig, tree *Block, top []string) {
 // subnet, not by number.
 func fallbackLANInterfaces(tree *Block) []LANInterface {
 	pools := tree.FindAll("ip dhcp pool ")
+	rateLimits := fallbackRateLimits(tree)
 	var out []LANInterface
 	for _, blk := range tree.FindAll("interface vlan ") {
 		id, err := strconv.Atoi(strings.TrimPrefix(blk.Header, "interface vlan "))
@@ -338,6 +342,12 @@ func fallbackLANInterfaces(tree *Block) []LANInterface {
 		// port-scan leaf under any VLAN) reports port_scan true for every
 		// VLAN in cloud-json-config. So absence means on, not off.
 		iface.PortScan = boolLeaf(leaves, "port-scan", true)
+		// Inter-VLAN routing behaves the same way: enabled is the default
+		// and prints nothing, so only the negative leaf appears. CONFIRMED
+		// live — "no inter-vlan-routing" makes the leaf appear under the
+		// VLAN and "inter-vlan-routing" removes it again.
+		iface.InterVLANRouting = boolLeaf(leaves, "inter-vlan-routing", true)
+		iface.RateLimitRules = rateLimitForVLAN(rateLimits, iface.IPAddr, iface.SubnetMask)
 		if pool := poolForSubnet(pools, iface.IPAddr, iface.SubnetMask); pool != nil {
 			iface.DHCPPoolConfig = fallbackDHCPPool(pool)
 		}
@@ -548,4 +558,90 @@ func fallbackDynDNS(tree *Block, serviceID string) DynDNSConfig {
 		Username:    valueAfter(leaves, "username "),
 		DNSHostname: valueAfter(leaves, "dnshostname "),
 	}
+}
+
+// layer3FilterSource pulls the source "network/mask" out of a
+// layer3-filter leaf. The token after the action is either "ip" or
+// "proto <proto>", and the source address follows whichever it is:
+//
+//	layer3-filter permit ip 192.168.40.0/255.255.255.0 any any
+//	layer3-filter permit proto udp 192.168.20.0/255.255.255.0 any ...
+func layer3FilterSource(leaves []string) string {
+	for _, l := range leaves {
+		if !strings.HasPrefix(l, "layer3-filter ") {
+			continue
+		}
+		f := strings.Fields(l)
+		if len(f) < 5 {
+			continue
+		}
+		i := 2 // past "layer3-filter" and the permit/deny action
+		if f[i] == "proto" {
+			i += 2
+		} else {
+			i++
+		}
+		if i < len(f) {
+			return f[i]
+		}
+	}
+	return ""
+}
+
+// fallbackRateLimits derives per-VLAN rate limits from the filter table,
+// keyed by the rule's source "network/mask".
+//
+// A VLAN's per-client rate limit is not a VLAN setting on this device. It
+// is a filter rule matching the VLAN's subnet — CONFIRMED live:
+//
+//	filter precedence 17
+//	   layer3-filter permit ip 192.168.40.0/255.255.255.0 any any
+//	   rate-limit sta Mbps 100
+//	   exit
+//
+// which cloud-json-config reports as rate_limit_rules {rate_limit:
+// "enable", limit: "100"} on the VLAN whose subnet matches. Deriving it
+// here means the value is right on a device that was never cloud-managed,
+// instead of reading as "off" because nothing filled it in.
+func fallbackRateLimits(tree *Block) map[string]RateLimitRules {
+	out := map[string]RateLimitRules{}
+	var global *Block
+	for _, blk := range tree.FindAll("filter") {
+		if strings.Contains(blk.Header, "global-filter") {
+			global = blk
+		}
+	}
+	if global == nil {
+		return out
+	}
+	for _, rule := range global.FindAll("filter precedence ") {
+		leaves := blockLeaves(rule)
+		limit := ""
+		for _, l := range leaves {
+			if strings.HasPrefix(l, "rate-limit ") {
+				f := strings.Fields(l)
+				limit = f[len(f)-1]
+			}
+		}
+		if limit == "" {
+			continue
+		}
+		if src := layer3FilterSource(leaves); src != "" {
+			out[src] = RateLimitRules{RateLimit: "enable", Limit: limit}
+		}
+	}
+	return out
+}
+
+// rateLimitForVLAN matches a VLAN to its rule by subnet. No matching rule
+// means no limit, which is what cloud-json-config reports as "disable".
+func rateLimitForVLAN(rateLimits map[string]RateLimitRules, ipAddr, mask string) RateLimitRules {
+	if ipAddr != "" && mask != "" {
+		if network, err := NetworkAddress(ipAddr, mask); err == nil {
+			if rl, ok := rateLimits[network+"/"+mask]; ok {
+				return rl
+			}
+		}
+	}
+	return RateLimitRules{RateLimit: "disable"}
 }

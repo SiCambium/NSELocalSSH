@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -656,6 +658,14 @@ func (s *Server) Handler() http.Handler {
 	static, err := fs.Sub(s.Static, "static")
 	if err != nil {
 		static = s.Static
+	}
+	// Development only: serve the UI from disk and stream reload events so
+	// an edit to web/static is visible without a rebuild. See devreload.go
+	// for why this is env-gated.
+	if dir := devStaticDir(); dir != "" {
+		static = os.DirFS(dir)
+		s.registerDevReload(mux, dir)
+		log.Printf("dev mode: serving UI from %s with live reload", dir)
 	}
 	fileServer := http.FileServer(http.FS(static))
 	mux.Handle("/static/", http.StripPrefix("/static/", fileServer))

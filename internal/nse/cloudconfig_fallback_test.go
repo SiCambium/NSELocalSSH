@@ -55,7 +55,17 @@ func TestCloudConfigFromShowConfigMatchesCloudJSON(t *testing.T) {
 	want.CambiumRemote = got.CambiumRemote
 	for i := range want.LANInterfaces {
 		want.LANInterfaces[i].Name = ""
-		want.LANInterfaces[i].RateLimitRules = RateLimitRules{}
+		// Same direction as CambiumRemote: the reference cloud snapshot
+		// predates inter_vlan_routing and carries no such key, so it
+		// unmarshals false while the derivation correctly defaults it to
+		// true. The default is pinned by
+		// TestFallbackInterVLANRoutingDefaultsOn and the leaf parsing by
+		// TestFallbackInterVLANRoutingDisabled, since this comparison
+		// cannot check it.
+		if !got.LANInterfaces[i].InterVLANRouting {
+			t.Errorf("vlan %d: derivation should default inter-VLAN routing on", got.LANInterfaces[i].VLANID)
+		}
+		want.LANInterfaces[i].InterVLANRouting = got.LANInterfaces[i].InterVLANRouting
 	}
 	for i := range want.WANInterfaces {
 		want.WANInterfaces[i].SpareIPMode = ""
@@ -449,5 +459,93 @@ interface eth 10
 	}
 	if got := wans[0].LoadBalanceConfig.MonitorHosts; len(got) != 2 || got[1] != "1.1.1.1" {
 		t.Errorf("monitor hosts = %v", got)
+	}
+}
+
+// Inter-VLAN routing is enabled by default and the device prints nothing
+// for it; only the negative leaf ever appears. Both directions are pinned
+// here because the whole-struct comparison above cannot check this field —
+// the reference cloud snapshot predates the key.
+func TestFallbackInterVLANRoutingDefaultsOn(t *testing.T) {
+	cfg := CloudConfigFromShowConfig("show config\n!\ninterface vlan 40\n ip address 192.168.40.1 255.255.255.0\n exit\n!\n")
+	if len(cfg.LANInterfaces) != 1 {
+		t.Fatalf("lan interfaces = %d", len(cfg.LANInterfaces))
+	}
+	if !cfg.LANInterfaces[0].InterVLANRouting {
+		t.Fatal("absent leaf must read as enabled")
+	}
+}
+
+func TestFallbackInterVLANRoutingDisabled(t *testing.T) {
+	cfg := CloudConfigFromShowConfig("show config\n!\ninterface vlan 40\n ip address 192.168.40.1 255.255.255.0\n no inter-vlan-routing\n exit\n!\n")
+	if len(cfg.LANInterfaces) != 1 {
+		t.Fatalf("lan interfaces = %d", len(cfg.LANInterfaces))
+	}
+	if cfg.LANInterfaces[0].InterVLANRouting {
+		t.Fatal("\"no inter-vlan-routing\" must read as disabled")
+	}
+}
+
+func TestVLANInterVLANRoutingLine(t *testing.T) {
+	if got := VLANInterVLANRoutingLine(true); got != "inter-vlan-routing" {
+		t.Fatalf("enable line %q", got)
+	}
+	if got := VLANInterVLANRoutingLine(false); got != "no inter-vlan-routing" {
+		t.Fatalf("disable line %q", got)
+	}
+	// A cross-VLAN management session is routed traffic, so turning this
+	// off can sever the session doing the editing.
+	if ClassifyRisk("vlan-inter-vlan-routing") != RiskLockout {
+		t.Fatal("inter-VLAN routing changes must go through safe-apply")
+	}
+}
+
+// A VLAN's rate limit lives in the filter table, not under the VLAN. The
+// reference capture has no such rule (every VLAN reads "disable", which
+// the whole-struct comparison above now checks), so the enabled case is
+// pinned here against the shape confirmed live on an NSE 4000.
+func TestFallbackRateLimitFromFilterRule(t *testing.T) {
+	raw := `show config
+!
+interface vlan 40
+ ip address 192.168.40.1 255.255.255.0
+ exit
+!
+interface vlan 30
+ ip address 192.168.30.1 255.255.255.0
+ exit
+!
+filter  global-filter
+  filter precedence 17
+     layer3-filter permit ip 192.168.40.0/255.255.255.0 any any
+     rate-limit sta Mbps 100
+     exit
+  exit
+!
+`
+	cfg := CloudConfigFromShowConfig(raw)
+	byID := map[int]LANInterface{}
+	for _, l := range cfg.LANInterfaces {
+		byID[l.VLANID] = l
+	}
+	if got := byID[40].RateLimitRules; got.RateLimit != "enable" || got.Limit != "100" {
+		t.Fatalf("vlan 40 rate limit = %+v, want enable/100", got)
+	}
+	// A VLAN with no matching rule is not rate limited.
+	if got := byID[30].RateLimitRules; got.RateLimit != "disable" {
+		t.Fatalf("vlan 30 rate limit = %+v, want disable", got)
+	}
+}
+
+// The source address sits after "ip", or after "proto <proto>".
+func TestLayer3FilterSource(t *testing.T) {
+	cases := map[string]string{
+		"layer3-filter permit ip 192.168.40.0/255.255.255.0 any any":                       "192.168.40.0/255.255.255.0",
+		"layer3-filter permit proto udp 192.168.20.0/255.255.255.0 any 10.0.0.0/8 1900 in": "192.168.20.0/255.255.255.0",
+	}
+	for line, want := range cases {
+		if got := layer3FilterSource([]string{line}); got != want {
+			t.Errorf("source of %q = %q, want %q", line, got, want)
+		}
 	}
 }

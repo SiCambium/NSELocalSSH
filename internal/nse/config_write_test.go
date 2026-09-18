@@ -1,6 +1,9 @@
 package nse
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNetworkAddress(t *testing.T) {
 	cases := []struct {
@@ -310,10 +313,12 @@ func TestFilterRuleDeleteLine(t *testing.T) {
 }
 
 func TestReplaceFilterRulesLinesDeletesAllThenRecreatesInNewOrder(t *testing.T) {
+	// Operator rules as the parser yields them: unique_id is read into ID,
+	// so a rule authored on the firewall page always carries one.
 	current := []FilterRule{
-		{Precedence: "1", Name: "rule_1", Rule: "deny proto any 192.168.20.0/255.255.255.0 any 172.21.0.0/255.255.0.0 any in"},
-		{Precedence: "2", Name: "rule_2", Rule: "deny proto any 192.168.20.0/255.255.255.0 any 172.23.0.0/255.255.0.0 any in"},
-		{Precedence: "3", Name: "rule_3", Rule: "deny proto any 192.168.20.0/255.255.255.0 any 172.18.0.0/255.255.0.0 any in"},
+		{ID: "1", Precedence: "1", Name: "rule_1", Rule: "deny proto any 192.168.20.0/255.255.255.0 any 172.21.0.0/255.255.0.0 any in"},
+		{ID: "2", Precedence: "2", Name: "rule_2", Rule: "deny proto any 192.168.20.0/255.255.255.0 any 172.23.0.0/255.255.0.0 any in"},
+		{ID: "3", Precedence: "3", Name: "rule_3", Rule: "deny proto any 192.168.20.0/255.255.255.0 any 172.18.0.0/255.255.0.0 any in"},
 	}
 	// Simulate "move rule_3 up": swap indices 1 and 2.
 	newOrder := []FilterRule{current[0], current[2], current[1]}
@@ -729,5 +734,42 @@ func TestDHCPPoolLinesOmitsEmptySecondaryDNS(t *testing.T) {
 	}
 	if got := dnsServerLine("192.168.20.240", ""); got != "dns-server 192.168.20.240" {
 		t.Fatalf("dnsServerLine %q", got)
+	}
+}
+
+// Reordering rewrites the whole table, so it must not stamp markers onto a
+// VLAN's rate-limit rule — the absence of unique_id is the only thing that
+// identifies it. Before this, one reorder on the firewall page orphaned
+// every rate limit on the device and emitted a nameless "rule-name" leaf.
+func TestReplaceFilterRulesLinesPreservesUnmarkedRateLimitRule(t *testing.T) {
+	rateLimit := VLANRateLimitRule("192.168.30.0/255.255.255.0", 100)
+	rateLimit.Precedence = "2"
+	current := []FilterRule{
+		{ID: "1", Precedence: "1", Name: "Block_IoT", Kind: "layer3", Rule: "deny ip any any any"},
+		rateLimit,
+	}
+	lines := ReplaceFilterRulesLines(current, []FilterRule{current[1], current[0]})
+	joined := strings.Join(lines, "\n")
+
+	// The operator rule keeps both markers.
+	if !strings.Contains(joined, "unique_id 2") || !strings.Contains(joined, "rule-name Block_IoT") {
+		t.Fatalf("operator rule lost its markers:\n%s", joined)
+	}
+	// The rate-limit rule gains neither, and no empty rule-name is emitted.
+	for _, line := range lines {
+		if line == "rule-name" || line == "rule-name " {
+			t.Fatalf("empty rule-name emitted:\n%s", joined)
+		}
+	}
+	if strings.Count(joined, "unique_id") != 1 {
+		t.Fatalf("expected exactly one unique_id, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "rate-limit sta Mbps 100") {
+		t.Fatalf("rate-limit leaf dropped:\n%s", joined)
+	}
+	// And it is still identifiable afterwards.
+	rebuilt := ParseConfigFilter("show config\n" + strings.Join(lines, "\n") + "\n")
+	if got, _ := rateLimitRuleForSubnet(rebuilt, "192.168.30.0/255.255.255.0"); got == nil {
+		t.Fatalf("rate limit no longer identifiable after a reorder:\n%s", joined)
 	}
 }

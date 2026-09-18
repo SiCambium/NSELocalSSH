@@ -247,8 +247,25 @@ type DHCPPoolOption struct {
 	Value string `json:"value"`
 }
 
+// RateLimitRules is a VLAN's per-client rate limit as cloud-json-config
+// reports it: RateLimit is "enable" or "disable", and Limit is the ceiling
+// in Mbps when enabled.
+//
+// There is no VLAN leaf for this. The device implements it as a filter
+// rule matching the VLAN's subnet, e.g.
+//
+//	filter precedence 17
+//	   layer3-filter permit ip 192.168.40.0/255.255.255.0 any any
+//	   rate-limit sta Mbps 100
+//	   exit
+//
+// ("sta" is per-station, which is what cnMaestro labels "per client".)
+// So this reads only on a cloud-managed device; the `show config` fallback
+// cannot populate it without reconstructing the rule, and writing it means
+// editing the filter table rather than the VLAN.
 type RateLimitRules struct {
 	RateLimit string `json:"rate_limit"`
+	Limit     string `json:"limit,omitempty"`
 }
 
 // LANInterface is one entry of cloud-json-config's lan_interfaces array —
@@ -263,6 +280,7 @@ type LANInterface struct {
 	SubnetMask       string         `json:"subnet_mask"`
 	ManagementAccess string         `json:"management_access"` // "enable" | "disable"
 	PortScan         bool           `json:"port_scan"`
+	InterVLANRouting bool           `json:"inter_vlan_routing"`
 	DHCPPoolConfig   DHCPPoolConfig `json:"dhcp_pool_config"`
 	RateLimitRules   RateLimitRules `json:"rate_limit_rules"`
 }
