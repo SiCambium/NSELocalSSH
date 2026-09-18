@@ -24,19 +24,17 @@ func (s *Server) handleLicense(w http.ResponseWriter, _ *http.Request) {
 // of the CLI line it is interpolated into. Client.runLocked terminates
 // every command with a carriage return, so an embedded CR or LF in a
 // user-supplied value (a secret, a name) would reach the device as the
-// start of a second command of the submitter's choosing. Every handler
-// that puts request text into a CLI line rejects it first.
+// start of a second command of the submitter's choosing.
+//
+// NOT yet applied everywhere it should be. Right now only the Tailscale
+// auth key is checked. Other handlers put request text straight into a
+// CLI line unguarded — hostname, timezone, a RADIUS client's name/secret/
+// address, the IPS oinkcode among them. Reaching those needs same-origin
+// access to this app, so it is not remotely exploitable, but the value
+// still ends up as a command on a firewall and every one of those paths
+// should call this first.
 func containsCLILineBreak(s string) bool {
 	return strings.ContainsAny(s, "\r\n")
-}
-
-// outcomeSecretLine extends secretLine to the lines this app sends itself.
-// secretLine doubles as ParseTunnelConfig's control flow, so widening it
-// would change parsing; a bare "secret <value>" leaf (a RADIUS client's)
-// is far too generic to match in an arbitrary config scan but is
-// unambiguous in a line we built ourselves.
-func outcomeSecretLine(line string) bool {
-	return secretLine(line) || strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "secret ")
 }
 
 // redactOutcome strips secret values out of the CLI lines an ApplyOutcome
@@ -48,7 +46,7 @@ func outcomeSecretLine(line string) bool {
 // can carry a secret pass their outcome through this first.
 func redactOutcome(o ApplyOutcome) ApplyOutcome {
 	for i, l := range o.Lines {
-		if outcomeSecretLine(l.Line) {
+		if secretLine(l.Line) {
 			o.Lines[i].Line = redactSecretLine(l.Line)
 		}
 		o.Lines[i].Output = SanitizeCLIOutput(l.Output)
