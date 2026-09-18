@@ -6,7 +6,7 @@ This is a personal tool, not an official Cambium product.
 
 ## What it does
 
-**Status dashboard** (read-only, polls `show` / `service show` commands): Overview, Throughput, Details, Memory, Connection tracking, Interfaces, VLANs, Routing, DHCP (pools + MAC bindings), Neighbors, Tunnels (Starlink, client VPN, Tailscale), Traffic, Events, and a raw Config viewer with secrets stripped.
+**Status dashboard** (read-only, polls `show` / `service show` commands): Overview, Throughput, Details, Memory, Connection tracking, Interfaces, VLANs, Routing, DHCP (pools + MAC bindings), Neighbors, Devices, VPN tunnels (Starlink, client VPN), Tailscale, Firewall counters, Traffic, Events, and a raw Config viewer with known secret-bearing lines redacted (see Security notes for what that does **not** cover).
 
 **Configuration** (read/write, applied over the same SSH session): Network (VLANs, DHCP scopes, physical LAN port switchport config), WAN (DHCP/static/PPPoE, load balancing, bandwidth, connection health, enabling a LAN port as a new WAN, moving a WAN to a different physical port), Management, Groups (User/IP/Application), DNS, Threat Protection, Firewall, and VPN.
 
@@ -14,13 +14,13 @@ This is a personal tool, not an official Cambium product.
 
 **Multi-site connections**: saved connections for every site you manage, each with its own label, address, username and SSH port. The header always shows which device you are looking at and drops down to switch; **Connections** is a top-level tab for adding, renaming and deleting them. One connection is live at a time — opening a site closes the previous SSH session — and a switch is refused while a configuration change on the current device is still awaiting confirmation, since its rollback snapshot belongs to that device and must not be replayed onto another. Connections live in `profiles.json` next to the settings `.env`, **including their passwords in cleartext** (file mode `0600`); treat that file accordingly.
 
-**Profile export**: produces a JSON profile in the same schema as cnMaestro's own NSE Group export, so a profile built here is interchangeable with cnMaestro's profile library.
+**Profile export**: produces a JSON profile in the same schema as cnMaestro's own NSE Group export. A handful of fields exist only in cnMaestro's own view of the device (VLAN labels, rate-limit rules, some display-only WAN values), so an export from a unit that has never been cloud-managed will have those blank.
 
 **Reads the running config, not a cloud snapshot**: configuration comes from `show config`, the one read command every unit supports. `service show cloud-json-config` looks tempting — its JSON matches cnMaestro's export schema field-for-field — but it is a periodically regenerated snapshot that was measured lagging the running config by about seven minutes, including across an explicit `save`, and on a unit that is never cloud-managed it may never populate. Reading it back made a change that had actually applied look like it had failed. It is still used, but only to fill in labels the CLI has no words for (a VLAN's name and rate-limit rule); everything the CLI can change is read from the device's live configuration.
 
 ### Safety mechanism
 
-Any change that could plausibly lock you out of the device (WAN edits, LAN port VLAN/trunk assignment, management access, HA, the admin password, free-text CLI overrides) goes through a safe-apply path instead of being sent directly:
+Any change that could plausibly lock you out of the device — WAN edits, LAN port VLAN/trunk assignment, a VLAN's management-access flag, management services, HA, the admin password, outbound filter rules, GEO IP filtering, and free-text CLI overrides — goes through a safe-apply path instead of being sent directly:
 
 1. Snapshot the device's current config for the affected section(s).
 2. Apply the change.
@@ -33,13 +33,13 @@ Any change that could plausibly lock you out of the device (WAN edits, LAN port 
 
 What covers the lockout case is step 6: a risky change is never saved until you confirm it, so the device still boots the previous configuration and **power-cycling it recovers**. Anything beyond that needs console or physical access.
 
-Everything else applies directly and reports success or failure immediately.
+Everything else applies directly and reports success or failure immediately. Either way the change is written to the device's startup config with `save` once it is settled — without that, a change lives only in the running config and is lost on reboot.
 
 ## Running it
 
 ### Desktop app (macOS)
 
-Builds a native window (WKWebView) around the Go backend — no browser tab required. A menu action can also open the same running session in a real browser without disrupting the app window.
+Builds a native window (WKWebView) around the Go backend — no browser tab required. An **Open in Browser** button hands the same running session to your default browser without disrupting the app window.
 
 ```bash
 cp .env.example .env   # set NSE_PASSWORD
@@ -47,7 +47,7 @@ sh scripts/package-macos.sh
 open "dist/NSE Status.app"
 ```
 
-Use **Settings** in the app to set the device's IP address, username, and password. The desktop app stores those in `~/Library/Application Support/NSE Status/.env`.
+Use the **Connections** tab in the app to add the device's address, username and password. The desktop app stores those in `~/Library/Application Support/NSE Status/`.
 
 ### Browser only
 
@@ -86,12 +86,33 @@ Browser mode alone *does* cross-compile from any OS, which is how the release bi
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o nse-status.exe ./cmd/nse-status
 ```
 
-Settings can be entered through the **Settings** tab in the UI, or put in a `.env` file next to the executable. Create that file from a terminal (`copy .env.example .env`) rather than File Explorer, which will silently save it as `.env.txt`. Note that the Settings tab writes to a `.env` in the *working directory*, so launch the app from the folder you want it to keep settings in.
+Device details can be entered through the **Connections** tab in the UI, or put in a `.env` file next to the executable. Create that file from a terminal (`copy .env.example .env`) rather than File Explorer, which will silently save it as `.env.txt`. Note that the app writes saved connections to the *working directory*, so launch it from the folder you want it to keep them in.
 
 Two Windows-specific caveats:
 
 - The desktop app needs the **WebView2 runtime**. It ships with Windows 11 and current Windows 10; on older installs, get Microsoft's Evergreen bootstrapper.
 - The release binaries are unsigned, so SmartScreen shows a "Windows protected your PC" prompt on first run — *More info* → *Run anyway*. (The macOS build is ad-hoc signed only, and gets the equivalent Gatekeeper prompt.)
+
+### Linux
+
+Browser mode is pure Go and needs nothing beyond the toolchain:
+
+```bash
+cp .env.example .env   # set NSE_PASSWORD
+go build -o nse-status ./cmd/nse-status
+./nse-status
+```
+
+Prebuilt `nse-status_<version>_linux_{amd64,arm64}` binaries are on the [Releases](https://github.com/SiCambium/NSELocalSSH/releases) page, along with `linux_armv6` / `linux_armv7` builds for 32-bit Raspberry Pi (Pi Zero/1 and Pi 2/3/4 respectively; 64-bit Pi OS uses the arm64 build).
+
+The desktop app uses GTK and WebKit2GTK, so it needs those headers and must be built on Linux:
+
+```bash
+sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev pkg-config
+CGO_ENABLED=1 go build -o NSE-Status ./cmd/nse-app
+```
+
+CI pins this job to Ubuntu 22.04: 24.04 dropped the `libwebkit2gtk-4.0-dev` package the binding depends on.
 
 ### Dev probe utilities
 
@@ -103,11 +124,13 @@ Two Windows-specific caveats:
 - `web/static/` — vanilla JS/HTML/CSS frontend (no build step).
 - `cmd/nse-app/` — desktop app entry point (webview).
 - `cmd/nse-status/` — browser-mode entry point.
-- `NSE3000-CLI-REFERENCE.md` — reverse-engineered CLI reference this project is built against.
+- `scripts/` — build and packaging scripts; `.github/workflows/release.yml` builds the release artifacts for every platform.
+- `NSE3000-CLI-REFERENCE.md` — reverse-engineered CLI reference this project is built against, including what has and has not been confirmed live.
+- `CLAUDE.md` — orientation for working in this codebase.
 
 ## Security notes
 
-- `service show config` / `show config` output can contain real secrets (passwords, PSKs, RADIUS/PPPoE/Tailscale credentials, the IPS oinkcode). The app redacts all of these before displaying or logging anything; `$crypt$N$...` values are reversible, not one-way hashes, and are treated accordingly.
+- `service show config` / `show config` output can contain real secrets in cleartext, and **redaction is keyword-based and known to be incomplete**. Lines containing `shared-secret`, `auth-key`, `password`, `oinkcode`, `psk` or `$crypt$` are redacted before display. WireGuard key material is **not**: `private-key`, `public-key` and `peer-public-key` currently render in full through the Config viewer and the debug console. Treat any config output this app shows you as sensitive regardless of what it appears to have stripped. (`$crypt$N$...` values are reversible, not one-way hashes, and are treated accordingly.)
 - SSH host keys are pinned on first connect (TOFU) and verified on every subsequent connection.
 - Every state-changing HTTP endpoint checks that the request's `Origin`/`Referer` matches the app's own origin.
-- No CLI write syntax is shipped without either a confirmed real capture or a documented, explicit "unconfirmed" note in code — and unconfirmed paths still go through the safe-apply path above, with the limits described there.
+- Every CLI write builder carries a note in code recording how its syntax was established, and unconfirmed paths still go through the safe-apply path above with the limits described there. The intent is that nothing ships without a real capture behind it, but the marks are only as good as the evidence they cite: a builder was found marked CONFIRMED on the strength of a cnMaestro JSON export, which cannot evidence a CLI keyword at all, and another cites a capture that is not in this repo. Treat a CONFIRMED note as a claim to check, not a guarantee.
