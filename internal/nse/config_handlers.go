@@ -113,15 +113,16 @@ type dhcpOptionRequest struct {
 }
 
 type dhcpScopeRequest struct {
-	StartIP    string              `json:"start_ip"`
-	EndIP      string              `json:"end_ip"`
-	Router     string              `json:"router"`
-	DNS        string              `json:"dns"`
-	Domain     string              `json:"domain"`
-	LeaseDays  int                 `json:"lease_days"`
-	LeaseHours int                 `json:"lease_hours"`
-	LeaseMins  int                 `json:"lease_mins"`
-	Options    []dhcpOptionRequest `json:"options"`
+	StartIP      string              `json:"start_ip"`
+	EndIP        string              `json:"end_ip"`
+	Router       string              `json:"router"`
+	DNS          string              `json:"dns"`
+	DNSSecondary string              `json:"dns_secondary"`
+	Domain       string              `json:"domain"`
+	LeaseDays    int                 `json:"lease_days"`
+	LeaseHours   int                 `json:"lease_hours"`
+	LeaseMins    int                 `json:"lease_mins"`
+	Options      []dhcpOptionRequest `json:"options"`
 }
 
 func (d dhcpScopeRequest) valid() bool {
@@ -349,7 +350,8 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 			pool := nextAvailablePoolNumber(pools)
 			lines = append(lines, BuildDHCPPoolLines(pool, DHCPPoolLines(DHCPScope{
 				StartIP: req.DHCP.StartIP, EndIP: req.DHCP.EndIP,
-				Router: req.DHCP.Router, DNS: req.DHCP.DNS, Domain: req.DHCP.Domain,
+				Router: req.DHCP.Router, DNS: req.DHCP.DNS, DNSSecondary: req.DHCP.DNSSecondary,
+				Domain:    req.DHCP.Domain,
 				LeaseDays: req.DHCP.LeaseDays, LeaseHours: req.DHCP.LeaseHours, LeaseMins: req.DHCP.LeaseMins,
 				NetworkIP: netIP, NetworkMask: req.Mask, Options: req.DHCP.options(),
 			}))...)
@@ -388,7 +390,8 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 			Name: "dhcp-scope",
 			Lines: BuildDHCPPoolLines(pool, DHCPPoolLines(DHCPScope{
 				StartIP: req.DHCP.StartIP, EndIP: req.DHCP.EndIP,
-				Router: req.DHCP.Router, DNS: req.DHCP.DNS, Domain: req.DHCP.Domain,
+				Router: req.DHCP.Router, DNS: req.DHCP.DNS, DNSSecondary: req.DHCP.DNSSecondary,
+				Domain:    req.DHCP.Domain,
 				LeaseDays: req.DHCP.LeaseDays, LeaseHours: req.DHCP.LeaseHours, LeaseMins: req.DHCP.LeaseMins,
 				NetworkIP: netIP, NetworkMask: vlanMask, Options: req.DHCP.options(),
 			})),

@@ -177,7 +177,8 @@
       <label>DHCP start address <input id="${prefix}-start" type="text" value="${esc(d.start)}"></label>
       <label>DHCP end address <input id="${prefix}-end" type="text" value="${esc(d.end)}"></label>
       <label>Router (default gateway) <input id="${prefix}-router" type="text" value="${esc(d.router)}"></label>
-      <label>DNS server <input id="${prefix}-dns" type="text" value="${esc(d.dns)}"></label>
+      <label>Primary DNS <input id="${prefix}-dns" type="text" value="${esc(d.dns)}"></label>
+      <label>Secondary DNS (optional) <input id="${prefix}-dns2" type="text" value="${esc(d.dnsSecondary || "")}"></label>
       <label>Domain (optional) <input id="${prefix}-domain" type="text" value="${esc(d.domain)}"></label>
       <div class="field-group">
         <span class="field-legend">Lease time</span>
@@ -212,6 +213,7 @@
       end_ip: val("end"),
       router: val("router"),
       dns: val("dns"),
+      dns_secondary: val("dns2"),
       domain: val("domain"),
       lease_days: num("lease-d"),
       lease_hours: num("lease-h"),
@@ -341,6 +343,7 @@
       end: dp.dhcp_pool_end_address || "",
       router: v.ip_addr || "",
       dns: dp.dhcp_pool_primary_dns_server || "",
+      dnsSecondary: dp.dhcp_pool_secondary_dns_server || "",
       domain: "",
       leaseDays: dp.dhcp_pool_lease_time_day || 0,
       leaseHours: dp.dhcp_pool_lease_time_hour ?? 2,
@@ -401,6 +404,7 @@
         scope.end_ip !== dhcp.end ||
         scope.router !== dhcp.router ||
         scope.dns !== dhcp.dns ||
+        scope.dns_secondary !== dhcp.dnsSecondary ||
         scope.domain !== dhcp.domain ||
         scope.lease_days !== dhcp.leaseDays ||
         scope.lease_hours !== dhcp.leaseHours ||
@@ -425,7 +429,7 @@
   }
 
   function addVLAN() {
-    const dhcp = { start: "", end: "", router: "", dns: "", domain: "", leaseDays: 0, leaseHours: 2, leaseMins: 0 };
+    const dhcp = { start: "", end: "", router: "", dns: "", dnsSecondary: "", domain: "", leaseDays: 0, leaseHours: 2, leaseMins: 0 };
     const body = `
       <label>VLAN ID (1-4094)
         <input id="cfg-new-vlan-id" type="number" min="1" max="4094">

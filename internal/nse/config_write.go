@@ -235,17 +235,18 @@ type DHCPOption struct {
 // domain-name, lease, network, custom options) — see
 // NSE3000-CLI-REFERENCE.md and DHCPOptionLine.
 type DHCPScope struct {
-	StartIP     string
-	EndIP       string
-	Router      string
-	DNS         string
-	Domain      string // optional
-	LeaseDays   int
-	LeaseHours  int
-	LeaseMins   int
-	NetworkIP   string
-	NetworkMask string
-	Options     []DHCPOption // optional
+	StartIP      string
+	EndIP        string
+	Router       string
+	DNS          string
+	DNSSecondary string // optional
+	Domain       string // optional
+	LeaseDays    int
+	LeaseHours   int
+	LeaseMins    int
+	NetworkIP    string
+	NetworkMask  string
+	Options      []DHCPOption // optional
 }
 
 // DHCPPoolLines builds the leaf lines for an "ip dhcp pool N" block. The
@@ -256,7 +257,7 @@ func DHCPPoolLines(s DHCPScope) []string {
 	lines := []string{
 		fmt.Sprintf("address-range %s %s", s.StartIP, s.EndIP),
 		fmt.Sprintf("default-router %s", s.Router),
-		fmt.Sprintf("dns-server %s", s.DNS),
+		dnsServerLine(s.DNS, s.DNSSecondary),
 	}
 	if s.Domain != "" {
 		lines = append(lines, fmt.Sprintf("domain-name %s", s.Domain))
@@ -269,6 +270,22 @@ func DHCPPoolLines(s DHCPScope) []string {
 		lines = append(lines, DHCPOptionLine(opt.Code, opt.Value))
 	}
 	return lines
+}
+
+// dnsServerLine renders the CONFIRMED "dns-server" leaf. The device takes
+// both servers on a single line separated by a space — that is how it
+// emits them in `show config` — so a secondary is appended rather than
+// given a line of its own.
+//
+// Emitting only the primary is what the scope editor used to do, and it
+// does not merely omit the secondary: the line replaces the whole
+// dns-server value, so the second server was silently dropped from any
+// pool that had one.
+func dnsServerLine(primary, secondary string) string {
+	if secondary == "" {
+		return fmt.Sprintf("dns-server %s", primary)
+	}
+	return fmt.Sprintf("dns-server %s %s", primary, secondary)
 }
 
 // DHCPOptionLine returns the CONFIRMED "dhcp-option <code> <value>" leaf

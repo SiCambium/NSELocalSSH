@@ -209,6 +209,7 @@ type DHCPPoolConfig struct {
 	StartAddress    string `json:"dhcp_pool_start_address"`
 	EndAddress      string `json:"dhcp_pool_end_address"`
 	PrimaryDNS      string `json:"dhcp_pool_primary_dns_server"`
+	SecondaryDNS    string `json:"dhcp_pool_secondary_dns_server"`
 	LeaseTimeDay    int    `json:"dhcp_pool_lease_time_day"`
 	LeaseTimeHour   int    `json:"dhcp_pool_lease_time_hour"`
 	LeaseTimeMinute int    `json:"dhcp_pool_lease_time_minute"`
