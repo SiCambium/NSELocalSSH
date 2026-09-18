@@ -1,6 +1,7 @@
 package nse
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -165,5 +166,63 @@ func TestSwitchDeviceClearsPerDeviceState(t *testing.T) {
 	}
 	if s.threatCache.Enabled || !s.threatAt.IsZero() {
 		t.Error("threat summary cache survived the switch")
+	}
+}
+
+// TestLockoutReasonStatesTheRealRecovery covers the message shown when a
+// change both severed access and could not be undone. The undo travels
+// over the SSH the change just broke, so this is the expected outcome for
+// a genuine lockout — and the operator needs the recovery that actually
+// works, not a claim that the device was restored.
+func TestLockoutReasonStatesTheRealRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		undo ApplyResult
+		want string
+	}{
+		{"undo could not be delivered", errors.New("dial tcp: i/o timeout"), ApplyResult{}, "dial tcp: i/o timeout"},
+		{"undo was rejected", nil, ApplyResult{Error: "%Error processing cli command"}, "%Error processing cli command"},
+	} {
+		got := lockoutReason(tc.err, tc.undo)
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("%s: reason %q should include what went wrong (%q)", tc.name, got, tc.want)
+		}
+		if !strings.Contains(got, "still live") {
+			t.Errorf("%s: reason must not imply the change was undone: %q", tc.name, got)
+		}
+		if !strings.Contains(got, "power-cycling") || !strings.Contains(got, "never saved") {
+			t.Errorf("%s: reason must give the recovery that works: %q", tc.name, got)
+		}
+	}
+}
+
+// TestFailedUndoIsRecorded covers the expiry loop's breadcrumb. It runs in
+// the background with no request to answer, so a failed undo there used to
+// vanish entirely.
+func TestFailedUndoIsRecorded(t *testing.T) {
+	a := &SafeApplier{client: NewClient(Config{}), pending: map[string]pendingChange{}}
+	if len(a.FailedUndos()) != 0 {
+		t.Fatal("nothing should be recorded yet")
+	}
+	a.recordFailedUndo("wan", errors.New("ssh: connection refused"), ApplyResult{})
+	a.recordFailedUndo("lan-port", nil, ApplyResult{Error: "Invalid arguments"})
+	got := a.FailedUndos()
+	if len(got) != 2 {
+		t.Fatalf("recorded %d, want 2", len(got))
+	}
+	if got[0].Section != "wan" || !strings.Contains(got[0].Detail, "connection refused") {
+		t.Errorf("first record = %+v", got[0])
+	}
+	if got[1].Section != "lan-port" || !strings.Contains(got[1].Detail, "Invalid arguments") {
+		t.Errorf("second record = %+v", got[1])
+	}
+
+	// Bounded, so a flapping device cannot grow this without limit.
+	for i := 0; i < 50; i++ {
+		a.recordFailedUndo("wan", errors.New("x"), ApplyResult{})
+	}
+	if n := len(a.FailedUndos()); n > 20 {
+		t.Errorf("kept %d records, want the list bounded at 20", n)
 	}
 }

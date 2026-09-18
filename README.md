@@ -25,8 +25,13 @@ Any change that could plausibly lock you out of the device (WAN edits, LAN port 
 1. Snapshot the device's current config for the affected section(s).
 2. Apply the change.
 3. Open a **brand-new** SSH connection (not the one that made the change — an already-open channel can survive some settings changes and would prove nothing) to confirm the device is still reachable.
-4. If unreachable, or if the change only partially applied, automatically roll back to the snapshot.
-5. If reachable, hold the change **provisional** for 60 seconds — confirm it in the UI, or it rolls back automatically.
+4. If the change only partially applied, undo it from the snapshot.
+5. If reachable, hold the change **provisional** for 60 seconds — confirm it in the UI, or it is undone.
+6. The change is only written to the device's startup config once you confirm it.
+
+**What this does and does not protect against.** The undo in steps 4 and 5 is delivered over SSH to the device being changed. If a change severs access — the very category this exists for — the undo cannot be delivered either, and the tool says so rather than claiming a rollback it could not perform. This mechanism reliably catches a change that is *wrong but leaves the device reachable*; it cannot rescue one that locks you out.
+
+What covers the lockout case is step 6: a risky change is never saved until you confirm it, so the device still boots the previous configuration and **power-cycling it recovers**. Anything beyond that needs console or physical access.
 
 Everything else applies directly and reports success or failure immediately.
 
@@ -105,4 +110,4 @@ Two Windows-specific caveats:
 - `service show config` / `show config` output can contain real secrets (passwords, PSKs, RADIUS/PPPoE/Tailscale credentials, the IPS oinkcode). The app redacts all of these before displaying or logging anything; `$crypt$N$...` values are reversible, not one-way hashes, and are treated accordingly.
 - SSH host keys are pinned on first connect (TOFU) and verified on every subsequent connection.
 - Every state-changing HTTP endpoint checks that the request's `Origin`/`Referer` matches the app's own origin.
-- No CLI write syntax is shipped without either a confirmed real capture or a documented, explicit "unconfirmed" note in code — and unconfirmed paths still go through the safe-apply rollback mechanism above.
+- No CLI write syntax is shipped without either a confirmed real capture or a documented, explicit "unconfirmed" note in code — and unconfirmed paths still go through the safe-apply path above, with the limits described there.

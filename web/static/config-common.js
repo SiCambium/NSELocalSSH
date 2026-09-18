@@ -154,7 +154,17 @@
         return;
       }
       if (outcome.status === "rolled_back") {
-        container.innerHTML = `<p class="apply-error">Rolled back automatically: ${esc(outcome.reason || "device unreachable after change")}</p>`;
+        container.innerHTML = `<p class="apply-error">Undone: ${esc(outcome.reason || "the device stopped answering after the change")}</p>`;
+        resolve(outcome);
+        return;
+      }
+      // The change broke access to the device AND the undo could not be
+      // delivered over the connection it broke. Nothing in this app can
+      // fix that, so it says so plainly and gives the recovery that does
+      // work — the change was never saved, so a power-cycle restores.
+      if (outcome.status === "unreachable") {
+        container.innerHTML = `<p class="apply-error"><strong>The device is not responding and could not be restored automatically.</strong></p>
+          <p class="warn">${esc(outcome.reason || "")}</p>`;
         resolve(outcome);
         return;
       }
