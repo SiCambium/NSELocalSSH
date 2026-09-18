@@ -19,6 +19,50 @@
     }
   }
 
+  // Speed and duplex appear in `show config` only when they have been
+  // FORCED. An auto-negotiating port emits no speed/duplex/advertise lines
+  // at all, so reading the config alone showed every port as "auto" / "-"
+  // even while the link was up and negotiated. These cells prefer the
+  // forced value when there is one and fall back to the negotiated state
+  // from `show interface brief`, labelling which is which.
+
+  function linkFor(iface) {
+    return (cache.link || {})[String(iface || "").toLowerCase()] || {};
+  }
+
+  // The device writes "N/A" into every column of a down port.
+  function liveValue(v) {
+    return !v || v === "N/A" ? "" : v;
+  }
+
+  function speedCell(p) {
+    if (p.speed) return `${esc(p.speed)} Mbps <span class="muted">forced</span>`;
+    const live = liveValue(linkFor(p.interface).speed);
+    return live ? `${esc(live)} <span class="muted">negotiated</span>` : "-";
+  }
+
+  function duplexCell(p) {
+    if (p.duplex) return `${esc(p.duplex)} <span class="muted">forced</span>`;
+    const live = liveValue(linkFor(p.interface).duplex);
+    if (!live) return "-";
+    const pretty = live.charAt(0).toUpperCase() + live.slice(1).toLowerCase();
+    return `${esc(pretty)} <span class="muted">negotiated</span>`;
+  }
+
+  // "Not set" says nothing about what the port is actually doing, so the
+  // negotiated state is shown alongside it. Reads as empty on a down port,
+  // where the device reports N/A for every column.
+  function linkStateHintHTML(iface) {
+    const l = linkFor(iface);
+    const speed = liveValue(l.speed);
+    const duplex = liveValue(l.duplex);
+    if (!speed && !duplex) {
+      return `<p class="muted">Link is down, so there is no negotiated speed or duplex to report.</p>`;
+    }
+    const pretty = duplex ? duplex.charAt(0).toUpperCase() + duplex.slice(1).toLowerCase() : "unknown";
+    return `<p class="muted">Currently negotiated: ${esc(speed || "unknown")}, ${esc(pretty)} duplex. Leaving these unset keeps auto-negotiation, which is what the device does today.</p>`;
+  }
+
   function render() {
     const panel = document.getElementById("config-network-panel");
     const vlans = cache.vlans || [];
@@ -51,8 +95,8 @@
           <td>${esc(p.mode || "-")}</td>
           <td>${esc(p.mode === "trunk" ? p.native_vlan || "-" : p.access_vlan || "-")}</td>
           <td>${esc(p.allowed_vlans || "-")}</td>
-          <td>${esc(p.speed || "auto")}</td>
-          <td>${esc(p.duplex || "-")}</td>
+          <td>${speedCell(p)}</td>
+          <td>${duplexCell(p)}</td>
           <td><button type="button" class="row-edit" data-port="${esc(p.interface)}">Edit</button></td>
         </tr>`
       )
@@ -117,11 +161,12 @@
       </label>
       <label>Duplex
         <select id="cfg-port-duplex">
-          <option value="" ${!p.duplex ? "selected" : ""}>Not set</option>
+          <option value="" ${!p.duplex ? "selected" : ""}>Not set (auto-negotiate)</option>
           <option value="full" ${p.duplex === "full" ? "selected" : ""}>Full</option>
           <option value="half" ${p.duplex === "half" ? "selected" : ""}>Half</option>
         </select>
       </label>
+      ${linkStateHintHTML(p.interface)}
       <label>Advertise (auto-negotiation)
         <select id="cfg-port-advertise">
           <option value="auto" ${(!p.advertise || p.advertise === "auto") ? "selected" : ""}>Auto</option>

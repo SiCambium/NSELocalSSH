@@ -75,12 +75,32 @@ func (s *Server) handleGetConfigNetwork(w http.ResponseWriter, _ *http.Request) 
 	if !ok {
 		return
 	}
+	// `show config` only carries speed/duplex/advertise when they have been
+	// FORCED — an auto-negotiating port has no such lines at all, which is
+	// why the ports table could only ever show "auto" and "-". The
+	// negotiated values live in `show interface brief`.
+	brief, ok := s.cli(w, "show interface brief", 20*time.Second)
+	if !ok {
+		return
+	}
 	lan := ParseLANConfig(cfgRaw)
 	writeJSON(w, map[string]any{
 		"vlans":    cloud.LANInterfaces,
 		"ports":    lan.Ports,
 		"bindings": bindingsByVLAN(cloud, lan),
+		"link":     linkByInterface(ParseInterfaceBrief(brief)),
 	})
+}
+
+// linkByInterface keys operational link state by interface name, lowercased
+// so it can be looked up from the configured port list regardless of how
+// either side spells it.
+func linkByInterface(rows []Interface) map[string]Interface {
+	out := map[string]Interface{}
+	for _, r := range rows {
+		out[strings.ToLower(r.Interface)] = r
+	}
+	return out
 }
 
 // bindingsByVLAN regroups DHCP reservations under the VLAN they belong to.
