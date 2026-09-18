@@ -376,7 +376,9 @@ Cisco-style commands fail: `show running-config`, `show startup-config`, `termin
 
 Many guessed `show <feature>` names also fail (`show firewall`, `show wan`, `show ips`, `show tailscale`, `show starlink`, …). Prefer `show config` plus the operational table above.
 
-`save` / `apply` were **not** tested, to avoid persisting probe changes. On related Cambium Enterprise Wi-Fi CLIs those are the commit verbs. This NSE is cloud-managed; cnMaestro remains the source of truth and may overwrite local CLI edits.
+**`save` is confirmed (2026-09-18).** Tested on an NSE4000 running 2.4-r1: the bare `save` command persists the running config to startup and replies `[Config Save OK]` — one of the very few positive success tokens this CLI emits — leaving the running config byte-identical. Without it a config change lives only in the running config and is lost on reboot, so the app now sends it after every successful change (see `SafeApplier.Apply`). `apply` is still untested and unused.
+
+This NSE is cloud-managed; cnMaestro remains the source of truth and may overwrite local CLI edits.
 
 ---
 

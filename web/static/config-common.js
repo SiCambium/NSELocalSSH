@@ -139,7 +139,12 @@
   function renderOutcome(container, outcome) {
     return new Promise((resolve) => {
       if (outcome.status === "applied") {
-        container.innerHTML = `<p class="apply-ok">Applied.</p>`;
+        // An "applied" outcome can still carry a reason — the change took
+        // effect but persisting it to the startup config didn't, which the
+        // operator needs to know because it won't survive a reboot.
+        container.innerHTML = outcome.reason
+          ? `<p class="apply-ok">Applied.</p><p class="warn">${esc(outcome.reason)}</p>`
+          : `<p class="apply-ok">Applied and saved.</p>`;
         resolve(outcome);
         return;
       }

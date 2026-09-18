@@ -52,6 +52,28 @@ type ConfigBlock struct {
 	Keys  []string
 }
 
+// saveOnlyFailed reports whether every one of a block's own config lines
+// succeeded and only the trailing SaveConfigLine did not. n is the number
+// of config lines the block asked for, so results[n] is the save.
+func saveOnlyFailed(results []LineResult, n int) bool {
+	if len(results) != n+1 || results[n].OK {
+		return false
+	}
+	for _, r := range results[:n] {
+		if !r.OK {
+			return false
+		}
+	}
+	return true
+}
+
+func saveFailedReason(detail string) string {
+	if detail == "" {
+		detail = "device did not acknowledge the save"
+	}
+	return "change is live, but saving it to the startup config failed (it will not survive a reboot): " + detail
+}
+
 // ApplyOutcome is returned to the API layer (and the frontend) after an
 // apply attempt.
 type ApplyOutcome struct {
@@ -95,13 +117,45 @@ func NewSafeApplier(client *Client) *SafeApplier {
 // blocks are snapshotted first; a partial failure is undone immediately,
 // a full failure to reconnect afterward is rolled back immediately, and a
 // successful, reachable change is held provisional pending Confirm.
+//
+// Persisting to the startup config (SaveConfigLine) is deliberately
+// asymmetric:
+//
+//   - A non-risky change is saved as part of the same sequence.
+//   - A risky change is NOT saved until Confirm. Saving a change that is
+//     still provisional would defeat the whole mechanism: if it turned out
+//     to have cut off management access, the bad config would already be
+//     the one the device boots into, and a power-cycle — the operator's
+//     last resort — would restore it rather than escape it.
+//   - No rollback path saves. The startup config is still the pre-change
+//     one, which is exactly what a rollback is trying to get back to, so
+//     there is nothing to persist and a save would only risk capturing a
+//     half-undone state.
+//
+// The upshot is that an unconfirmed lockout-risk change is not merely
+// rolled back, it never reaches persistent storage at all.
 func (a *SafeApplier) Apply(block ConfigBlock) (ApplyOutcome, error) {
 	if block.Risk == RiskNone {
-		result, err := a.client.ApplyLines(block.Lines, 20*time.Second)
+		// SaveConfigLine rides along in the same sequence so it is sent
+		// only if every config line before it succeeded — ApplyLines stops
+		// at the first error — and so the UI sees its result alongside
+		// theirs.
+		lines := append(append([]string{}, block.Lines...), SaveConfigLine)
+		result, err := a.client.ApplyLines(lines, 20*time.Second)
 		if err != nil {
 			return ApplyOutcome{Status: "rejected", Reason: err.Error()}, err
 		}
 		if !result.OK {
+			// ApplyLines reports the whole sequence as failed if any line
+			// failed, but the two failures mean opposite things to the
+			// operator: a config line failing means nothing took effect,
+			// while only the trailing save failing means the change IS
+			// live and merely won't survive a reboot. Calling the second
+			// one "rejected" would invite a retry of a change that already
+			// applied.
+			if saveOnlyFailed(result.Lines, len(block.Lines)) {
+				return ApplyOutcome{Status: "applied", Reason: saveFailedReason(result.Error), Lines: result.Lines}, nil
+			}
 			return ApplyOutcome{Status: "rejected", Reason: result.Error, Lines: result.Lines}, nil
 		}
 		return ApplyOutcome{Status: "applied", Lines: result.Lines}, nil
@@ -136,7 +190,16 @@ func (a *SafeApplier) Apply(block ConfigBlock) (ApplyOutcome, error) {
 	return ApplyOutcome{Status: "provisional", ConfirmToken: token, ExpiresIn: int(window.Seconds()), Lines: result.Lines}, nil
 }
 
-// Confirm commits a provisional change, cancelling its auto-rollback.
+// Confirm commits a provisional change, cancelling its auto-rollback and
+// persisting it to the startup config — the first point at which a
+// lockout-risk change has been proven survivable and is therefore safe to
+// make permanent.
+//
+// A save that fails here is reported but does not undo anything: the
+// change is confirmed and live in the running config either way, and the
+// operator has already said they want it. The distinction that matters to
+// them is "kept, but will not survive a reboot", so it is surfaced as a
+// reason on an otherwise successful outcome rather than as an error.
 func (a *SafeApplier) Confirm(token string) (ApplyOutcome, error) {
 	a.mu.Lock()
 	_, ok := a.pending[token]
@@ -147,7 +210,14 @@ func (a *SafeApplier) Confirm(token string) (ApplyOutcome, error) {
 	if !ok {
 		return ApplyOutcome{}, fmt.Errorf("no pending change for that token (already confirmed, rolled back, or expired)")
 	}
-	return ApplyOutcome{Status: "applied"}, nil
+	result, err := a.client.ApplyLines([]string{SaveConfigLine}, 20*time.Second)
+	switch {
+	case err != nil:
+		return ApplyOutcome{Status: "applied", Reason: saveFailedReason(err.Error())}, nil
+	case !result.OK:
+		return ApplyOutcome{Status: "applied", Reason: saveFailedReason(result.Error), Lines: result.Lines}, nil
+	}
+	return ApplyOutcome{Status: "applied", Lines: result.Lines}, nil
 }
 
 func (a *SafeApplier) expireLoop() {

@@ -16,6 +16,26 @@ type ApplyResult struct {
 	Error string       `json:"error,omitempty"`
 }
 
+// SaveConfigLine is the CLI command that persists the running config to
+// the device's startup config. Without it, every change this app makes
+// lives only in the running config and is lost on reboot.
+//
+// CONFIRMED live on an NSE4000 running 2.4-r1: the bare "save" command
+// returns "[Config Save OK]" and leaves the running config byte-identical.
+// That token is notable — this CLI has no general success token, so
+// success is normally inferred from the absence of an error line (see
+// classifyLine). Whether older firmware prints the same token is unknown,
+// so it is treated as confirmation when present rather than required:
+// a save is judged failed only by the usual error convention.
+//
+// NSE3000-CLI-REFERENCE.md previously listed "save"/"apply" as untested
+// precisely to avoid persisting probe changes; "save" is now confirmed,
+// "apply" remains untested and unused.
+const SaveConfigLine = "save"
+
+// ConfigSaveOKToken is the positive acknowledgement SaveConfigLine prints.
+const ConfigSaveOKToken = "[Config Save OK]"
+
 // ApplyLines sends a sequence of CLI lines via RunSequence, stopping at
 // the first line whose output matches the CLI's error convention.
 func (c *Client) ApplyLines(lines []string, timeout time.Duration) (ApplyResult, error) {
@@ -615,7 +635,10 @@ func TailscaleAuthKeyLine(key string) string {
 }
 
 // TailscaleAcceptRoutesLine toggles accepting routes advertised by other
-// tailnet peers. CONFIRMED bare keyword; the negated form is UNCONFIRMED.
+// tailnet peers. Both forms CONFIRMED live on an NSE4000 running 2.4-r1:
+// applying each in turn added and then removed the "tailscale
+// accept-routes" line in `show config`, leaving the device byte-identical
+// to where it started.
 func TailscaleAcceptRoutesLine(enable bool) string {
 	if enable {
 		return "tailscale accept-routes"
