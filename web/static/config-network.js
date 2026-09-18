@@ -19,20 +19,13 @@
     }
   }
 
-  // A VLAN's name is the one field here that only
-  // `service show cloud-json-config` reports; when the backend had to fall
-  // back to `show config` (config_source === "show-config") there is no
-  // name to show, so the row is labelled by its VLAN id instead of going
-  // blank. Everything else in this table, port-scan included, is derived
-  // identically from either source.
-  function derivedFromShowConfig() {
-    return cache && cache.config_source === "show-config";
-  }
-
+  // Config is read from `show config`, which has no leaf for a VLAN's
+  // label — that only exists in cloud-json-config, and only on a device
+  // that has been cloud-managed. Fall back to the id so a row is never
+  // blank; everything else in this table comes from the live config.
   function vlanName(v) {
     if (v.name) return esc(v.name);
-    if (derivedFromShowConfig()) return `<span class="muted">VLAN ${v.vlan_id}</span>`;
-    return "";
+    return `<span class="muted">VLAN ${v.vlan_id}</span>`;
   }
 
   function render() {

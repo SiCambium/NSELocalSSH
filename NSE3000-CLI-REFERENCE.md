@@ -376,6 +376,8 @@ Cisco-style commands fail: `show running-config`, `show startup-config`, `termin
 
 Many guessed `show <feature>` names also fail (`show firewall`, `show wan`, `show ips`, `show tailscale`, `show starlink`, …). Prefer `show config` plus the operational table above.
 
+**`service show cloud-json-config` lags the running config (2026-09-18).** Measured on an NSE4000 running 2.4-r1: after a `load-balance monitor-hosts` change, `show config` showed the new value immediately while `service show cloud-json-config` reported the old one for roughly **seven minutes** — including across an explicit `save` — before catching up. It is a periodically regenerated cnMaestro-facing snapshot, not the running config, and on a unit that is never cloud-managed it may never populate. Never read it back to confirm a change; `show config` is the authority. The app reads configuration from `show config` and consults the JSON only for labels the CLI cannot express (see `enrichFromCloudJSON`).
+
 **`save` is confirmed (2026-09-18).** Tested on an NSE4000 running 2.4-r1: the bare `save` command persists the running config to startup and replies `[Config Save OK]` — one of the very few positive success tokens this CLI emits — leaving the running config byte-identical. Without it a config change lives only in the running config and is lost on reboot, so the app now sends it after every successful change (see `SafeApplier.Apply`). `apply` is still untested and unused.
 
 This NSE is cloud-managed; cnMaestro remains the source of truth and may overwrite local CLI edits.

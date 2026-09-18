@@ -3,6 +3,7 @@ package nse
 import (
 	"fmt"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -401,12 +402,12 @@ func fallbackDHCPPool(blk *Block) DHCPPoolConfig {
 // "interface eth N" blocks marked "type wan".
 func fallbackWANInterfaces(tree *Block) []WANInterface {
 	var out []WANInterface
-	for n := 1; n <= 6; n++ {
-		blk := tree.Find(fmt.Sprintf("interface eth %d", n))
-		if blk == nil {
-			continue
-		}
-		leaves := blockLeaves(blk)
+	// Walk the blocks the device actually printed rather than a fixed
+	// port range: an NSE4000 has ten ethernet ports, and scanning only
+	// eth1-eth6 would make a WAN on eth7 or above invisible.
+	for _, blk := range ethInterfaceBlocks(tree) {
+		n := blk.port
+		leaves := blockLeaves(blk.block)
 		if valueAfter(leaves, "type ") != "wan" {
 			continue
 		}
@@ -443,6 +444,28 @@ func fallbackWANInterfaces(tree *Block) []WANInterface {
 		wan.DynDNSConfig = fallbackDynDNS(tree, valueAfter(leaves, "dynamic-dns service-id "))
 		out = append(out, wan)
 	}
+	return out
+}
+
+// ethBlock pairs an "interface eth N" block with its parsed port number.
+type ethBlock struct {
+	port  int
+	block *Block
+}
+
+// ethInterfaceBlocks returns every "interface eth N" block the device
+// printed, in port order. Port counts differ by model (six on an NSE3000,
+// ten on an NSE4000), so nothing here may assume a range.
+func ethInterfaceBlocks(tree *Block) []ethBlock {
+	var out []ethBlock
+	for _, blk := range tree.FindAll("interface eth ") {
+		n, err := strconv.Atoi(strings.TrimPrefix(blk.Header, "interface eth "))
+		if err != nil {
+			continue
+		}
+		out = append(out, ethBlock{port: n, block: blk})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].port < out[j].port })
 	return out
 }
 

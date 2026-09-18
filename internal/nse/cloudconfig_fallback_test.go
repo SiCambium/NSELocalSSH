@@ -285,3 +285,162 @@ func TestCloudJSONDetail(t *testing.T) {
 		t.Errorf("detail not capped: %d bytes", len(got))
 	}
 }
+
+// TestEnrichFromCloudJSONNeverOverwritesLiveConfig is the guard on the bug
+// that caused this design. cloud-json-config is a cnMaestro-facing
+// snapshot that does not track local CLI edits — confirmed live, where it
+// went on reporting an old monitor-host list after the change had applied
+// AND been saved. Anything the CLI can write must therefore come from
+// `show config` and never be touched by the enrichment.
+func TestEnrichFromCloudJSONNeverOverwritesLiveConfig(t *testing.T) {
+	live := CloudConfig{
+		SystemName: "NSE-live",
+		LANInterfaces: []LANInterface{{
+			VLANID: 10, IPAddr: "10.0.10.1", SubnetMask: "255.255.255.0",
+			ManagementAccess: "enable", PortScan: true,
+			DHCPPoolConfig: DHCPPoolConfig{Enable: true, StartAddress: "10.0.10.50"},
+		}},
+		WANInterfaces: []WANInterface{{
+			Name: "wan1", LANIntf: "eth1", IPMode: "dynamic", SourceNAT: "enable",
+			LoadBalanceConfig: LoadBalanceConfig{
+				Mode:         "backup",
+				MonitorHosts: []string{"8.8.8.8", "1.1.1.1"},
+			},
+			BandwidthConfig: BandwidthConfig{UplinkBandwidth: "40"},
+		}},
+		IPS: true, IPSMode: "prevention", DNSServer: "enable",
+		Tailscale: CloudTailscale{Enable: true},
+	}
+	// A snapshot that disagrees about everything the CLI can change.
+	stale := CloudConfig{
+		SystemName: "NSE-stale",
+		LANInterfaces: []LANInterface{{
+			VLANID: 10, Name: "Guest WiFi", IPAddr: "192.168.99.1",
+			SubnetMask: "255.255.0.0", ManagementAccess: "disable", PortScan: false,
+			DHCPPoolConfig: DHCPPoolConfig{StartAddress: "192.168.99.50"},
+			RateLimitRules: RateLimitRules{RateLimit: "disable"},
+		}},
+		WANInterfaces: []WANInterface{{
+			Name: "wanX", LANIntf: "eth1", IPMode: "static", SourceNAT: "disable",
+			LoadBalanceConfig: LoadBalanceConfig{
+				Mode:         "shared",
+				MonitorHosts: []string{"8.8.8.8"},
+			},
+			BandwidthConfig: BandwidthConfig{UplinkBandwidth: "999"},
+			SpareIPMode:     "dynamic",
+			TrafficShaping:  "disable",
+			DynDNSConfig:    DynDNSConfig{Mode: "disable"},
+		}},
+		IPS: false, IPSMode: "detection", DNSServer: "disable",
+		Tailscale: CloudTailscale{Enable: false},
+	}
+
+	got := live
+	enrichFromCloudJSON(&got, stale)
+
+	// The whole point: the live monitor-host list must survive.
+	wanted := []string{"8.8.8.8", "1.1.1.1"}
+	if !reflect.DeepEqual(got.WANInterfaces[0].LoadBalanceConfig.MonitorHosts, wanted) {
+		t.Errorf("monitor hosts = %v, want %v — a stale snapshot overwrote a live value",
+			got.WANInterfaces[0].LoadBalanceConfig.MonitorHosts, wanted)
+	}
+	for _, c := range []struct {
+		field string
+		got   any
+		want  any
+	}{
+		{"SystemName", got.SystemName, "NSE-live"},
+		{"WAN name", got.WANInterfaces[0].Name, "wan1"},
+		{"WAN ip_mode", got.WANInterfaces[0].IPMode, "dynamic"},
+		{"WAN source_nat", got.WANInterfaces[0].SourceNAT, "enable"},
+		{"WAN lb mode", got.WANInterfaces[0].LoadBalanceConfig.Mode, "backup"},
+		{"WAN uplink", got.WANInterfaces[0].BandwidthConfig.UplinkBandwidth, "40"},
+		{"VLAN ip", got.LANInterfaces[0].IPAddr, "10.0.10.1"},
+		{"VLAN mask", got.LANInterfaces[0].SubnetMask, "255.255.255.0"},
+		{"VLAN mgmt access", got.LANInterfaces[0].ManagementAccess, "enable"},
+		{"VLAN port_scan", got.LANInterfaces[0].PortScan, true},
+		{"DHCP start", got.LANInterfaces[0].DHCPPoolConfig.StartAddress, "10.0.10.50"},
+		{"IPS", got.IPS, true},
+		{"IPS mode", got.IPSMode, "prevention"},
+		{"DNS server", got.DNSServer, "enable"},
+		{"Tailscale enable", got.Tailscale.Enable, true},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s = %v, want %v — enrichment must not touch CLI-writable fields", c.field, c.got, c.want)
+		}
+	}
+
+	// And it must still do its actual job: fill what `show config` can't say.
+	if got.LANInterfaces[0].Name != "Guest WiFi" {
+		t.Errorf("VLAN label = %q, want the cloud-json one", got.LANInterfaces[0].Name)
+	}
+	if got.LANInterfaces[0].RateLimitRules.RateLimit != "disable" {
+		t.Errorf("rate limit = %q, want the cloud-json one", got.LANInterfaces[0].RateLimitRules.RateLimit)
+	}
+	if got.WANInterfaces[0].SpareIPMode != "dynamic" || got.WANInterfaces[0].TrafficShaping != "disable" {
+		t.Error("display-only WAN fields were not filled in")
+	}
+	if got.WANInterfaces[0].DynDNSConfig.Mode != "disable" {
+		t.Error("dyndns mode was not filled in")
+	}
+}
+
+// TestEnrichFromCloudJSONHandlesMismatch covers a snapshot describing a
+// device that has since been reconfigured — VLANs and ports that no longer
+// line up must simply be skipped, not matched by position.
+func TestEnrichFromCloudJSONHandlesMismatch(t *testing.T) {
+	live := CloudConfig{
+		LANInterfaces: []LANInterface{{VLANID: 10}, {VLANID: 20}},
+		WANInterfaces: []WANInterface{{LANIntf: "eth1"}},
+	}
+	stale := CloudConfig{
+		LANInterfaces: []LANInterface{{VLANID: 20, Name: "Twenty"}, {VLANID: 99, Name: "Gone"}},
+		WANInterfaces: []WANInterface{{LANIntf: "eth4", Name: "wan9"}},
+	}
+	got := live
+	enrichFromCloudJSON(&got, stale)
+	if got.LANInterfaces[0].Name != "" {
+		t.Errorf("VLAN 10 picked up a label from a different VLAN: %q", got.LANInterfaces[0].Name)
+	}
+	if got.LANInterfaces[1].Name != "Twenty" {
+		t.Errorf("VLAN 20 label = %q, want matching by id", got.LANInterfaces[1].Name)
+	}
+	if got.WANInterfaces[0].Name != "" {
+		t.Errorf("eth1 picked up eth4's name: %q", got.WANInterfaces[0].Name)
+	}
+}
+
+// TestFallbackWANInterfacesBeyondSixPorts guards against the fixed
+// eth1-eth6 scan this used to do. An NSE4000 has ten ethernet ports, so a
+// WAN on eth7 or above was simply invisible.
+func TestFallbackWANInterfacesBeyondSixPorts(t *testing.T) {
+	raw := `interface eth 1
+ type lan
+ switchport mode access
+!
+interface eth 8
+ type wan
+ wan-name wan2
+ ip address dhcp
+ load-balance mode shared
+ load-balance monitor-hosts 8.8.8.8,1.1.1.1
+!
+interface eth 10
+ type wan
+ wan-name wan3
+ ip address dhcp
+!`
+	wans := CloudConfigFromShowConfig(raw).WANInterfaces
+	if len(wans) != 2 {
+		t.Fatalf("found %d WANs, want 2 (eth8 and eth10)", len(wans))
+	}
+	if wans[0].LANIntf != "eth8" || wans[1].LANIntf != "eth10" {
+		t.Errorf("WAN ports = %q, %q; want eth8, eth10 in order", wans[0].LANIntf, wans[1].LANIntf)
+	}
+	if wans[0].PortNumber() != 8 {
+		t.Errorf("PortNumber() = %d, want 8 — the default-gateway index depends on it", wans[0].PortNumber())
+	}
+	if got := wans[0].LoadBalanceConfig.MonitorHosts; len(got) != 2 || got[1] != "1.1.1.1" {
+		t.Errorf("monitor hosts = %v", got)
+	}
+}

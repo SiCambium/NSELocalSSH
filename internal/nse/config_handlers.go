@@ -482,11 +482,10 @@ type PPPoEStatus struct {
 func pppoeStatusByPort(cfgRaw string) map[int]PPPoEStatus {
 	tree := ParseBlockTree(cfgRaw)
 	out := map[int]PPPoEStatus{}
-	for n := 1; n <= 6; n++ {
-		blk := tree.Find(fmt.Sprintf("interface eth %d", n))
-		if blk == nil {
-			continue
-		}
+	// Every eth block the device printed — port counts are model-specific
+	// (six on an NSE3000, ten on an NSE4000), so no fixed range here.
+	for _, eth := range ethInterfaceBlocks(tree) {
+		n, blk := eth.port, eth.block
 		if _, ok := blk.Leaf("pppoe-server enable"); !ok {
 			continue
 		}
