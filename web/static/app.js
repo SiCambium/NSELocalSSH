@@ -271,6 +271,20 @@ function throughputTable(rows, empty) {
   ) || (empty ? `<p class="muted">${esc(empty)}</p>` : "");
 }
 
+// The device model comes from the first line of `show version` (parsed into
+// version.model). Only /api/overview and /api/details carry it, so remember the
+// last value — the Configuration and Settings pages must keep the same brand
+// line even though their payloads have no version block.
+let deviceModel = "";
+
+function setBrand(v) {
+  if (v && v.model) deviceModel = v.model;
+  const label = deviceModel ? `Cambium ${deviceModel}` : "Cambium NSE";
+  const kicker = document.getElementById("kicker");
+  if (kicker) kicker.textContent = label;
+  document.title = deviceModel ? `${deviceModel} Status` : "NSE Status";
+}
+
 function renderOverview(d) {
   const v = d.version || {};
   const remote = d.remote || {};
@@ -278,7 +292,8 @@ function renderOverview(d) {
   const cpu = d.cpu || {};
   const usedPct = mem.used_pct != null ? mem.used_pct : 0;
   const cpuPct = cpu.used_pct != null ? cpu.used_pct : 0;
-  document.getElementById("title").textContent = v.hostname || v.identity || "NSE 3000";
+  setBrand(v);
+  document.getElementById("title").textContent = v.hostname || v.identity || "Status";
   document.getElementById("clock").textContent = (d.clock && d.clock.clock) || "";
   const wan = d.wan_throughput || [];
   const wanGrid = wan.length
@@ -375,7 +390,8 @@ function renderDetails(d) {
   const v = d.version || {};
   const m = d.management || {};
   const rem = d.remote || {};
-  document.getElementById("title").textContent = v.identity || "NSE 3000";
+  setBrand(v);
+  document.getElementById("title").textContent = v.identity || "Status";
   document.getElementById("clock").textContent = (d.clock && d.clock.clock) || "";
   const root = (d.disks || []).find((x) => x.mounted === "/") || {};
   return `
