@@ -6,13 +6,13 @@ This is a personal tool, not an official Cambium product.
 
 ## What it does
 
-**Status dashboard** (read-only, polls `show` / `service show` commands): Overview, Throughput, Details, Memory, Connection tracking, Interfaces, VLANs, Routing, DHCP (pools + MAC bindings), Neighbors, Devices, VPN tunnels (Starlink, client VPN), Tailscale, Firewall counters, Traffic, Events, and a raw Config viewer with known secret-bearing lines redacted (see Security notes for what that does **not** cover).
+**Status dashboard** (read-only, polls `show` / `service show` commands): Overview, Throughput, Details, Memory, Connection tracking, Interfaces, VLANs, Routing, DHCP (pools + MAC bindings), Neighbors, Devices, VPN tunnels (Starlink, client VPN), Tailscale, Firewall counters, Traffic, Events, and a raw Config viewer with secret-bearing lines redacted.
 
 **Configuration** (read/write, applied over the same SSH session): Network (VLANs, DHCP scopes, physical LAN port switchport config), WAN (DHCP/static/PPPoE, load balancing, bandwidth, connection health, enabling a LAN port as a new WAN, moving a WAN to a different physical port), Management, Groups (User/IP/Application), DNS, Threat Protection, Firewall, and VPN.
 
 **License-aware UI**: reads `show feature-license` and greys out (rather than hides) any control gated behind NSE Security Plus, matching cnMaestro's own convention.
 
-**Multi-site connections**: saved connections for every site you manage, each with its own label, address, username and SSH port. The header always shows which device you are looking at and drops down to switch; **Connections** is a top-level tab for adding, renaming and deleting them. One connection is live at a time — opening a site closes the previous SSH session — and a switch is refused while a configuration change on the current device is still awaiting confirmation, since its rollback snapshot belongs to that device and must not be replayed onto another. Connections live in `profiles.json` next to the settings `.env`, **including their passwords in cleartext** (file mode `0600`); treat that file accordingly.
+**Multi-site connections**: saved connections for every site you manage, each with its own label, address, username and SSH port. The header always shows which device you are looking at and drops down to switch; **Connections** is a top-level tab for adding, renaming and deleting them. One connection is live at a time — opening a site closes the previous SSH session — and a switch is refused while a configuration change on the current device is still awaiting confirmation, since the snapshot that would undo it belongs to that device and must not be replayed onto another. Connections live in `profiles.json` next to the settings `.env`, **including their passwords in cleartext** (file mode `0600`); treat that file accordingly.
 
 **Profile export**: produces a JSON profile in the same schema as cnMaestro's own NSE Group export. A handful of fields exist only in cnMaestro's own view of the device (VLAN labels, rate-limit rules, some display-only WAN values), so an export from a unit that has never been cloud-managed will have those blank.
 
@@ -50,6 +50,8 @@ open "dist/NSE Status.app"
 Use the **Connections** tab in the app to add the device's address, username and password. The desktop app stores those in `~/Library/Application Support/NSE Status/`.
 
 ### Browser only
+
+Needs Go 1.25 or newer (see `go.mod`).
 
 ```bash
 cp .env.example .env   # set NSE_PASSWORD
@@ -130,7 +132,7 @@ CI pins this job to Ubuntu 22.04: 24.04 dropped the `libwebkit2gtk-4.0-dev` pack
 
 ## Security notes
 
-- `service show config` / `show config` output can contain real secrets in cleartext, and **redaction is keyword-based and known to be incomplete**. Lines containing `shared-secret`, `auth-key`, `password`, `oinkcode`, `psk` or `$crypt$` are redacted before display. WireGuard key material is **not**: `private-key`, `public-key` and `peer-public-key` currently render in full through the Config viewer and the debug console. Treat any config output this app shows you as sensitive regardless of what it appears to have stripped. (`$crypt$N$...` values are reversible, not one-way hashes, and are treated accordingly.)
+- `service show config` / `show config` output can contain real secrets in cleartext — the admin password hash, VPN and RADIUS shared secrets, PPPoE and Tailscale credentials, WireGuard private keys, the IPS oinkcode. Lines carrying any of those are redacted before being displayed or written anywhere. Redaction is keyword-based, so it is only as complete as its pattern list: the list is in `secretLine` (`parsers.go`), and anything added to the CLI that carries a credential under a new keyword needs adding there. It deliberately does **not** redact WireGuard `public-key` / `peer-public-key`, which are published to peers by design, or `key-lifetime`, which is a timer. (`$crypt$N$...` values are reversible, not one-way hashes, and are treated accordingly.)
 - SSH host keys are pinned on first connect (TOFU) and verified on every subsequent connection.
 - Every state-changing HTTP endpoint checks that the request's `Origin`/`Referer` matches the app's own origin.
 - Every CLI write builder carries a note in code recording how its syntax was established, and unconfirmed paths still go through the safe-apply path above with the limits described there. The intent is that nothing ships without a real capture behind it, but the marks are only as good as the evidence they cite: a builder was found marked CONFIRMED on the strength of a cnMaestro JSON export, which cannot evidence a CLI keyword at all, and another cites a capture that is not in this repo. Treat a CONFIRMED note as a claim to check, not a guarantee.

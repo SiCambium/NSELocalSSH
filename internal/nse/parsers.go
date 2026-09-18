@@ -977,14 +977,36 @@ type TunnelConfig struct {
 	Tailscale TailscaleConfig `json:"tailscale"`
 }
 
+// secretLine reports whether a CLI config line carries credential
+// material. It drives both display redaction (SanitizeCLIOutput, used by
+// the Config viewer and the debug console) and ParseTunnelConfig, which
+// skips such lines and infers only that *something* is set.
+//
+// The patterns are deliberately narrow rather than a general search for
+// "key". Two distinctions matter:
+//
+//   - WireGuard's "private-key" is a credential; "public-key" and
+//     "peer-public-key" are not — a public key is published to peers by
+//     design. Redacting them would hide useful VPN detail and protect
+//     nothing.
+//   - "key-lifetime" is an IKE timer holding a number, not key material.
+//     A substring match on "key" would redact it and lose real
+//     information.
+//
+// A bare "secret <value>" leaf is a RADIUS client's shared secret. It is
+// matched by prefix, on the trimmed line, because the bare word is far
+// too common to search for anywhere in a line; both callers trim before
+// calling.
 func secretLine(s string) bool {
-	low := strings.ToLower(s)
+	low := strings.ToLower(strings.TrimSpace(s))
 	return strings.Contains(low, "shared-secret") ||
 		strings.Contains(low, "auth-key") ||
+		strings.Contains(low, "private-key") ||
 		strings.Contains(low, "password") ||
 		strings.Contains(low, "oinkcode") ||
 		strings.Contains(low, "psk") ||
-		strings.Contains(low, "$crypt$")
+		strings.Contains(low, "$crypt$") ||
+		strings.HasPrefix(low, "secret ")
 }
 
 func ParseTunnelConfig(raw string) TunnelConfig {
