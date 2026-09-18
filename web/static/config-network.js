@@ -91,6 +91,8 @@
           <td class="mono">${esc(v.subnet_mask)}</td>
           <td>${v.management_access === "enable" ? "Enabled" : "Disabled"}</td>
           <td>${scanBadge}</td>
+          <td>${v.inter_vlan_routing ? '<span class="badge-on">On</span>' : '<span class="badge-off">Off</span>'}</td>
+          <td>${rateLimitText(v)}</td>
           <td><button type="button" class="row-edit" data-vlan="${v.vlan_id}">Edit</button></td>
         </tr>`;
       })
@@ -115,8 +117,8 @@
       <h2>VLANs</h2>
       <p><button type="button" class="row-edit" id="add-vlan-btn">Add VLAN</button></p>
       <div class="table-wrap"><table>
-        <thead><tr><th>ID</th><th>Name</th><th>IP Address</th><th>Subnet Mask</th><th>Management Access</th><th>Vulnerability Scan</th><th></th></tr></thead>
-        <tbody>${vlanRows || '<tr><td colspan="7" class="muted">No VLANs found.</td></tr>'}</tbody>
+        <thead><tr><th>ID</th><th>Name</th><th>IP Address</th><th>Subnet Mask</th><th>Management Access</th><th>Vulnerability Scan</th><th>Inter-VLAN Routing</th><th>Rate Limit</th><th></th></tr></thead>
+        <tbody>${vlanRows || '<tr><td colspan="9" class="muted">No VLANs found.</td></tr>'}</tbody>
       </table></div>
 
       <h2>LAN Ports</h2>
@@ -403,6 +405,55 @@
     });
   }
 
+  // cnMaestro splits the VLAN dialog into a VLAN tab and a DHCP tab. The
+  // same split is worth having here for the same reason: the DHCP side has
+  // grown a scope, custom options and a MAC binding list, and scrolling
+  // past all of it to reach a checkbox is the wrong shape.
+  //
+  // Only fields the local CLI can actually write are editable. Name has no
+  // CLI leaf at all (it exists solely in cloud-json-config) and
+  // Vulnerability Scan has no write action here, so both are shown as
+  // read-only rather than offered and silently ignored.
+  // A VLAN's per-client rate limit. Read-only: the device stores it as a
+  // filter rule matching the VLAN's subnet, not as a VLAN setting, so
+  // changing it here would mean editing the firewall table.
+  function rateLimitText(v) {
+    const r = v.rate_limit_rules || {};
+    if (r.rate_limit !== "enable") return '<span class="badge-off">Off</span>';
+    return r.limit ? `${esc(r.limit)} Mbps` : '<span class="badge-on">On</span>';
+  }
+
+  function modalTabsHTML() {
+    return `
+      <div class="modal-tabs" role="tablist">
+        <button type="button" class="modal-tab active" data-tab="vlan" role="tab">VLAN</button>
+        <button type="button" class="modal-tab" data-tab="dhcp" role="tab">DHCP</button>
+      </div>`;
+  }
+
+  function wireModalTabs() {
+    const modalEl = document.querySelector(".modal");
+    if (!modalEl) return;
+    const tabs = [...modalEl.querySelectorAll(".modal-tab")];
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        tabs.forEach((t) => t.classList.toggle("active", t === tab));
+        modalEl.querySelectorAll("[data-tab-panel]").forEach((panel) => {
+          panel.hidden = panel.dataset.tabPanel !== tab.dataset.tab;
+        });
+      });
+    });
+  }
+
+  function readOnlyRow(label, value, note) {
+    return `
+      <div class="field-group">
+        <span class="field-legend">${esc(label)}</span>
+        <p class="readonly-value">${value}</p>
+        ${note ? `<p class="muted">${esc(note)}</p>` : ""}
+      </div>`;
+  }
+
   function editVLAN(vlanID) {
     const v = (cache.vlans || []).find((x) => x.vlan_id === vlanID);
     if (!v) return;
@@ -420,20 +471,49 @@
       optionsText: formatOptionsText(dp.dhcp_options),
     };
     const body = `
-      <label>IP address
-        <input id="cfg-vlan-ip" type="text" value="${esc(v.ip_addr)}">
-      </label>
-      <label>Subnet mask
-        <input id="cfg-vlan-mask" type="text" value="${esc(v.subnet_mask)}">
-      </label>
-      <label class="check-row">
-        <input id="cfg-vlan-mgmt" type="checkbox" ${v.management_access === "enable" ? "checked" : ""}>
-        Management access
-      </label>
-      <p class="warn">Changing management access on the VLAN carrying this session can lock you out. This change is applied through the safe-apply path: it's verified reachable over a fresh connection before it's kept, and rolled back automatically if not confirmed within 60 seconds.</p>
-      <h3>DHCP scope</h3>
-      ${dhcpScopeFieldsHTML("cfg-vlan-dhcp", dhcp)}
-      ${macBindingSectionHTML(bindingsFor(vlanID))}
+      ${modalTabsHTML()}
+      <div data-tab-panel="vlan">
+        ${readOnlyRow("VLAN ID", String(vlanID))}
+        ${readOnlyRow(
+          "Name",
+          v.name ? esc(v.name) : `<span class="muted">not set</span>`,
+          "The VLAN name lives only in cnMaestro — the device CLI has no command that reads or writes it."
+        )}
+        <label>IP address
+          <input id="cfg-vlan-ip" type="text" value="${esc(v.ip_addr)}">
+        </label>
+        <label>Subnet mask
+          <input id="cfg-vlan-mask" type="text" value="${esc(v.subnet_mask)}">
+        </label>
+        <label class="check-row">
+          <input id="cfg-vlan-mgmt" type="checkbox" ${v.management_access === "enable" ? "checked" : ""}>
+          Management access
+        </label>
+        <label class="check-row">
+          <input id="cfg-vlan-ivr" type="checkbox" ${v.inter_vlan_routing ? "checked" : ""}>
+          Enable Inter-VLAN Routing
+        </label>
+        <p class="muted">Routes traffic between this VLAN and the others. Enabled is the device default.</p>
+        ${readOnlyRow(
+          "Rate Limit (per client)",
+          rateLimitText(v),
+          "Read-only here. The device stores this as a filter rule matching the VLAN's subnet, not as a VLAN setting, so changing it means editing the firewall table."
+        )}
+        ${readOnlyRow(
+          "Vulnerability Scan",
+          licenseGate(
+            license,
+            "port_scan",
+            v.port_scan ? '<span class="badge-on">On</span>' : '<span class="badge-off">Off</span>'
+          ),
+          "Read-only here — there is no local CLI action for it yet."
+        )}
+        <p class="warn">Management access and inter-VLAN routing can both cut off the session doing the editing: a cross-VLAN management session is routed traffic. Both go through the safe-apply path — verified reachable over a fresh connection before being kept, and rolled back automatically if not confirmed within 60 seconds.</p>
+      </div>
+      <div data-tab-panel="dhcp" hidden>
+        ${dhcpScopeFieldsHTML("cfg-vlan-dhcp", dhcp)}
+        ${macBindingSectionHTML(bindingsFor(vlanID))}
+      </div>
       <div id="cfg-vlan-outcome"></div>
     `;
     openModal(v.name ? `Edit VLAN ${vlanID} (${v.name})` : `Edit VLAN ${vlanID}`, body, async (modalEl) => {
@@ -451,6 +531,15 @@
           action: "vlan_management_access",
           vlan_id: vlanID,
           management_access: mgmt,
+        });
+        await renderOutcome(outcomeEl, outcome);
+      }
+      const ivr = modalEl.querySelector("#cfg-vlan-ivr").checked;
+      if (ivr !== !!v.inter_vlan_routing) {
+        const outcome = await postJSON("/api/config/network", {
+          action: "vlan_inter_vlan_routing",
+          vlan_id: vlanID,
+          inter_vlan_routing: ivr,
         });
         await renderOutcome(outcomeEl, outcome);
       }
@@ -494,6 +583,7 @@
     });
     // Wired after openModal so the buttons exist in the DOM. Add/Remove
     // act immediately and are independent of this modal's Save.
+    wireModalTabs();
     wireMACBindings(vlanID);
   }
 

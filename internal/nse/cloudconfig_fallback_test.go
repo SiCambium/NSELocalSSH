@@ -56,6 +56,17 @@ func TestCloudConfigFromShowConfigMatchesCloudJSON(t *testing.T) {
 	for i := range want.LANInterfaces {
 		want.LANInterfaces[i].Name = ""
 		want.LANInterfaces[i].RateLimitRules = RateLimitRules{}
+		// Same direction as CambiumRemote: the reference cloud snapshot
+		// predates inter_vlan_routing and carries no such key, so it
+		// unmarshals false while the derivation correctly defaults it to
+		// true. The default is pinned by
+		// TestFallbackInterVLANRoutingDefaultsOn and the leaf parsing by
+		// TestFallbackInterVLANRoutingDisabled, since this comparison
+		// cannot check it.
+		if !got.LANInterfaces[i].InterVLANRouting {
+			t.Errorf("vlan %d: derivation should default inter-VLAN routing on", got.LANInterfaces[i].VLANID)
+		}
+		want.LANInterfaces[i].InterVLANRouting = got.LANInterfaces[i].InterVLANRouting
 	}
 	for i := range want.WANInterfaces {
 		want.WANInterfaces[i].SpareIPMode = ""
@@ -449,5 +460,43 @@ interface eth 10
 	}
 	if got := wans[0].LoadBalanceConfig.MonitorHosts; len(got) != 2 || got[1] != "1.1.1.1" {
 		t.Errorf("monitor hosts = %v", got)
+	}
+}
+
+// Inter-VLAN routing is enabled by default and the device prints nothing
+// for it; only the negative leaf ever appears. Both directions are pinned
+// here because the whole-struct comparison above cannot check this field —
+// the reference cloud snapshot predates the key.
+func TestFallbackInterVLANRoutingDefaultsOn(t *testing.T) {
+	cfg := CloudConfigFromShowConfig("show config\n!\ninterface vlan 40\n ip address 192.168.40.1 255.255.255.0\n exit\n!\n")
+	if len(cfg.LANInterfaces) != 1 {
+		t.Fatalf("lan interfaces = %d", len(cfg.LANInterfaces))
+	}
+	if !cfg.LANInterfaces[0].InterVLANRouting {
+		t.Fatal("absent leaf must read as enabled")
+	}
+}
+
+func TestFallbackInterVLANRoutingDisabled(t *testing.T) {
+	cfg := CloudConfigFromShowConfig("show config\n!\ninterface vlan 40\n ip address 192.168.40.1 255.255.255.0\n no inter-vlan-routing\n exit\n!\n")
+	if len(cfg.LANInterfaces) != 1 {
+		t.Fatalf("lan interfaces = %d", len(cfg.LANInterfaces))
+	}
+	if cfg.LANInterfaces[0].InterVLANRouting {
+		t.Fatal("\"no inter-vlan-routing\" must read as disabled")
+	}
+}
+
+func TestVLANInterVLANRoutingLine(t *testing.T) {
+	if got := VLANInterVLANRoutingLine(true); got != "inter-vlan-routing" {
+		t.Fatalf("enable line %q", got)
+	}
+	if got := VLANInterVLANRoutingLine(false); got != "no inter-vlan-routing" {
+		t.Fatalf("disable line %q", got)
+	}
+	// A cross-VLAN management session is routed traffic, so turning this
+	// off can sever the session doing the editing.
+	if ClassifyRisk("vlan-inter-vlan-routing") != RiskLockout {
+		t.Fatal("inter-VLAN routing changes must go through safe-apply")
 	}
 }

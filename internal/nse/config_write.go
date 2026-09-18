@@ -216,6 +216,18 @@ func VLANManagementAccessLine(enable bool) string {
 	return "no management-access"
 }
 
+// VLANInterVLANRoutingLine toggles routing between this VLAN and the
+// others. CONFIRMED live on an NSE 4000: "no inter-vlan-routing" adds the
+// leaf under "interface vlan N" and "inter-vlan-routing" removes it, so
+// enabled is the default and is represented by the leaf's absence — the
+// same convention port-scan uses.
+func VLANInterVLANRoutingLine(enable bool) string {
+	if enable {
+		return "inter-vlan-routing"
+	}
+	return "no inter-vlan-routing"
+}
+
 // NetworkAddress computes the network address for an IP/dotted-decimal
 // mask pair (e.g. 172.21.0.1 + 255.255.0.0 -> 172.21.0.0), needed for the
 // DHCP pool "network" line, which is confirmed to want the network

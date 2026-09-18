@@ -34,7 +34,7 @@ const (
 // all) can cut off remote management from the operator's own location.
 func ClassifyRisk(section string) RiskLevel {
 	switch section {
-	case "wan", "lan-port", "vlan-management-access", "management-service", "high-availability", "admin-password", "outbound-filter", "geo-ip", "overrides":
+	case "wan", "lan-port", "vlan-management-access", "vlan-inter-vlan-routing", "management-service", "high-availability", "admin-password", "outbound-filter", "geo-ip", "overrides":
 		return RiskLockout
 	default:
 		return RiskNone
@@ -50,6 +50,19 @@ type ConfigBlock struct {
 	Lines []string
 	Risk  RiskLevel
 	Keys  []string
+
+	// Undo, when set, replaces the stanza pre-image as the rollback.
+	//
+	// Replaying the pre-image only works for settings the device states
+	// explicitly. A flag whose enabled state is the *absence* of a leaf —
+	// inter-vlan-routing and port-scan both work this way — cannot be
+	// restored by replaying a stanza that never mentioned it: the lines
+	// apply cleanly, the undo reports OK, and nothing changes. Verified
+	// live: disabling inter-VLAN routing on a VLAN and letting the confirm
+	// window lapse left the change in place.
+	//
+	// Callers that own such a flag pass the explicit inverse here.
+	Undo []string
 }
 
 // saveOnlyFailed reports whether every one of a block's own config lines
@@ -220,6 +233,9 @@ func (a *SafeApplier) Apply(block ConfigBlock) (ApplyOutcome, error) {
 		return ApplyOutcome{}, fmt.Errorf("snapshotting config before risky change: %w", err)
 	}
 	preImage := ExtractStanza(rawBefore, block.Keys)
+	if len(block.Undo) > 0 {
+		preImage = block.Undo
+	}
 
 	result, err := a.client.ApplyLines(block.Lines, 20*time.Second)
 	if err != nil {

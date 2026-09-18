@@ -217,6 +217,7 @@ type networkRequest struct {
 	IP               string            `json:"ip"`
 	Mask             string            `json:"mask"`
 	ManagementAccess *bool             `json:"management_access"`
+	InterVLANRouting *bool             `json:"inter_vlan_routing"`
 	DHCP             *dhcpScopeRequest `json:"dhcp"`
 
 	// LAN port switchport fields, used by "port_switchport"/"port_shutdown".
@@ -400,6 +401,21 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 			Lines: BuildInterfaceVLANLines(req.VLANID, []string{VLANManagementAccessLine(*req.ManagementAccess)}),
 			Risk:  ClassifyRisk("vlan-management-access"),
 			Keys:  []string{key},
+		}
+	case "vlan_inter_vlan_routing":
+		if req.InterVLANRouting == nil {
+			writeSettingsError(w, http.StatusBadRequest, "inter_vlan_routing is required")
+			return
+		}
+		// Enabled is the absence of a leaf, so a stanza pre-image cannot
+		// undo this — the rollback needs the explicit inverse. See
+		// ConfigBlock.Undo.
+		block = ConfigBlock{
+			Name:  "vlan-inter-vlan-routing",
+			Lines: BuildInterfaceVLANLines(req.VLANID, []string{VLANInterVLANRoutingLine(*req.InterVLANRouting)}),
+			Risk:  ClassifyRisk("vlan-inter-vlan-routing"),
+			Keys:  []string{key},
+			Undo:  BuildInterfaceVLANLines(req.VLANID, []string{VLANInterVLANRoutingLine(!*req.InterVLANRouting)}),
 		}
 	case "vlan_create":
 		if req.IP == "" || req.Mask == "" {

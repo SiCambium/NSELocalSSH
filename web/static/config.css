@@ -160,3 +160,39 @@
   cursor: pointer;
 }
 .modal-save:disabled { opacity: 0.6; cursor: default; }
+
+/* Modal tabs, mirroring how cnMaestro splits the VLAN dialog. The DHCP
+   side carries a scope, custom options and a MAC binding list, so putting
+   it behind a tab keeps the VLAN settings reachable without scrolling. */
+.modal-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+  margin: 0 0 16px;
+}
+.modal-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.modal-tab:hover { color: var(--text); }
+.modal-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.modal-body .readonly-value {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: normal;
+}

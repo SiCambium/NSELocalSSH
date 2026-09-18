@@ -338,6 +338,11 @@ func fallbackLANInterfaces(tree *Block) []LANInterface {
 		// port-scan leaf under any VLAN) reports port_scan true for every
 		// VLAN in cloud-json-config. So absence means on, not off.
 		iface.PortScan = boolLeaf(leaves, "port-scan", true)
+		// Inter-VLAN routing behaves the same way: enabled is the default
+		// and prints nothing, so only the negative leaf appears. CONFIRMED
+		// live — "no inter-vlan-routing" makes the leaf appear under the
+		// VLAN and "inter-vlan-routing" removes it again.
+		iface.InterVLANRouting = boolLeaf(leaves, "inter-vlan-routing", true)
 		if pool := poolForSubnet(pools, iface.IPAddr, iface.SubnetMask); pool != nil {
 			iface.DHCPPoolConfig = fallbackDHCPPool(pool)
 		}
