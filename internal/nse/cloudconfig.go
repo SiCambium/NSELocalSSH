@@ -36,6 +36,12 @@ type CloudConfig struct {
 
 	// Management (safe subset only — see config_management.go for what's
 	// deliberately excluded, e.g. admin password and SSH/HTTPS toggles).
+	// CambiumRemote is whether the device is linked to cnMaestro, from the
+	// "management cambium-remote" leaf. Tagged json:"-" because it is read
+	// from `show config` rather than the cloud snapshot — a device being
+	// delinked is exactly the moment that snapshot stops being updated.
+	CambiumRemote bool `json:"-"`
+
 	TZName        string       `json:"tz_name"`
 	NTPServer     []NTPServer  `json:"ntp_server"`
 	SyslogServer  []SyslogHost `json:"syslog_server"`

@@ -34,11 +34,13 @@ func (s *Server) handleGetConfigManagement(w http.ResponseWriter, _ *http.Reques
 		"ntp_server":     cloud.NTPServer,
 		"syslog_server":  cloud.SyslogServer,
 		"logging_syslog": cloud.LoggingSyslog,
+		"cambium_remote": cloud.CambiumRemote,
 	})
 }
 
 type managementRequest struct {
 	Action   string `json:"action"`
+	Enable   *bool  `json:"enable"`
 	Hostname string `json:"hostname"`
 	TZName   string `json:"tz_name"`
 	NTP      string `json:"ntp_server"`
@@ -78,6 +80,12 @@ func (s *Server) handlePostConfigManagement(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		lines = []string{NTPServerLine(req.NTP)}
+	case "cambium_remote":
+		if req.Enable == nil {
+			writeSettingsError(w, http.StatusBadRequest, "enable is required")
+			return
+		}
+		lines = []string{CambiumRemoteLine(*req.Enable)}
 	case "syslog":
 		if req.SyslogIP == "" || req.SyslogPt == "" || req.Severity == nil {
 			writeSettingsError(w, http.StatusBadRequest, "syslog_ip, syslog_port, and severity are required")

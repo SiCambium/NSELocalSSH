@@ -1370,18 +1370,31 @@ autoInterval.addEventListener("change", () => {
   startAutoRefresh();
 });
 
+// afterScripts defers work until every <script> tag in the document has
+// executed. app.js runs first, so at this point config-common.js and the
+// section modules it hosts do not exist yet — and showPage("config") calls
+// window.NSEConfig.onShow(), which would silently no-op and leave the
+// Configuration page blank.
+//
+// This used to be a setTimeout(fn, 0), which only *usually* wins that
+// race: a timer callback runs whenever the parser next yields, which may
+// be before the remaining script tags have run. When it lost, a deep link
+// or reload onto #config rendered an empty page with no error anywhere.
+// DOMContentLoaded is the event that actually guarantees what is needed.
+function afterScripts(fn) {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", fn, { once: true });
+  } else {
+    fn();
+  }
+}
+
 if (location.hash === "#settings") {
   showPage("settings");
 } else if (location.hash === "#connections") {
-  setTimeout(() => showPage("connections"), 0);
+  afterScripts(() => showPage("connections"));
 } else if (location.hash === "#config") {
-  // Deferred: config-common.js (and the section modules it hosts) load via
-  // later <script> tags that haven't run yet at this point in app.js's own
-  // synchronous execution, so window.NSEConfig.onShow() — which showPage
-  // calls for the config page — would silently no-op and leave the page
-  // blank. Deferring to a fresh task runs this after every script tag has
-  // executed.
-  setTimeout(() => showPage("config"), 0);
+  afterScripts(() => showPage("config"));
 } else {
   activate("overview", true);
 }

@@ -46,6 +46,13 @@ func TestCloudConfigFromShowConfigMatchesCloudJSON(t *testing.T) {
 	want.Source = CloudSourceShowConfig
 	// Not in `show config` at all — a separate `show feature-license`.
 	want.FeatureLicense = nil
+	// The other direction: CambiumRemote is derived from `show config` and
+	// tagged json:"-", so it is absent from the cloud snapshot rather than
+	// missing from the derivation. The reference capture is linked.
+	if !got.CambiumRemote {
+		t.Error("the reference capture carries `management cambium-remote` and should read as linked")
+	}
+	want.CambiumRemote = got.CambiumRemote
 	for i := range want.LANInterfaces {
 		want.LANInterfaces[i].Name = ""
 		want.LANInterfaces[i].RateLimitRules = RateLimitRules{}

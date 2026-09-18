@@ -399,6 +399,27 @@ func HostnameLine(name string) string {
 
 // TimezoneLine sets the display timezone (IANA name, e.g. "Europe/London").
 // CONFIRMED top-level line from a real `show config` export.
+// CambiumRemoteLine enables or disables the device's link to cnMaestro.
+//
+// "management cambium-remote" is CONFIRMED — a real, currently-active
+// line in a device's own `show config`. The negated form is the one to
+// send to delink, reported from the device by the operator.
+//
+// Delinking is not a lockout risk in the sense SafeApplier means: it ends
+// cloud management, not local access, so it applies directly and is
+// saved with it. It is still consequential and awkward to undo — sending
+// the positive line again restores the config leaf, but a device that has
+// been delinked generally also has to be re-claimed in cnMaestro before
+// it reconnects, which nothing here can do. The UI asks before sending
+// it, which is the right place for "are you sure" on something that is
+// hard to reverse rather than dangerous to the session.
+func CambiumRemoteLine(enable bool) string {
+	if enable {
+		return "management cambium-remote"
+	}
+	return "no management cambium-remote"
+}
+
 func TimezoneLine(tz string) string {
 	return "timezone " + tz
 }

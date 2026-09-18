@@ -46,6 +46,9 @@ func CloudConfigFromShowConfig(raw string) CloudConfig {
 	cfg.SystemName = valueAfter(top, "hostname ")
 	cfg.TZName = valueAfter(top, "timezone ")
 	cfg.DHCPAuthoritative = hasLeaf(top, "ip dhcp server authoritative")
+	// The bare leaf is the link; "management cambium-remote
+	// validate-server-cert" is a separate sub-option and must not count.
+	cfg.CambiumRemote = hasLeaf(top, "management cambium-remote")
 
 	applyFallbackManagement(&cfg, top)
 	applyFallbackDNS(&cfg, tree, top)
