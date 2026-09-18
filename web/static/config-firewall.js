@@ -144,6 +144,7 @@
         return `<tr>
           <td>${esc(rule.precedence)}</td>
           <td>${esc(rule.name)}</td>
+          <td>${esc(ruleTypeLabel(rule.kind))}</td>
           <td>${esc(action)}</td>
           <td>${esc(protocol)}</td>
           <td class="mono">${src}</td>
@@ -151,6 +152,7 @@
           <td>
             <button type="button" class="row-edit" data-move="up" data-precedence="${esc(rule.precedence)}" ${i === 0 ? "disabled" : ""}>&uarr;</button>
             <button type="button" class="row-edit" data-move="down" data-precedence="${esc(rule.precedence)}" ${i === rules.length - 1 ? "disabled" : ""}>&darr;</button>
+            <button type="button" class="row-edit" data-edit-precedence="${esc(rule.precedence)}" ${rule.id ? "" : "disabled title=\"This rule holds a VLAN's rate limit — edit it from that VLAN\""}>Edit</button>
             <button type="button" class="row-edit" data-delete-precedence="${esc(rule.precedence)}">Delete</button>
           </td>
         </tr>`;
@@ -174,8 +176,8 @@
       <p class="muted">Filters LAN-to-WAN (or other subnet) traffic, evaluated top to bottom. Every add, delete, or reorder here rewrites the whole list — deleting and recreating every rule in the new order is the only device-confirmed way to change it, since there's no confirmed in-place renumbering. Applied through the safe-apply path, same as WAN and LAN port changes.</p>
       <p><button type="button" class="row-edit" id="add-filter-rule-btn">Add New</button></p>
       <div class="table-wrap"><table>
-        <thead><tr><th>#</th><th>Name</th><th>Action</th><th>Protocol</th><th>Source</th><th>Destination</th><th></th></tr></thead>
-        <tbody>${ruleRows || '<tr><td colspan="7" class="muted">No filter rules found.</td></tr>'}</tbody>
+        <thead><tr><th>#</th><th>Name</th><th>Type</th><th>Action</th><th>Protocol</th><th>Source</th><th>Destination</th><th></th></tr></thead>
+        <tbody>${ruleRows || '<tr><td colspan="8" class="muted">No filter rules found.</td></tr>'}</tbody>
       </table></div>
 
       <h2>GEO IP Filtering</h2>
@@ -190,6 +192,9 @@
     document.getElementById("add-filter-rule-btn").addEventListener("click", addFilterRule);
     panel.querySelectorAll("[data-move]").forEach((btn) => {
       btn.addEventListener("click", () => moveFilterRule(parseInt(btn.dataset.precedence, 10), btn.dataset.move));
+    });
+    panel.querySelectorAll("[data-edit-precedence]").forEach((btn) => {
+      btn.addEventListener("click", () => editFilterRule(parseInt(btn.dataset.editPrecedence, 10)));
     });
     panel.querySelectorAll("[data-delete-precedence]").forEach((btn) => {
       btn.addEventListener("click", () => deleteFilterRule(parseInt(btn.dataset.deletePrecedence, 10)));
@@ -244,29 +249,75 @@
   // form — a group name is CONFIRMED interchangeable with an IP/mask in
   // this position (see FilterRuleContent's doc comment), and "All" sends
   // the literal "any" (see filterEndpointSpec's doc comment for why).
-  function filterEndpointFieldsHTML(prefix, title) {
+  // pre is an existing endpoint's values when editing, or undefined when
+  // adding. Selecting the right option up front matters as much as filling
+  // the inputs: a form that opens on "All" while showing a subnet would
+  // silently widen the rule if saved without touching it.
+  function filterEndpointFieldsHTML(prefix, title, pre) {
+    pre = pre || { type: "all", port: "any" };
     const names = groupNames();
     const groupOptions = names.length
-      ? names.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("")
+      ? names
+          .map((n) => `<option value="${esc(n)}" ${n === pre.group ? "selected" : ""}>${esc(n)}</option>`)
+          .join("")
       : '<option value="">No groups configured yet</option>';
+    const sel = (v) => (pre.type === v ? "selected" : "");
     return `
       <h3>${esc(title)}</h3>
       <label>Type
         <select id="${prefix}-type">
-          <option value="all">All</option>
-          <option value="ip">IP Address / Subnet</option>
-          <option value="group">Group</option>
+          <option value="all" ${sel("all")}>All</option>
+          <option value="ip" ${sel("ip")}>IP Address / Subnet</option>
+          <option value="group" ${sel("group")}>Group</option>
         </select>
       </label>
-      <div id="${prefix}-ip-fields" hidden>
-        <label>Address <input id="${prefix}-addr" type="text" placeholder="e.g. 192.168.20.0"></label>
-        <label>Mask <input id="${prefix}-mask" type="text" placeholder="e.g. 255.255.255.0"></label>
+      <div id="${prefix}-ip-fields" ${pre.type === "ip" ? "" : "hidden"}>
+        <label>Address <input id="${prefix}-addr" type="text" value="${esc(pre.addr || "")}" placeholder="e.g. 192.168.20.0"></label>
+        <label>Mask <input id="${prefix}-mask" type="text" value="${esc(pre.mask || "")}" placeholder="e.g. 255.255.255.0"></label>
       </div>
-      <div id="${prefix}-group-fields" hidden>
+      <div id="${prefix}-group-fields" ${pre.type === "group" ? "" : "hidden"}>
         <label>Group <select id="${prefix}-group">${groupOptions}</select></label>
       </div>
-      <label>Port <input id="${prefix}-port" type="text" value="any"></label>
+      <label>Port <input id="${prefix}-port" type="text" value="${esc(pre.port || "any")}"></label>
     `;
+  }
+
+  // The stored rule keeps an endpoint as one token: "any", an
+  // "addr/mask" pair, or a bare group name.
+  function parseEndpointToken(token, port) {
+    if (!token || token === "any") return { type: "all", port: port || "any" };
+    const i = token.indexOf("/");
+    if (i > 0) return { type: "ip", addr: token.slice(0, i), mask: token.slice(i + 1), port: port || "any" };
+    return { type: "group", group: token, port: port || "any" };
+  }
+
+  function ruleTypeLabel(kind) {
+    if (kind === "application_group") return "Application Group";
+    if (kind === "category") return "DPI Category";
+    return "IP Based";
+  }
+
+  // Turns a stored rule back into the form's own shape, so Edit opens
+  // showing what the rule actually is.
+  function prefillFromRule(rule) {
+    const dpi = parseDPIRule(rule.kind, rule.rule);
+    if (dpi && rule.kind === "application_group") {
+      return { name: rule.name, type: "application_group", action: dpi.action, appGroup: dpi.target };
+    }
+    if (dpi && rule.kind === "category") {
+      return { name: rule.name, type: "category", action: dpi.action, category: dpi.target };
+    }
+    const f = parseFilterRule(rule.rule) || {};
+    return {
+      name: rule.name,
+      type: "ip",
+      // The device spells the permissive action "permit"; the form offers
+      // it as "Allow" and the backend maps it back.
+      action: f.action === "permit" ? "allow" : f.action || "deny",
+      protocol: f.protocol || "any",
+      src: parseEndpointToken(f.src, f.srcPort),
+      dst: parseEndpointToken(f.dst, f.dstPort),
+    };
   }
 
   function readFilterEndpoint(el, prefix) {
@@ -293,77 +344,87 @@
     });
   }
 
-  function addFilterRule() {
+  // One form serves Add and Edit. They differ only in what is prefilled
+  // and which action is posted, and keeping them in one place is what stops
+  // a field added to one from being missing in the other.
+  function filterRuleFormHTML(pre) {
+    pre = pre || { type: "ip", action: "deny", protocol: "any" };
     const appNames = appGroupNames();
     const appGroupOptions = appNames.length
-      ? appNames.map((n) => `<option value="${esc(n)}">${esc(n)}</option>`).join("")
+      ? appNames
+          .map((n) => `<option value="${esc(n)}" ${n === pre.appGroup ? "selected" : ""}>${esc(n)}</option>`)
+          .join("")
       : '<option value="">No application groups configured yet</option>';
-    const body = `
-      <label>Name <input id="cfg-filter-name" type="text" placeholder="e.g. block_guest_to_office"></label>
+    const typeSel = (v) => (pre.type === v ? "selected" : "");
+    const actionSel = (v) => (pre.action === v ? "selected" : "");
+    return `
+      <label>Name <input id="cfg-filter-name" type="text" value="${esc(pre.name || "")}" placeholder="e.g. block_guest_to_office"></label>
       <label>Rule Type
         <select id="cfg-filter-type">
-          <option value="ip">IP Based</option>
-          <option value="application_group">Application Group</option>
-          <option value="category">DPI Category</option>
+          <option value="ip" ${typeSel("ip")}>IP Based</option>
+          <option value="application_group" ${typeSel("application_group")}>Application Group</option>
+          <option value="category" ${typeSel("category")}>DPI Category</option>
         </select>
       </label>
       <label>Action
         <select id="cfg-filter-action">
-          <option value="deny">Deny</option>
-          <option value="allow">Allow</option>
+          <option value="deny" ${actionSel("deny")}>Deny</option>
+          <option value="allow" ${actionSel("allow")}>Allow (permit)</option>
         </select>
       </label>
-      <p class="muted">"Deny" is confirmed on this device; "Allow" hasn't been independently verified — if it's wrong, the device will reject the whole change and nothing is applied.</p>
-      <div id="cfg-filter-ip-fields">
-        <label>Protocol <input id="cfg-filter-proto" type="text" value="any" placeholder="any, tcp, udp, icmp..."></label>
-        ${filterEndpointFieldsHTML("cfg-filter-src", "Source")}
-        ${filterEndpointFieldsHTML("cfg-filter-dst", "Destination")}
-        <p class="muted">"All" sends the literal "any" as the address, matching the same token already confirmed for protocol and port in this exact rule format — not independently live-captured for this position, but if it's wrong the device rejects the whole change and nothing is applied.</p>
+      <div id="cfg-filter-ip-fields" ${pre.type === "ip" ? "" : "hidden"}>
+        <label>Protocol <input id="cfg-filter-proto" type="text" value="${esc(pre.protocol || "any")}" placeholder="any, tcp, udp, icmp..."></label>
+        ${filterEndpointFieldsHTML("cfg-filter-src", "Source", pre.src)}
+        ${filterEndpointFieldsHTML("cfg-filter-dst", "Destination", pre.dst)}
+        <p class="muted">"All" sends the literal "any" as the address, matching the same token already confirmed for protocol and port in this exact rule format.</p>
       </div>
-      <div id="cfg-filter-appgroup-fields" hidden>
+      <div id="cfg-filter-appgroup-fields" ${pre.type === "application_group" ? "" : "hidden"}>
         <label>Application Group <select id="cfg-filter-appgroup">${appGroupOptions}</select></label>
         <p class="muted">References a group from the Groups tab's Application Groups list — add one there first if none exist.</p>
       </div>
-      <div id="cfg-filter-category-fields" hidden>
-        <label>Category <input id="cfg-filter-category" type="text" placeholder="e.g. Gambling, Social-Media"></label>
+      <div id="cfg-filter-category-fields" ${pre.type === "category" ? "" : "hidden"}>
+        <label>Category <input id="cfg-filter-category" type="text" value="${esc(pre.category || "")}" placeholder="e.g. Gambling, Social-Media"></label>
         <p class="muted">Not validated against a known category list — this device's exact set of DPI category names hasn't been confirmed. If the name is wrong, the device rejects the whole change and nothing is applied.</p>
       </div>
-      <p class="warn">New rules are added at the end of the list (lowest priority) — use the &uarr;/&darr; buttons afterward to move it into place. Applied through the safe-apply path: verified reachable over a fresh connection before being kept, and rolled back automatically within 60 seconds if not confirmed.</p>
-      <div id="cfg-filter-outcome"></div>
-    `;
-    const modalEl = openModal("Add Filter Rule", body, async (el) => {
-      const name = el.querySelector("#cfg-filter-name").value.trim();
-      if (!name) throw new Error("Name is required");
-      const ruleType = el.querySelector("#cfg-filter-type").value;
-      const ruleAction = el.querySelector("#cfg-filter-action").value;
-      const payload = { action: "filter_add", name, rule_type: ruleType, rule_action: ruleAction };
-      if (ruleType === "application_group") {
-        const appGroupName = el.querySelector("#cfg-filter-appgroup").value;
-        if (!appGroupName) throw new Error("Select an application group, or add one on the Groups tab first");
-        payload.app_group_name = appGroupName;
-      } else if (ruleType === "category") {
-        const category = el.querySelector("#cfg-filter-category").value.trim();
-        if (!category) throw new Error("Category is required");
-        payload.category = category;
-      } else {
-        const src = readFilterEndpoint(el, "cfg-filter-src");
-        const dst = readFilterEndpoint(el, "cfg-filter-dst");
-        payload.protocol = el.querySelector("#cfg-filter-proto").value.trim() || "any";
-        payload.src_type = src.type;
-        payload.src_addr = src.addr;
-        payload.src_mask = src.mask;
-        payload.src_group = src.group;
-        payload.src_port = src.port;
-        payload.dst_type = dst.type;
-        payload.dst_addr = dst.addr;
-        payload.dst_mask = dst.mask;
-        payload.dst_group = dst.group;
-        payload.dst_port = dst.port;
-      }
-      const outcome = await postJSON("/api/config/firewall", payload);
-      await renderOutcome(el.querySelector("#cfg-filter-outcome"), outcome);
-      await load();
-    });
+      <div id="cfg-filter-outcome"></div>`;
+  }
+
+  function readFilterRuleForm(el) {
+    const name = el.querySelector("#cfg-filter-name").value.trim();
+    if (!name) throw new Error("Name is required");
+    const ruleType = el.querySelector("#cfg-filter-type").value;
+    const payload = {
+      name,
+      rule_type: ruleType,
+      rule_action: el.querySelector("#cfg-filter-action").value,
+    };
+    if (ruleType === "application_group") {
+      const appGroupName = el.querySelector("#cfg-filter-appgroup").value;
+      if (!appGroupName) throw new Error("Select an application group, or add one on the Groups tab first");
+      payload.app_group_name = appGroupName;
+    } else if (ruleType === "category") {
+      const category = el.querySelector("#cfg-filter-category").value.trim();
+      if (!category) throw new Error("Category is required");
+      payload.category = category;
+    } else {
+      const src = readFilterEndpoint(el, "cfg-filter-src");
+      const dst = readFilterEndpoint(el, "cfg-filter-dst");
+      payload.protocol = el.querySelector("#cfg-filter-proto").value.trim() || "any";
+      payload.src_type = src.type;
+      payload.src_addr = src.addr;
+      payload.src_mask = src.mask;
+      payload.src_group = src.group;
+      payload.src_port = src.port;
+      payload.dst_type = dst.type;
+      payload.dst_addr = dst.addr;
+      payload.dst_mask = dst.mask;
+      payload.dst_group = dst.group;
+      payload.dst_port = dst.port;
+    }
+    return payload;
+  }
+
+  function wireFilterRuleForm(modalEl) {
     wireEndpointToggle(modalEl, "cfg-filter-src");
     wireEndpointToggle(modalEl, "cfg-filter-dst");
     modalEl.querySelector("#cfg-filter-type").addEventListener("change", (e) => {
@@ -371,6 +432,39 @@
       modalEl.querySelector("#cfg-filter-appgroup-fields").hidden = e.target.value !== "application_group";
       modalEl.querySelector("#cfg-filter-category-fields").hidden = e.target.value !== "category";
     });
+  }
+
+  function addFilterRule() {
+    const body =
+      filterRuleFormHTML(null) +
+      `<p class="warn">New rules are added at the end of the list (lowest priority) — use the &uarr;/&darr; buttons afterward to move it into place. Applied through the safe-apply path: verified reachable over a fresh connection before being kept, and rolled back automatically within 60 seconds if not confirmed.</p>`;
+    const modalEl = openModal("Add Filter Rule", body, async (el) => {
+      const payload = Object.assign({ action: "filter_add" }, readFilterRuleForm(el));
+      const outcome = await postJSON("/api/config/firewall", payload);
+      await renderOutcome(el.querySelector("#cfg-filter-outcome"), outcome);
+      await load();
+    });
+    wireFilterRuleForm(modalEl);
+  }
+
+  function editFilterRule(precedence) {
+    const rule = (cache.outbound_filter_rules || []).find(
+      (r) => parseInt(r.precedence, 10) === precedence
+    );
+    if (!rule) return;
+    const body =
+      filterRuleFormHTML(prefillFromRule(rule)) +
+      `<p class="warn">The rule keeps its position (${esc(rule.precedence)}) — use the &uarr;/&darr; buttons to move it. Applied through the safe-apply path: verified reachable over a fresh connection before being kept, and rolled back automatically within 60 seconds if not confirmed.</p>`;
+    const modalEl = openModal(`Edit Filter Rule ${rule.precedence}`, body, async (el) => {
+      const payload = Object.assign(
+        { action: "filter_edit", precedence: precedence },
+        readFilterRuleForm(el)
+      );
+      const outcome = await postJSON("/api/config/firewall", payload);
+      await renderOutcome(el.querySelector("#cfg-filter-outcome"), outcome);
+      await load();
+    });
+    wireFilterRuleForm(modalEl);
   }
 
   function moveFilterRule(precedence, direction) {

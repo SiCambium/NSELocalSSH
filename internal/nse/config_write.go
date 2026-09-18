@@ -297,6 +297,23 @@ func BuildFilterRuleRemoveLines(precedence int) []string {
 	return BuildFilterGlobalFilterLines([]string{FilterRuleDeleteLine(precedence)})
 }
 
+// NormalizeFilterAction maps the UI's "allow" onto the keyword this CLI
+// actually takes.
+//
+// CONFIRMED live on an NSE 4000: "layer3-filter allow ..." is rejected
+// with "%Error processing cli command - Invalid arguments", while
+// "layer3-filter permit ..." is accepted, and every permissive rule the
+// device itself prints uses "permit". "allow" had been carried here as an
+// untested guess, so any allow rule added through this app failed on the
+// one line that mattered — after the surrounding block, its unique_id and
+// its rule-name had already been created.
+func NormalizeFilterAction(action string) string {
+	if action == "allow" {
+		return "permit"
+	}
+	return action
+}
+
 // NetworkAddress computes the network address for an IP/dotted-decimal
 // mask pair (e.g. 172.21.0.1 + 255.255.0.0 -> 172.21.0.0), needed for the
 // DHCP pool "network" line, which is confirmed to want the network
