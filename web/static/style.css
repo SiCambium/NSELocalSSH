@@ -16,6 +16,22 @@
 html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--font); }
 button, input, select, textarea { font: inherit; color: inherit; }
 
+/* A button with no style of its own still has to be readable. Setting
+   only `color: inherit` above left one worse off than the browser
+   default: light text on the UA's light background, invisible. Every
+   button in this app sets its own background — including the ones that
+   want transparent, like .tabs button and .modal-close — so this default
+   reaches only the ones that would otherwise be unreadable. */
+button {
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: 0.6; cursor: default; }
+
 .top {
   display: grid;
   grid-template-columns: minmax(340px, 1fr) auto minmax(280px, 1fr);

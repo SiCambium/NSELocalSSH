@@ -44,8 +44,8 @@
       </label>
       <p class="muted">${appliedLabel()}</p>
       <div class="settings-actions">
-        <button type="button" id="cfg-adv-preview">Preview</button>
-        <button type="button" id="cfg-adv-apply">Apply and save</button>
+        <button type="button" class="row-edit" id="cfg-adv-preview">Preview</button>
+        <button type="button" class="modal-save" id="cfg-adv-apply">Apply and save</button>
         <span id="cfg-adv-note" class="muted"></span>
       </div>
       <div id="cfg-adv-outcome"></div>
