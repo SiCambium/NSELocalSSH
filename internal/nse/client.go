@@ -69,6 +69,11 @@ type Client struct {
 	derivedCfg      CloudConfig
 	derivedCfgAt    time.Time
 	derivedCfgOK    bool
+
+	// Recorded command output for demo mode (see demo.go). Nil in normal
+	// operation; non-nil means no SSH connection is ever opened. Guarded
+	// by mu, like the session it stands in for.
+	replay map[string]string
 }
 
 // cloudJSONMissLimit is how many non-definitive empty replies to
@@ -123,7 +128,7 @@ func (c *Client) noteCloudJSONHit() {
 func (c *Client) cachedDerivedConfig(ttl time.Duration) (CloudConfig, bool) {
 	c.capMu.Lock()
 	defer c.capMu.Unlock()
-	if !c.derivedCfgOK || time.Since(c.derivedCfgAt) > ttl {
+	if !c.derivedCfgOK || time.Since(c.derivedCfgAt) >= ttl {
 		return CloudConfig{}, false
 	}
 	return c.derivedCfg, true
@@ -292,6 +297,13 @@ func (c *Client) runLocked(command string, timeout time.Duration) (string, error
 	if err := validateCLILine(command); err != nil {
 		return "", err
 	}
+	if c.replay != nil {
+		out, ok := c.replay[strings.TrimSpace(command)]
+		if !ok {
+			return "", fmt.Errorf("demo mode: no recorded output for %q", command)
+		}
+		return out, nil
+	}
 	if err := c.ensure(); err != nil {
 		return "", err
 	}
@@ -450,3 +462,4 @@ func (c *Client) closeLocked() {
 	c.stdin = nil
 	c.incoming = nil
 }
+
