@@ -205,3 +205,44 @@ func TestConfigConfirmBlocksCrossOrigin(t *testing.T) {
 		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
 	}
 }
+
+// A set that does not add to 100 is the bug this action exists to prevent:
+// editing shares one port at a time is what leaves a device splitting
+// traffic 100/50. It is rejected before anything reaches the device.
+func TestConfigWANTrafficSharesRejectsBadSets(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"does not total 100", `{"action":"traffic_shares","shares":[{"port":1,"percent":100},{"port":2,"percent":50}]}`},
+		{"empty", `{"action":"traffic_shares","shares":[]}`},
+		{"duplicate port", `{"action":"traffic_shares","shares":[{"port":1,"percent":50},{"port":1,"percent":50}]}`},
+		{"percent out of range", `{"action":"traffic_shares","shares":[{"port":1,"percent":150},{"port":2,"percent":-50}]}`},
+		{"missing port", `{"action":"traffic_shares","shares":[{"percent":100}]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := testConfigServer(t)
+			req := httptest.NewRequest(http.MethodPost, "/api/config/wan", strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+			s.handleConfigWAN(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// A balanced set carries no port of its own, so it has to survive the
+// single-port guard that every other WAN action depends on. Reaching the
+// device (and failing there, offline) is the proof that it did.
+func TestConfigWANTrafficSharesAcceptsBalancedSet(t *testing.T) {
+	s := testConfigServer(t)
+	body := `{"action":"traffic_shares","shares":[{"port":2,"percent":40},{"port":1,"percent":60}]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/config/wan", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleConfigWAN(rec, req)
+	if rec.Code == http.StatusBadRequest {
+		t.Fatalf("balanced set rejected: %s", rec.Body.String())
+	}
+}

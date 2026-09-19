@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -827,21 +828,34 @@ func pppoeStatusByPort(cfgRaw string) map[int]PPPoEStatus {
 	return out
 }
 
+// wanShare is one link's slice of outbound traffic, as sent by the load
+// balancing editor.
+type wanShare struct {
+	Port    int `json:"port"`
+	Percent int `json:"percent"`
+}
+
 type wanRequest struct {
-	Action       string   `json:"action"`
-	Port         int      `json:"port"`
-	Mode         string   `json:"mode"` // "static" | "dhcp"
-	IP           string   `json:"ip"`
-	Mask         string   `json:"mask"`
-	Gateway      string   `json:"gateway"`
-	Hosts        []string `json:"hosts"`
-	Percent      int      `json:"percent"`
-	UplinkMbps   int      `json:"uplink_mbps"`
-	DownlinkMbps int      `json:"downlink_mbps"`
-	Name         string   `json:"name"`     // for "enable" and "change_port"
-	LBMode       string   `json:"lb_mode"`  // "shared" | "backup" | "disabled"
-	Priority     *int     `json:"priority"` // backup-link-priority, only meaningful with lb_mode=backup
-	NewPort      int      `json:"new_port"` // for "change_port": the eth port to move this WAN to
+	Action  string   `json:"action"`
+	Port    int      `json:"port"`
+	Mode    string   `json:"mode"` // "static" | "dhcp"
+	IP      string   `json:"ip"`
+	Mask    string   `json:"mask"`
+	Gateway string   `json:"gateway"`
+	Hosts   []string `json:"hosts"`
+	Percent int      `json:"percent"`
+
+	// Shares carries the whole active set for action "traffic_shares".
+	// The device divides outbound traffic by the ratio between these
+	// numbers, so they are only meaningful against each other and are
+	// written in one block rather than one port at a time.
+	Shares       []wanShare `json:"shares"`
+	UplinkMbps   int        `json:"uplink_mbps"`
+	DownlinkMbps int        `json:"downlink_mbps"`
+	Name         string     `json:"name"`     // for "enable" and "change_port"
+	LBMode       string     `json:"lb_mode"`  // "shared" | "backup" | "disabled"
+	Priority     *int       `json:"priority"` // backup-link-priority, only meaningful with lb_mode=backup
+	NewPort      int        `json:"new_port"` // for "change_port": the eth port to move this WAN to
 
 	// PPPoE fields, only used when Mode == "pppoe".
 	PPPoEUser        string `json:"pppoe_user"`
@@ -913,6 +927,15 @@ func (s *Server) handlePostConfigWAN(w http.ResponseWriter, r *http.Request) {
 	var req wanRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeSettingsError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	// The traffic split is a property of the set of links, not of any one
+	// of them: a share of 50 means nothing until you know what the others
+	// are. Editing it one port at a time is how a device ends up with
+	// shares that add to 150, so the whole set is written in one block and
+	// confirmed once.
+	if req.Action == "traffic_shares" {
+		s.applyWANTrafficShares(w, req.Shares)
 		return
 	}
 	if req.Port < 1 {
@@ -1063,6 +1086,67 @@ func (s *Server) handlePostConfigWAN(w http.ResponseWriter, r *http.Request) {
 		Keys:  []string{key},
 	}
 	outcome, err := s.safeApplier().Apply(block)
+	if err != nil {
+		writeDeviceError(w, err)
+		return
+	}
+	writeJSON(w, outcome)
+}
+
+// applyWANTrafficShares writes one traffic-share leaf per port in a single
+// ConfigBlock, so the set either lands together or not at all. Applying
+// them one at a time would leave the device holding a half-updated split
+// between the two requests, and would ask the operator to confirm a
+// lockout-risk change once per link.
+func (s *Server) applyWANTrafficShares(w http.ResponseWriter, shares []wanShare) {
+	if len(shares) == 0 {
+		writeSettingsError(w, http.StatusBadRequest, "shares is required")
+		return
+	}
+	total := 0
+	seen := make(map[int]bool, len(shares))
+	for _, sh := range shares {
+		if sh.Port < 1 {
+			writeSettingsError(w, http.StatusBadRequest, "each share needs a port")
+			return
+		}
+		if seen[sh.Port] {
+			writeSettingsError(w, http.StatusBadRequest, fmt.Sprintf("port %d listed twice", sh.Port))
+			return
+		}
+		seen[sh.Port] = true
+		if sh.Percent < 0 || sh.Percent > 100 {
+			writeSettingsError(w, http.StatusBadRequest, "percent must be between 0 and 100")
+			return
+		}
+		total += sh.Percent
+	}
+	// The device treats the numbers as a ratio and would accept any total,
+	// but a set that does not add to 100 is almost always a half-finished
+	// edit rather than an intent, and it is what makes the split unreadable
+	// later. The editor that calls this always sends a balanced set.
+	if total != 100 {
+		writeSettingsError(w, http.StatusBadRequest, fmt.Sprintf("shares add up to %d%%, not 100%%", total))
+		return
+	}
+
+	// Sorted so the same set always produces the same command sequence,
+	// which keeps the block name and the rollback stanza stable.
+	ordered := append([]wanShare(nil), shares...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Port < ordered[j].Port })
+
+	var lines, keys []string
+	for _, sh := range ordered {
+		lines = append(lines, BuildInterfaceEthLines(sh.Port, []string{WANTrafficSharePercentageLine(sh.Percent)})...)
+		keys = append(keys, fmt.Sprintf("interface eth %d", sh.Port))
+	}
+
+	outcome, err := s.safeApplier().Apply(ConfigBlock{
+		Name:  "wan-traffic_shares",
+		Lines: lines,
+		Risk:  ClassifyRisk("wan"),
+		Keys:  keys,
+	})
 	if err != nil {
 		writeDeviceError(w, err)
 		return

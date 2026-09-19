@@ -418,6 +418,77 @@
 /* A page-level action that changes what a port *is*, rather than editing
    one of the links listed below it. It reads as its own service because
    it is one: the same weight as a section, with the action stated. */
+/* Port roles is a toolbar, not a section: an explained action that opens
+   the page without competing with Load balancing, which is what the page
+   is about. Rule above and below rather than a plate, so it reads as
+   chrome and the first card the eye lands on is a real WAN link. */
+.port-roles {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 0 0 14px;
+  margin: 0 0 20px;
+  border-bottom: 1px solid var(--rule);
+}
+.port-roles .legend { flex: 0 0 auto; }
+.port-roles p {
+  flex: 1 1 32ch;
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+  max-width: 68ch;
+}
+.port-roles .row-edit { flex: 0 0 auto; align-self: center; }
+
+/* The split editor. Laid out as one line of readings so the numbers sit
+   in a row and the running total reads as their sum, which is the whole
+   point of editing them together. */
+.lb-edit {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  padding: 14px;
+  margin: 0 0 14px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--label-2);
+}
+.lb-edit-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.lb-edit-field input {
+  width: 5.5ch;
+  min-height: 34px;
+  padding: 4px 6px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 14px;
+  font-weight: 700;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--label);
+  color: var(--ink);
+}
+.lb-edit-pct { color: var(--muted); }
+.lb-edit-total {
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  padding-left: 2px;
+}
+/* A total that is not 100 cannot be saved, so it is marked as the reason
+   rather than left for the disabled button to imply. */
+.lb-edit-total.bad { color: var(--fault); }
+.lb-edit .row-edit { margin-left: auto; }
+.lb-edit .row-edit + .row-edit { margin-left: 0; }
+
 .service-strip {
   display: flex;
   align-items: center;
@@ -435,3 +506,7 @@
   color: #ffffff;
 }
 .row-edit.primary:hover { background: #002d57; border-color: #002d57; }
+
+/* Load balancing follows the WAN cards, so it needs the break between a
+   card and a new subject that the cards otherwise give each other. */
+.lb-heading { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--rule); }
