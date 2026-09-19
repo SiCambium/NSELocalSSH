@@ -480,3 +480,8 @@ td.mono, .mono { font-family: var(--mono); }
   letter-spacing: 0.04em;
   color: var(--accent);
 }
+
+/* The header dot's third state. Grey is "not contacted yet", green is
+   answering, red is not — without this a failed poll left the dot green,
+   which is the one reading that would actively mislead. */
+.conn-dot.down { background: var(--down); }

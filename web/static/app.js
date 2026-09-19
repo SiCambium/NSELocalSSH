@@ -176,6 +176,29 @@ function stat(label, value) {
   observer.observe(document.body, { childList: true, subtree: true });
 })();
 
+// The header's connection dot. It sits next to the words "Connected to",
+// so it reports whether the device is actually answering — not merely
+// which connection is selected, which is what the dots inside the menu
+// mean. Nothing ever set it before, so it stayed at its unknown-state grey
+// for the life of the page while the menu below it showed green.
+//
+// Liveness is not in any payload: /api/health echoes the configured host
+// without touching the device, and a connection entry carries only
+// `active`. The one real signal is whether the last fetch came back, which
+// is the same thing the poll-state text reports.
+function setConnDot(state) {
+  const dot = document.getElementById("conn-dot");
+  if (!dot) return;
+  dot.classList.toggle("on", state === "on");
+  dot.classList.toggle("down", state === "down");
+  dot.title =
+    state === "on"
+      ? "Device is answering"
+      : state === "down"
+      ? "Device is not answering"
+      : "Not contacted yet";
+}
+
 async function load(tab, force = false, quiet = false) {
   const state = document.getElementById("poll-state");
   const err = document.getElementById("error");
@@ -197,6 +220,7 @@ async function load(tab, force = false, quiet = false) {
     cache[tab] = data;
     render(tab, data);
     state.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+    setConnDot("on");
     if ((tab === "overview" || tab === "throughput") && !data.rates_ready) {
       setTimeout(() => {
         if (current === tab) load(tab, true, true);
@@ -206,6 +230,7 @@ async function load(tab, force = false, quiet = false) {
     err.hidden = false;
     err.textContent = e.message;
     state.textContent = "Error";
+    setConnDot("down");
   } finally {
     loading = false;
   }
@@ -1041,6 +1066,7 @@ function renderConnSwitcher() {
   const menu = document.getElementById("conn-menu");
   const cur = activeConn();
   label.textContent = cur ? cur.label : "No connection";
+  if (!cur) setConnDot("unknown");
   // Always rendered, including with a single site. It is the only
   // persistent indication of *which device* everything on screen refers
   // to, and hiding it until a second connection exists meant there was
@@ -1133,8 +1159,10 @@ async function openConnection(id) {
     await loadSettings();
     if (data.connected) {
       note.textContent = `Connected to ${data.name || data.host}`;
+      setConnDot("on");
       if (page === "status") load(current, true, true);
     } else {
+      setConnDot("down");
       note.textContent = "Selected, but SSH did not connect yet.";
       err.hidden = false;
       err.textContent = data.detail || "Could not connect";
@@ -1235,7 +1263,9 @@ document.getElementById("settings-form").addEventListener("submit", async (ev) =
     await loadSettings();
     if (data.connected) {
       note.textContent = `Saved ${data.name || data.host}`;
+      setConnDot("on");
     } else {
+      setConnDot("down");
       note.textContent = "Saved, but SSH did not connect yet.";
       err.hidden = false;
       err.textContent = data.detail || "Could not connect";
