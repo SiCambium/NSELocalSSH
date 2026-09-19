@@ -527,9 +527,16 @@
   function editGeoDirection(direction) {
     const data = (direction === "inbound" ? cache.geo_ip_inbound : cache.geo_ip_outbound) || { mode: "none", countries: [] };
     const selected = new Set(data.countries || []);
+    // data-search carries name and code together, so either finds a
+    // country without the filter having to read the DOM's rendered text.
+    // Matching is plain substring over both, so a short query is broad —
+    // "de" finds Germany, but also Bangladesh, Cape Verde, Denmark and
+    // Sweden, whose names contain those letters. That is the right
+    // trade: it keeps "united" working, and the alternative of matching
+    // codes only would make the names unsearchable.
     const countryList = COUNTRIES.map(
       ([code, name]) =>
-        `<label class="check-row"><input type="checkbox" value="${code}" ${selected.has(code) ? "checked" : ""}> ${esc(name)} (${code})</label>`
+        `<label class="check-row" data-country data-search="${esc((name + " " + code).toLowerCase())}"><input type="checkbox" value="${code}" ${selected.has(code) ? "checked" : ""}> ${esc(name)} (${code})</label>`
     ).join("");
     const label = direction === "inbound" ? "WAN to LAN" : "LAN to WAN";
     const body = `
@@ -540,25 +547,69 @@
           <option value="block" ${data.mode === "block" ? "selected" : ""}>Deny Only (Allow by default)</option>
         </select>
       </label>
-      <label>Countries</label>
-      <div style="max-height:220px;overflow-y:auto;border:1px solid var(--line);padding:8px 10px;border-radius:6px">${countryList}</div>
+      <label>Countries
+        <input id="cfg-geo-search" type="search" placeholder="Search by name or code, e.g. Germany or DE" autocomplete="off">
+      </label>
+      <p class="muted" id="cfg-geo-count"></p>
+      <div id="cfg-geo-list" style="max-height:220px;overflow-y:auto;border:1px solid var(--line);padding:8px 10px;border-radius:6px">${countryList}</div>
+      <p class="muted" id="cfg-geo-empty" hidden>No country matches that search.</p>
       <p class="warn">Applied through the safe-apply path: verified reachable over a fresh connection before being kept, and rolled back automatically within 60 seconds if not confirmed. If you manage this device remotely from a country you then exclude, you can lock yourself out.</p>
       <div id="cfg-geo-outcome"></div>
     `;
-    openModal(`Edit GEO IP — ${label}`, body, async (el) => {
+    const modalEl = openModal(`Edit GEO IP — ${label}`, body, async (el) => {
       const outcomeEl = el.querySelector("#cfg-geo-outcome");
       const mode = el.querySelector("#cfg-geo-mode").value;
       if (mode !== data.mode) {
         const outcome = await postJSON("/api/config/firewall", { action: "geo_mode", geo_direction: direction, geo_mode: mode });
         await renderOutcome(outcomeEl, outcome);
       }
-      const countries = Array.from(el.querySelectorAll('input[type="checkbox"]:checked')).map((c) => c.value);
+      const countries = Array.from(
+        el.querySelectorAll('#cfg-geo-list input[type="checkbox"]:checked')
+      ).map((c) => c.value);
       if (countries.join(",") !== (data.countries || []).join(",")) {
         const outcome = await postJSON("/api/config/firewall", { action: "geo_countries", geo_direction: direction, countries });
         await renderOutcome(outcomeEl, outcome);
       }
       await load();
     });
+    wireCountrySearch(modalEl);
+  }
+
+  // Filtering hides rows rather than re-rendering the list, so a country
+  // checked and then filtered out of view stays checked and is still
+  // submitted — re-rendering would silently drop those selections. The
+  // count is there for the same reason: with a filter applied, the list on
+  // screen is not the whole of what will be saved.
+  function wireCountrySearch(modalEl) {
+    if (!modalEl) return;
+    const search = modalEl.querySelector("#cfg-geo-search");
+    const list = modalEl.querySelector("#cfg-geo-list");
+    const countEl = modalEl.querySelector("#cfg-geo-count");
+    const emptyEl = modalEl.querySelector("#cfg-geo-empty");
+    if (!search || !list) return;
+    const rows = [...list.querySelectorAll("[data-country]")];
+
+    const updateCount = () => {
+      const selected = list.querySelectorAll('input[type="checkbox"]:checked').length;
+      const hidden = rows.filter((r) => r.hidden).length;
+      const suffix = hidden ? ` — ${rows.length - hidden} of ${rows.length} shown` : "";
+      countEl.textContent = `${selected} selected${suffix}`;
+    };
+
+    search.addEventListener("input", () => {
+      const q = search.value.trim().toLowerCase();
+      let shown = 0;
+      rows.forEach((row) => {
+        const match = !q || row.dataset.search.includes(q);
+        row.hidden = !match;
+        if (match) shown++;
+      });
+      emptyEl.hidden = shown !== 0;
+      updateCount();
+    });
+
+    list.addEventListener("change", updateCount);
+    updateCount();
   }
 
   function addGeoException(direction) {
