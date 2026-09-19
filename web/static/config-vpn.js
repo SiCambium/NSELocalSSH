@@ -33,7 +33,7 @@
           <td class="mono">${esc(c.netmask)}</td>
           <td>
             <button type="button" class="row-edit" data-edit-radius="${esc(c.id)}">Edit</button>
-            <button type="button" class="row-edit" data-delete-radius="${esc(c.id)}">Delete</button>
+            <button type="button" class="row-edit danger" data-delete-radius="${esc(c.id)}">Delete</button>
           </td>
         </tr>`
       )

@@ -177,7 +177,7 @@
             <button type="button" class="row-edit" data-move="up" data-precedence="${esc(rule.precedence)}" ${i === 0 ? "disabled" : ""}>&uarr;</button>
             <button type="button" class="row-edit" data-move="down" data-precedence="${esc(rule.precedence)}" ${i === rules.length - 1 ? "disabled" : ""}>&darr;</button>
             <button type="button" class="row-edit" data-edit-precedence="${esc(rule.precedence)}" ${rule.id ? "" : "disabled title=\"This rule holds a VLAN's rate limit — edit it from that VLAN\""}>Edit</button>
-            <button type="button" class="row-edit" data-delete-precedence="${esc(rule.precedence)}">Delete</button>
+            <button type="button" class="row-edit danger" data-delete-precedence="${esc(rule.precedence)}">Delete</button>
           </td>
         </tr>`;
       })
@@ -463,7 +463,7 @@
   function addFilterRule() {
     const body =
       filterRuleFormHTML(null) +
-      `<p class="warn">New rules are added at the end of the list (lowest priority) — use the &uarr;/&darr; buttons afterward to move it into place. Applied through the safe-apply path: verified reachable over a fresh connection before being kept, and rolled back automatically within 60 seconds if not confirmed.</p>`;
+      `<p class="muted">New rules are added at the end of the list (lowest priority) — use the &uarr;/&darr; buttons afterward to move it into place. Applied through the safe-apply path: verified reachable over a fresh connection before being kept, and rolled back automatically within 60 seconds if not confirmed.</p>`;
     const modalEl = openModal("Add Filter Rule", body, async (el) => {
       const payload = Object.assign({ action: "filter_add" }, readFilterRuleForm(el));
       const outcome = await postJSON("/api/config/firewall", payload);
@@ -480,7 +480,7 @@
     if (!rule) return;
     const body =
       filterRuleFormHTML(prefillFromRule(rule)) +
-      `<p class="warn">The rule keeps its position (${esc(rule.precedence)}) — use the &uarr;/&darr; buttons to move it. Applied through the safe-apply path: verified reachable over a fresh connection before being kept, and rolled back automatically within 60 seconds if not confirmed.</p>`;
+      `<p class="muted">The rule keeps its position (${esc(rule.precedence)}) — use the &uarr;/&darr; buttons to move it. Applied through the safe-apply path: verified reachable over a fresh connection before being kept, and rolled back automatically within 60 seconds if not confirmed.</p>`;
     const modalEl = openModal(`Edit Filter Rule ${rule.precedence}`, body, async (el) => {
       const payload = Object.assign(
         { action: "filter_edit", precedence: precedence },
@@ -660,7 +660,7 @@
     const body = `
       <label>Start IP <input id="cfg-geo-ex-start" type="text" placeholder="e.g. 203.0.113.1"></label>
       <label>End IP <input id="cfg-geo-ex-end" type="text" placeholder="e.g. 203.0.113.10"></label>
-      <p class="warn">Applied through the safe-apply path: verified reachable over a fresh connection before being kept, and rolled back automatically within 60 seconds if not confirmed.</p>
+      <p class="muted">Applied through the safe-apply path: verified reachable over a fresh connection before being kept, and rolled back automatically within 60 seconds if not confirmed.</p>
       <div id="cfg-geo-ex-outcome"></div>
     `;
     openModal(`Add Exception — ${label}`, body, async (el) => {

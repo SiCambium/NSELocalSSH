@@ -3,35 +3,45 @@
    the color tokens and .grid/.stat/.table-wrap/.warn/.muted conventions
    already defined in style.css. */
 
-.config-nav {
-  display: flex;
-  gap: 4px;
-  padding: 4px;
-  background: var(--bg-2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  width: fit-content;
-  margin-bottom: 20px;
-}
-.config-nav button {
-  background: transparent;
-  color: var(--muted);
-  border: 0;
-  padding: 8px 18px;
-  cursor: pointer;
-  border-radius: 7px;
-}
-.config-nav button.active { background: #24303c; color: var(--text); }
+/* The section nav moved into the rail, where style.css styles it as one
+   of the two sub-lists. What used to live here was the horizontal pill
+   bar it replaced, and leaving it in place did visible damage: this file
+   loads after style.css, so `width: fit-content` survived the move and
+   shrank the rail's recessed well to the width of its widest button,
+   which is the broken-looking gap between Status and Configuration. */
 
+/* Every action on this page — Edit, Enable, Add, Delete — is this one
+   button. It used to be 12px dark text in a hairline grey box, which on
+   a white page reads as a label rather than as something to press: the
+   owner reported not being able to find them. It now carries the ink as
+   its own outline and fills on hover, which is the strongest an outline
+   button gets without turning every section heading into a solid blue
+   bar. Height is 32px so it is also a reachable target on a laptop
+   trackpad in a comms room. */
 .row-edit {
-  background: var(--bg-2);
-  color: var(--text);
-  border: 1px solid var(--line);
-  padding: 4px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 6px 14px;
+  border: 1.5px solid var(--ink);
+  border-radius: var(--radius-chip);
+  background: var(--label);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
-  font-size: 12px;
 }
-.row-edit:hover { border-color: var(--accent); }
+.row-edit:hover { background: var(--ink); color: #ffffff; }
+.row-edit:active { transform: translateY(1px); }
+.row-edit[disabled] { border-color: var(--rule); color: var(--muted); background: var(--label-2); cursor: not-allowed; }
+/* Destructive actions are not the same button. Red is the second signal;
+   the word on the button is the first. */
+.row-edit.danger { border-color: var(--down); color: var(--down); }
+.row-edit.danger:hover { background: var(--down); color: #ffffff; }
+@media (prefers-reduced-motion: reduce) {
+  .row-edit:active { transform: none; }
+}
 
 .badge-on { color: var(--up); }
 .badge-off { color: var(--muted); }
@@ -58,13 +68,27 @@
   justify-content: center;
   z-index: 1000;
 }
+/* --- The add/edit dialog ------------------------------------------------
+   Every Add and Edit in this app opens the same dialog, so it is defined
+   once here and no section styles its own. What it was: 12px grey
+   uppercase captions over hairline inputs on a flat panel, which made a
+   form of a dozen fields read as a list of faint labels — captions broke
+   across two and three lines at the widths they were given, and nothing
+   said where one decision ended and the next began.
+
+   What it is now: captions in sentence case at a readable weight, inputs
+   with a real edge and a visible focus ring, and related fields boxed
+   into a section that states, in words, the question that section
+   answers. */
 .modal {
-  background: var(--bg);
-  border: 1px solid var(--line);
-  width: min(520px, calc(100vw - 32px));
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-pop);
+  width: min(620px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
   overflow-y: auto;
-  padding: 20px 24px;
+  padding: 22px 24px 20px;
 }
 .modal-header {
   display: flex;
@@ -74,48 +98,106 @@
 }
 .modal-header h2 { margin: 0; font-size: 16px; }
 .modal-close {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   background: transparent;
   border: 0;
+  border-radius: var(--radius-chip);
   color: var(--muted);
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
-  padding: 0 4px;
 }
+.modal-close:hover { background: var(--bg); }
 .modal-close:hover { color: var(--text); }
-.modal-body h3 {
-  margin: 4px 0 12px;
-  font-size: 13px;
-  color: var(--text);
-  border-top: 1px solid var(--line);
-  padding-top: 14px;
+/* A group of fields that belong to one decision. <fieldset> is the
+   element for this, and its <legend> is the one place a form is allowed
+   to state that question in a full sentence. Sections that predate this
+   use an <h3> in the same role, so the two are styled together and every
+   dialog reads the same whichever it uses. */
+.form-section {
+  margin: 0 0 16px;
+  padding: 14px 16px 2px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  background: var(--label);
 }
+.form-section > legend,
+.modal-body > h3,
+.form-section > h3 {
+  margin: 0;
+  padding: 0 8px;
+  border: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.modal-body > h3 {
+  padding: 14px 0 0;
+  margin: 0 0 10px;
+  border-top: 1px solid var(--rule);
+}
+.form-section > .muted,
+.form-section > div > .muted { margin: -10px 0 14px; font-size: 12px; }
+
 .modal-body label {
   display: grid;
   gap: 6px;
-  color: var(--muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 14px;
+  min-width: 0;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  margin-bottom: 16px;
 }
 .modal-body input[type="text"],
+.modal-body input[type="password"],
 .modal-body input[type="number"],
 .modal-body input[type="search"],
-.modal-body select {
-  background: var(--bg-2);
+.modal-body select,
+.modal-body textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  min-height: 38px;
+  background: var(--label);
   color: var(--text);
-  border: 1px solid var(--line);
-  padding: 8px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-chip);
+  padding: 8px 12px;
   font: inherit;
+  font-weight: 400;
   text-transform: none;
   letter-spacing: normal;
 }
+.modal-body textarea { min-height: 76px; font-family: var(--mono); font-size: 12.5px; }
 .modal-body input:focus,
-.modal-body select:focus {
-  outline: 1px solid var(--accent);
-  border-color: var(--accent);
+.modal-body select:focus,
+.modal-body textarea:focus { border-color: var(--ink); }
+.modal-body input:focus-visible,
+.modal-body select:focus-visible,
+.modal-body textarea:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }
+.modal-body input::placeholder { color: var(--muted); opacity: 0.65; }
+
+/* Short fields pair up across the dialog rather than each taking a full
+   row. Two columns, never more: four captions across 700px is where they
+   started breaking mid-word. */
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0 16px;
+  align-items: start;
+}
+.field-grid[hidden], .form-section [hidden] { display: none; }
 /* A checkbox row is the one label that must not stack. .modal-body label
    is a grid so a field's caption sits above its input, but for a checkbox
    the caption belongs beside it — inheriting the grid put every checkbox
@@ -136,17 +218,20 @@
    heading cannot itself be a <label>, because each stepper carries one and
    labels must not nest — hence .field-legend, which just borrows the
    label's typography. */
-.modal-body .field-group { margin-bottom: 14px; }
+.modal-body .field-group { margin-bottom: 16px; }
 .modal-body .field-legend {
   display: block;
   margin-bottom: 6px;
-  color: var(--muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  color: var(--ink-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
 }
+/* Three steppers that are one value (days / hours / minutes) stay tight
+   and side by side; this is not the general two-column grid. */
 .modal-body .field-row { display: flex; gap: 8px; flex-wrap: wrap; }
-.modal-body .field-row label { margin-bottom: 0; flex: 0 0 88px; }
+.modal-body .field-row label { margin-bottom: 0; flex: 0 0 96px; }
 .modal-body .field-row input[type="number"] { width: 100%; }
 
 .modal-error {
@@ -161,19 +246,29 @@
   margin-top: 16px;
 }
 .modal-cancel {
-  background: var(--bg-2);
-  color: var(--text);
-  border: 1px solid var(--line);
+  min-height: 38px;
+  background: transparent;
+  color: var(--ink-2);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-chip);
   padding: 8px 16px;
+  font-weight: 600;
   cursor: pointer;
 }
+.modal-cancel:hover { border-color: var(--ink); color: var(--ink); }
+/* Save is the one filled button on the page: it is the action the dialog
+   exists for, and there is exactly one of it. */
 .modal-save {
-  background: #1b3d3d;
-  color: var(--text);
-  border: 1px solid var(--accent);
-  padding: 8px 16px;
+  min-height: 38px;
+  background: var(--ink);
+  color: #ffffff;
+  border: 1px solid var(--ink);
+  border-radius: var(--radius-chip);
+  padding: 8px 20px;
+  font-weight: 700;
   cursor: pointer;
 }
+.modal-save:hover { background: #002d58; }
 .modal-save:disabled { opacity: 0.6; cursor: default; }
 
 /* Modal tabs, mirroring how cnMaestro splits the VLAN dialog. The DHCP
@@ -244,3 +339,99 @@
   white-space: pre;
   font-size: 12px;
 }
+
+/* --- WAN: roles and the traffic split -----------------------------------
+   Load balancing is the reason most people open the WAN page, and it is
+   a property of the set of links rather than of any one of them. The bar
+   is the split drawn to scale, in the two chart-series colours, because
+   this is a quantity and not a state: teal and red would claim something
+   is healthy or broken, which a traffic share does not say. */
+.lb-sentence { margin: 0 0 12px; font-size: 14px; color: var(--text); }
+.lb-bar {
+  display: flex;
+  gap: 2px;
+  height: 46px;
+  margin: 0 0 12px;
+  border-radius: var(--radius-chip);
+  overflow: hidden;
+}
+.lb-seg {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  padding: 0 12px;
+  color: #ffffff;
+  background: var(--series-1);
+  overflow: hidden;
+}
+/* Cornflower is a chart-series colour and never carries text, so the
+   second band's own label is set on the ink instead. */
+.lb-seg-2 { background: var(--series-2); color: var(--ink); }
+.lb-seg-3 { background: #2f6fb0; }
+.lb-seg-4 { background: #9dc4f5; color: var(--ink); }
+.lb-seg-name {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.lb-seg-pct { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.lb-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+
+/* The role chip states a link's job in the words the summary uses. */
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+.role-chip { background: var(--label-2); color: var(--ink-2); }
+.role-chip.ink { background: var(--ink); color: #ffffff; }
+.role-active { background: var(--ink); color: #ffffff; }
+.role-backup { background: var(--accent-soft); color: var(--ink); }
+.role-off { background: var(--label-2); color: var(--muted); }
+.wan-port {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.modal-wide { width: min(780px, calc(100vw - 32px)); }
+
+/* A page-level action, above the things it would add to. */
+.section-actions { display: flex; justify-content: flex-start; gap: 8px; margin: 0 0 14px; }
+
+/* A page-level action that changes what a port *is*, rather than editing
+   one of the links listed below it. It reads as its own service because
+   it is one: the same weight as a section, with the action stated. */
+.service-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+.service-strip h2 { margin: 0 0 4px; }
+.service-strip .muted { margin: 0; max-width: 62ch; }
+
+/* The one filled action on a page of outline ones. */
+.row-edit.primary {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #ffffff;
+}
+.row-edit.primary:hover { background: #002d57; border-color: #002d57; }
