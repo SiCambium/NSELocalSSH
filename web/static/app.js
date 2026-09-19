@@ -1083,9 +1083,25 @@ function renderTailscale(d) {
 // their rule_id is not the config's precedence — counter 1 is the rule at
 // precedence 6 on this device — so rules are joined by name, which is
 // unique. cnMaestro opens the same details when you click a rule's name.
-function firewallRuleDetailHTML(rule, counter) {
+// The device carries no description leaf on a rule; the text cnMaestro
+// shows as Description lives only in the counter's comment, behind a
+// prefix naming the table and the verdict ("outbound_firewall: accept L3 ").
+// Every comment on this device takes that shape, but a comment that does
+// not is shown whole rather than truncated by a guess.
+function firewallRuleDescription(comment) {
+  const m = /^outbound_firewall:\s+\S+\s+L3\s+(.*)$/.exec(comment || "");
+  return m ? m[1] : comment || "";
+}
+
+function firewallRuleDetailHTML(rule, counter, haveRules) {
   if (!rule) {
-    return `<p class="muted">No rule with this name in the running config, so there are no details to show. The counter still refers to a rule the device is enforcing.</p>`;
+    // Two different situations, and saying the wrong one sends someone
+    // hunting through their config for a rule that is sitting right
+    // there: the payload may carry no rules at all, which happens when
+    // the server predates this feature and needs restarting.
+    return haveRules
+      ? `<p class="muted">No rule named ${esc(counter && counter.name)} in the running config, so there are no details to show. The counter still refers to a rule the device is enforcing.</p>`
+      : `<p class="muted">This server build does not send rule definitions yet — restart it (a running process cannot pick up new Go code) and the details will appear.</p>`;
   }
   const p = rule.parsed;
   const body = p
@@ -1105,10 +1121,12 @@ function firewallRuleDetailHTML(rule, counter) {
       // broken into fields that might not mean what they say.
       `<div class="grid">${stat("Precedence", rule.precedence)}${stat("Type", rule.kind)}</div>
        <p class="mono">${esc(rule.rule)}</p>`;
+  const described = firewallRuleDescription(counter && counter.comment);
+  const named = `<div class="grid">${stat("Name", rule.name)}${stat("Description", described || "-")}</div>`;
   const extra = (rule.extra || []).length
     ? `<p class="muted">Also on this rule: <span class="mono">${esc((rule.extra || []).join(" · "))}</span></p>`
     : "";
-  return `${body}${extra}<p class="muted">${esc(counter && counter.comment ? counter.comment : "")}</p>`;
+  return `${body}${named}${extra}`;
 }
 
 function renderFirewallCounters(d) {
@@ -1128,7 +1146,7 @@ function renderFirewallCounters(d) {
       if (!open) return [row];
       return [
         row,
-        `<tr><td colspan="5" class="rule-detail">${firewallRuleDetailHTML(byName[r.name], r)}</td></tr>`,
+        `<tr><td colspan="5" class="rule-detail">${firewallRuleDetailHTML(byName[r.name], r, (d.rules || []).length > 0)}</td></tr>`,
       ];
     })
   );
