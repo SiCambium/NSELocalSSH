@@ -170,3 +170,38 @@ func TestFilterRuleLeafLinesKeepsOperatorMarkers(t *testing.T) {
 		t.Fatalf("operator markers dropped:\n%s", joined)
 	}
 }
+
+// The default route is what separates a WAN that is carrying traffic from
+// one that is merely plugged in. The device prints interfaces uppercase
+// ("ETH3") while the config names the same port "eth3".
+func TestDefaultRouteInterfaces(t *testing.T) {
+	routes := []Route{
+		{Destination: "0.0.0.0", Mask: "0.0.0.0", Gateway: "104.6.184.1", Interface: "ETH3"},
+		{Destination: "104.6.184.0", Mask: "255.255.252.0", Gateway: "0.0.0.0", Interface: "ETH3"},
+		{Destination: "192.168.10.0", Mask: "255.255.255.0", Gateway: "0.0.0.0", Interface: "VLAN1"},
+		{Destination: "100.65.113.39", Mask: "255.255.255.255", Gateway: "172.31.255.2", Interface: "ETH1"},
+	}
+	got := defaultRouteInterfaces(routes)
+	if len(got) != 1 {
+		t.Fatalf("expected exactly the default route, got %v", got)
+	}
+	if got["eth3"] != "104.6.184.1" {
+		t.Fatalf("eth3 gateway = %q, want 104.6.184.1 (map: %v)", got["eth3"], got)
+	}
+	// A host route on a link, however specific, is not a default route —
+	// ETH1 carries several here and is still not the active WAN.
+	if _, ok := got["eth1"]; ok {
+		t.Fatalf("host routes must not count as a default route: %v", got)
+	}
+}
+
+// Two live WANs: only the one holding the default route is active.
+func TestDefaultRouteInterfacesWithTwoUplinks(t *testing.T) {
+	got := defaultRouteInterfaces([]Route{
+		{Destination: "0.0.0.0", Mask: "0.0.0.0", Gateway: "10.0.0.1", Interface: "ETH1"},
+		{Destination: "0.0.0.0", Mask: "0.0.0.0", Gateway: "104.6.184.1", Interface: "ETH3"},
+	})
+	if len(got) != 2 || got["eth1"] != "10.0.0.1" || got["eth3"] != "104.6.184.1" {
+		t.Fatalf("both default routes should be reported: %v", got)
+	}
+}

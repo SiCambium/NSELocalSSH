@@ -59,6 +59,29 @@
     return (cache.pppoe || {})[port] || null;
   }
 
+  // "Active" is two facts, not one: the port's link is up, and it is the
+  // port holding the default route. A backup WAN behind a healthy primary
+  // is plugged in and idle, so a dot driven by link state alone would call
+  // it active. The three states are kept distinct rather than collapsed
+  // into on/off, because "up but not carrying traffic" is exactly what an
+  // operator checking a failover pair wants to see.
+  function wanLinkState(w) {
+    const port = String(w.lan_intf || "").toLowerCase();
+    const link = (cache.link || {})[port] || {};
+    const up = String(link.status || "").toUpperCase() === "UP";
+    const gateway = (cache.default_routes || {})[port];
+    if (up && gateway) return { cls: "on", label: "Active", detail: `carrying the default route via ${gateway}` };
+    if (up) return { cls: "idle", label: "Standby", detail: "link is up but not carrying the default route" };
+    return { cls: "down", label: "Down", detail: "no link on this port" };
+  }
+
+  function wanStatusHTML(w) {
+    const st = wanLinkState(w);
+    const link = (cache.link || {})[String(w.lan_intf || "").toLowerCase()] || {};
+    const speed = link.speed && link.speed !== "N/A" ? ` ${esc(link.speed)}` : "";
+    return `<span class="wan-status" title="${esc(st.detail)}"><span class="conn-dot ${st.cls}"></span>${esc(st.label)}${speed}</span>`;
+  }
+
   function renderCard(w) {
     const port = portOf(w);
     const lb = w.load_balance_config || {};
@@ -87,7 +110,7 @@
     const heading = w.name
       ? `${esc(w.name)} <span class="muted">(${esc(w.lan_intf)})</span>`
       : `<span class="muted">Unnamed WAN</span> (${esc(w.lan_intf)})`;
-    return `<h2>${heading}</h2>
+    return `<h2>${heading} ${wanStatusHTML(w)}</h2>
       <div class="grid">
         ${stat("IP mode", pppoe ? "pppoe" : w.ip_mode)}
         ${stat("Source NAT", w.source_nat)}

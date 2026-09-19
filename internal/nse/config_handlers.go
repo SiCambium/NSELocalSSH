@@ -723,11 +723,42 @@ func (s *Server) handleGetConfigWAN(w http.ResponseWriter, _ *http.Request) {
 	if !ok {
 		return
 	}
+	// Whether a WAN is carrying traffic is two separate facts, and the
+	// config alone states neither: the link has to be up, and it has to be
+	// the one holding the default route. A backup WAN sitting behind a
+	// healthy primary is up and idle, so link state on its own would
+	// report it as active.
+	brief, ok := s.cli(w, "show interface brief", 20*time.Second)
+	if !ok {
+		return
+	}
+	routes, ok := s.cli(w, "show route", 20*time.Second)
+	if !ok {
+		return
+	}
 	writeJSON(w, map[string]any{
-		"wans":  cloud.WANInterfaces,
-		"ports": ParseLANConfig(cfgRaw).Ports, // includes non-WAN ports available to promote
-		"pppoe": pppoeStatusByPort(cfgRaw),
+		"wans":           cloud.WANInterfaces,
+		"ports":          ParseLANConfig(cfgRaw).Ports, // includes non-WAN ports available to promote
+		"pppoe":          pppoeStatusByPort(cfgRaw),
+		"link":           linkByInterface(ParseInterfaceBrief(brief)),
+		"default_routes": defaultRouteInterfaces(ParseRoute(routes)),
 	})
+}
+
+// defaultRouteInterfaces returns the interfaces holding a default route,
+// lowercased, mapped to the gateway reached through each.
+//
+// This is what makes "active" mean carrying traffic rather than merely
+// plugged in. The device prints these interfaces as "ETH3" while the
+// config names the same port "eth3", hence the lowercasing.
+func defaultRouteInterfaces(routes []Route) map[string]string {
+	out := map[string]string{}
+	for _, r := range routes {
+		if r.Destination == "0.0.0.0" && r.Mask == "0.0.0.0" && r.Interface != "" {
+			out[strings.ToLower(r.Interface)] = r.Gateway
+		}
+	}
+	return out
 }
 
 // PPPoEStatus is the read-side view of a WAN's "pppoe-server ..." leaves.
