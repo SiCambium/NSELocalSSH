@@ -53,11 +53,16 @@ func classifyLine(cmd, raw string) LineResult {
 type Client struct {
 	Cfg Config
 
-	mu       sync.Mutex
-	conn     *ssh.Client
-	session  *ssh.Session
-	stdin    io.WriteCloser
-	incoming <-chan []byte
+	mu sync.Mutex
+	// Set when a connect attempt fails, so the next one can fail fast
+	// instead of spending the dial timeout again. Guarded by mu, like the
+	// connection itself.
+	lastConnErr error
+	lastConnAt  time.Time
+	conn        *ssh.Client
+	session     *ssh.Session
+	stdin       io.WriteCloser
+	incoming    <-chan []byte
 
 	// Per-device capability and cache state for FetchCloudConfig's
 	// fallback path (see cloudconfig.go). Guarded by its own mutex rather
@@ -147,7 +152,24 @@ func NewClient(cfg Config) *Client {
 	return &Client{Cfg: cfg}
 }
 
+// connectBackoff is how long a failed connect suppresses the next dial.
+//
+// Every read takes the client mutex and, on a disconnected client, dials
+// before doing anything. Against an unreachable device each of those pays
+// the full 12s dial timeout while holding the lock, and the dashboard's
+// auto-refresh keeps queueing more — so anything else that needs the
+// client waits behind the whole queue. Switching to another connection is
+// exactly that: measured at 47s behind three queued polls, which reads as
+// "it won't let me switch".
+//
+// Failing fast inside this window keeps the lock free, so a switch gets
+// through promptly while the device is down.
+const connectBackoff = 10 * time.Second
+
 func (c *Client) connect() error {
+	if c.lastConnErr != nil && time.Since(c.lastConnAt) < connectBackoff {
+		return c.lastConnErr
+	}
 	c.closeLocked()
 	config := &ssh.ClientConfig{
 		User:            c.Cfg.User,
@@ -157,6 +179,7 @@ func (c *Client) connect() error {
 	}
 	conn, err := ssh.Dial("tcp", c.Cfg.Addr(), config)
 	if err != nil {
+		c.lastConnErr, c.lastConnAt = err, time.Now()
 		return err
 	}
 	session, err := conn.NewSession()
@@ -213,8 +236,12 @@ func (c *Client) connect() error {
 	c.incoming = ch
 	if _, err := c.waitPrompt(15 * time.Second); err != nil {
 		c.closeLocked()
+		// A device that accepts TCP but never presents a prompt costs the
+		// same lock time as an unreachable one, so it backs off too.
+		c.lastConnErr, c.lastConnAt = err, time.Now()
 		return err
 	}
+	c.lastConnErr = nil
 	return nil
 }
 
@@ -425,6 +452,7 @@ func (c *Client) ApplyConfig(cfg Config) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.Cfg = cfg
+	c.lastConnErr, c.lastConnAt = nil, time.Time{}
 	c.closeLocked()
 	if cfg.Password == "" {
 		return fmt.Errorf("password is empty")

@@ -33,6 +33,10 @@ let deviceSearch = "";
 // Which firewall rule's details are open, by name. Held here because the
 // page re-polls, and an expanded rule should survive the refresh.
 let firewallRuleOpen = null;
+// Liveness of the active connection, as last observed: "on", "down", or
+// "unknown". The connection menu reads it so its dots cannot contradict
+// the header's.
+let connDotState = "unknown";
 // 0 means "nothing chosen yet", so the first load of the Settings page
 // edits whichever connection is actually live rather than whichever one
 // happens to hold id 1.
@@ -198,6 +202,7 @@ function stat(label, value) {
 // `active`. The one real signal is whether the last fetch came back, which
 // is the same thing the poll-state text reports.
 function setConnDot(state) {
+  connDotState = state;
   const dot = document.getElementById("conn-dot");
   if (!dot) return;
   dot.classList.toggle("on", state === "on");
@@ -1272,10 +1277,23 @@ function renderConnSwitcher() {
   // to, and hiding it until a second connection exists meant there was
   // nothing to discover the feature from in the state every new user
   // starts in.
+  // The dot means reachability, as it does in the header — not "this is
+  // the selected one". Only the active connection is actually talked to,
+  // so only it has a known state; the others get a hollow marker rather
+  // than a green one, which previously made an offline device look
+  // healthy simply because it was selected.
   const items = connections
     .map(
       (c) => `<button type="button" class="conn-menu-item${c.active ? " active" : ""}" data-conn="${c.id}">
-        <span class="conn-dot${c.active ? " on" : ""}"></span>
+        <span class="conn-dot${c.active ? " " + connDotState : " unknown"}" title="${
+          c.active
+            ? connDotState === "on"
+              ? "Connected and answering"
+              : connDotState === "down"
+              ? "Selected, but not answering"
+              : "Selected; not contacted yet"
+            : "Not connected — select it to find out"
+        }"></span>
         <span class="conn-menu-text">
           <span class="conn-menu-name">${esc(c.label)}</span>
           <span class="conn-menu-host mono">${esc(c.user)}@${esc(c.host)}:${esc(c.port)}</span>
@@ -1313,7 +1331,13 @@ function renderConnList(data) {
         <span class="conn-dot${c.active ? " on" : ""}"></span>
         <span class="conn-row-name">${esc(c.label)}</span>
         <span class="conn-row-host mono">${esc(c.user)}@${esc(c.host)}:${esc(c.port)}</span>
-        ${c.active ? '<span class="conn-row-tag">connected</span>' : ""}
+        ${
+          c.active
+            ? connDotState === "down"
+              ? '<span class="conn-row-tag is-down">not answering</span>'
+              : '<span class="conn-row-tag">connected</span>'
+            : ""
+        }
       </button>`
     )
     .join("");
