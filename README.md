@@ -8,7 +8,9 @@ This is a personal tool, not an official Cambium product.
 
 **Status dashboard** (read-only, polls `show` / `service show` commands): Overview, Throughput, Details, Memory, Connection tracking, Interfaces, VLANs, Routing, DHCP (pools + MAC bindings), Neighbors, Devices, VPN tunnels (Starlink, client VPN), Tailscale, Firewall counters, Traffic, Events, and a raw Config viewer with secret-bearing lines redacted.
 
-**Configuration** (read/write, applied over the same SSH session): Network (VLANs, DHCP scopes, physical LAN port switchport config), WAN (DHCP/static/PPPoE, load balancing, bandwidth, connection health, enabling a LAN port as a new WAN, moving a WAN to a different physical port), Management, Groups (User/IP/Application), DNS, Threat Protection, Firewall, and VPN.
+**Configuration** (read/write, applied over the same SSH session): Network (VLANs, DHCP scopes, physical LAN port switchport config), WAN (DHCP/static/PPPoE, load balancing, bandwidth, connection health, enabling a LAN port as a new WAN, moving a WAN to a different physical port), Management, Groups (User/IP/Application), DNS, Threat Protection, Firewall, and VPN. Also the administrator password, the management services (SSH/HTTPS/HTTP/Telnet/RADIUS-auth, their ports and the SSH idle timeout), gateway source precedence, and port forwarding with source NAT.
+
+Turning SSH **off** is refused rather than attempted: this tool reaches the device over SSH only, so it cannot be the thing that removes the channel its own safety check runs over. The refusal names the alternative.
 
 **License-aware UI**: reads `show feature-license` and greys out (rather than hides) any control gated behind NSE Security Plus, matching cnMaestro's own convention.
 
@@ -17,6 +19,24 @@ This is a personal tool, not an official Cambium product.
 **Profile export**: produces a JSON profile in the same schema as cnMaestro's own NSE Group export. A handful of fields exist only in cnMaestro's own view of the device (VLAN labels, rate-limit rules, some display-only WAN values), so an export from a unit that has never been cloud-managed will have those blank.
 
 **Reads the running config, not a cloud snapshot**: configuration comes from `show config`, the one read command every unit supports. `service show cloud-json-config` looks tempting — its JSON matches cnMaestro's export schema field-for-field — but it is a periodically regenerated snapshot that was measured lagging the running config by about seven minutes, including across an explicit `save`, and on a unit that is never cloud-managed it may never populate. Reading it back made a change that had actually applied look like it had failed. It is still used, but only to fill in labels the CLI has no words for (a VLAN's name and rate-limit rule); everything the CLI can change is read from the device's live configuration.
+
+**Diagnostics**: the whitelist of read-only device commands — `ping`, `nslookup`, `speedtest`, every `show`, and the per-daemon debug logs — has a screen. Commands that cost time or bandwidth say so on the card and ask before running, because a speed test spends the site's bandwidth and a conntrack dump can load the device's CPU.
+
+**Local history**: throughput and monitor-host latency are recorded to `history.json` next to the settings file, at two resolutions — one-minute buckets for 24 hours, quarter-hour buckets for 30 days — and the window self-trims, so the file does not grow without bound. A bucket holds the mean over its window, not the last sample in it, which is the honest aggregate for a rate. The device keeps no history of its own, so without this a chart can only cover the time the window has been open.
+
+Latency costs nothing extra: `service show debug-logs wanlb` already carries the load balancer's own per-cycle ping summaries against each WAN's monitor hosts, so reading that is both cheaper than issuing pings and brings measurements from before the app was started.
+
+**Configuration journal**: every `show config` the app reads is hashed, and a hash that differs from the last one filed means the running configuration moved, so the new text is recorded with a timestamp. The device keeps no configuration history at all, so this is the only local answer to "what changed, and when". Entries are stored with secrets stripped — a journal is browsed far more often than a backup, so it holds the redacted text and is explicitly not a restore artifact.
+
+**Site backup and section restore**: `/api/backup` streams `show config` plus the device's internal configuration store as one file. **It contains the device's secrets in cleartext**, because a backup that redacts them cannot rebuild a site; the file says so on its first line. Restore is per section (VLANs, DHCP, DNS, firewall, groups, threat, management, LAN ports), previews by default, and replays through the same safe-apply path as any other risky change. Replaying a whole device in one go is deliberately not offered.
+
+**First-run readiness**: `/api/provisioning` reads the device and reports what a new unit still needs before it should be left in a rack — hostname, timezone, NTP, WAN, DHCP, name servers, a syslog target, a backup taken. The administrator password is always reported as outstanding: the device stores it obfuscated, so no check can tell a factory password from a chosen one, and pretending otherwise would be worse than asking.
+
+**Offline demo mode**: `-demo <dir>` replays the recorded captures in `internal/nse/testdata/` instead of dialling a device, so the UI can be developed, reviewed and demonstrated with no hardware present. It is read-only by construction — a command with no recorded output fails exactly as an unknown command does, which means every config write fails too.
+
+```bash
+go run ./cmd/nse-status -demo internal/nse/testdata
+```
 
 ### Safety mechanism
 
