@@ -340,6 +340,62 @@ func LANPortAutoVLANMsgAuthLine(enable bool) string {
 	return "no auto-vlan-msg-auth"
 }
 
+// DeviceAccessIPAddressLine sets the source restriction for management
+// access. CONFIRMED live on an NSE 4000, including that it is a SINGLETON:
+// sending a second value replaces the first rather than adding to it, so
+// there is no list to diff and no ordering to get right.
+//
+// The value scopes every allowed-service — SSH and HTTPS as well as ping.
+func DeviceAccessIPAddressLine(spec string) string {
+	return "device-access ip-address " + spec
+}
+
+// DeviceAccessIPAddressRemoveLine clears the restriction, leaving
+// management reachable from anywhere it is routable. CONFIRMED live: the
+// value must be given, and removing it removes the only such line.
+func DeviceAccessIPAddressRemoveLine(spec string) string {
+	return "no device-access ip-address " + spec
+}
+
+// IPMatchesAccessSpec reports whether ip falls inside a device-access
+// source spec, which the device writes in one of three shapes: a
+// hyphenated range ("192.168.20.2-192.168.20.14", the form on the
+// reference device), CIDR ("10.0.0.0/8"), or a bare address.
+//
+// This backs the guard that refuses a restriction excluding the session
+// applying it. An unparseable spec returns an error rather than false, so
+// a shape not anticipated here surfaces as "cannot verify" instead of
+// silently blocking a legitimate change or, worse, waving through one
+// that locks the operator out.
+func IPMatchesAccessSpec(ip net.IP, spec string) (bool, error) {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false, fmt.Errorf("%q is not an IPv4 address", ip)
+	}
+	spec = strings.TrimSpace(spec)
+	switch {
+	case strings.Contains(spec, "-"):
+		parts := strings.SplitN(spec, "-", 2)
+		lo, hi := net.ParseIP(strings.TrimSpace(parts[0])).To4(), net.ParseIP(strings.TrimSpace(parts[1])).To4()
+		if lo == nil || hi == nil {
+			return false, fmt.Errorf("%q is not a usable address range", spec)
+		}
+		return bytes.Compare(ip4, lo) >= 0 && bytes.Compare(ip4, hi) <= 0, nil
+	case strings.Contains(spec, "/"):
+		_, network, err := net.ParseCIDR(spec)
+		if err != nil {
+			return false, fmt.Errorf("%q is not a usable subnet: %w", spec, err)
+		}
+		return network.Contains(ip4), nil
+	default:
+		single := net.ParseIP(spec).To4()
+		if single == nil {
+			return false, fmt.Errorf("%q is not an address, range or subnet", spec)
+		}
+		return single.Equal(ip4), nil
+	}
+}
+
 // NetworkAddress computes the network address for an IP/dotted-decimal
 // mask pair (e.g. 172.21.0.1 + 255.255.0.0 -> 172.21.0.0), needed for the
 // DHCP pool "network" line, which is confirmed to want the network

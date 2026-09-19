@@ -3,6 +3,7 @@ package nse
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -138,8 +139,11 @@ type firewallRequest struct {
 	DstMask    string `json:"dst_mask"`
 	DstGroup   string `json:"dst_group"`
 	DstPort    string `json:"dst_port"`
-	Precedence int    `json:"precedence"`
-	Direction  string `json:"direction"` // "up" | "down", for "filter_move"
+
+	// Device Access source restriction. Empty clears it.
+	DeviceAccessIPAddress string `json:"device_access_ip_address"`
+	Precedence            int    `json:"precedence"`
+	Direction             string `json:"direction"` // "up" | "down", for "filter_move"
 
 	// DPI-based filter rule fields, used by "filter_add" when rule_type
 	// is "application_group" or "category".
@@ -207,6 +211,8 @@ func (s *Server) handlePostConfigFirewall(w http.ResponseWriter, r *http.Request
 		s.handlePostOutboundFilterRule(w, req)
 	case "geo_mode", "geo_countries", "geo_exception_add", "geo_exception_delete":
 		s.handlePostGeoIP(w, req)
+	case "device_access_ip_address":
+		s.handlePostDeviceAccessSource(w, req)
 	default:
 		writeSettingsError(w, http.StatusBadRequest, "unknown action")
 	}
@@ -216,6 +222,92 @@ func (s *Server) handlePostConfigFirewall(w http.ResponseWriter, r *http.Request
 // direction's mode, replacing its country list, and adding/removing an
 // always-allowed IP-range exception. See config_write.go's GeoIP* line
 // builders for the CONFIRMED-but-never-live-captured CLI syntax.
+// handlePostDeviceAccessSource sets or clears the source restriction on
+// management access.
+//
+// This is the most dangerous write in the app, and not because of the
+// service it names. The restriction is not per-service: it scopes SSH and
+// HTTPS as well as ping, so a range that excludes the operator removes
+// the very channel every other recovery path in this code depends on —
+// safe-apply's rollback included, since that is delivered over SSH to the
+// device that has just stopped accepting it.
+//
+// So there is a guard ahead of safe-apply: the address this session
+// reaches the device from must fall inside the new restriction, or the
+// change is refused before a line is sent. Clearing the restriction is
+// always allowed, since it only ever widens access.
+func (s *Server) handlePostDeviceAccessSource(w http.ResponseWriter, req firewallRequest) {
+	cfgRaw, ok := s.cli(w, "show config", 25*time.Second)
+	if !ok {
+		return
+	}
+	current := parseDeviceAccessSources(cfgRaw)
+	var currentSpec string
+	if len(current.IPAddresses) > 0 {
+		currentSpec = current.IPAddresses[0]
+	}
+
+	spec := strings.TrimSpace(req.DeviceAccessIPAddress)
+	if spec == currentSpec {
+		writeJSON(w, ApplyOutcome{Status: "applied", Reason: "already set to that value"})
+		return
+	}
+
+	var lines, undo []string
+	if spec == "" {
+		if currentSpec == "" {
+			writeSettingsError(w, http.StatusBadRequest, "there is no source restriction to clear")
+			return
+		}
+		lines = []string{DeviceAccessIPAddressRemoveLine(currentSpec)}
+		undo = []string{DeviceAccessIPAddressLine(currentSpec)}
+	} else {
+		local := s.Client.LocalAddr()
+		if local == "" {
+			writeSettingsError(w, http.StatusBadGateway, "could not determine which address this session reaches the device from, so a restriction cannot be checked for safety")
+			return
+		}
+		ip := net.ParseIP(local)
+		if ip == nil {
+			writeSettingsError(w, http.StatusBadGateway, "could not parse this session's local address "+local)
+			return
+		}
+		inside, err := IPMatchesAccessSpec(ip, spec)
+		if err != nil {
+			writeSettingsError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if !inside {
+			writeSettingsError(w, http.StatusBadRequest, fmt.Sprintf(
+				"refusing: this session reaches the device from %s, which is outside %s — applying it would cut off SSH and HTTPS, including the connection any rollback would travel over. Set a range that includes %s, or change this from a console you cannot lose.",
+				local, spec, local))
+			return
+		}
+		// Singleton: setting a value replaces whatever is there, so this
+		// is one line either way. The undo restores the previous value,
+		// or clears it if there was none — a stanza pre-image cannot,
+		// since the restriction is a top-level leaf that was absent.
+		lines = []string{DeviceAccessIPAddressLine(spec)}
+		if currentSpec == "" {
+			undo = []string{DeviceAccessIPAddressRemoveLine(spec)}
+		} else {
+			undo = []string{DeviceAccessIPAddressLine(currentSpec)}
+		}
+	}
+
+	outcome, err := s.safeApplier().Apply(ConfigBlock{
+		Name:  "device-access-ip-address",
+		Lines: lines,
+		Risk:  ClassifyRisk("management-service"),
+		Undo:  undo,
+	})
+	if err != nil {
+		writeDeviceError(w, err)
+		return
+	}
+	writeJSON(w, outcome)
+}
+
 func (s *Server) handlePostGeoIP(w http.ResponseWriter, req firewallRequest) {
 	if req.GeoDirection != "inbound" && req.GeoDirection != "outbound" {
 		writeSettingsError(w, http.StatusBadRequest, "geo_direction must be 'inbound' or 'outbound'")

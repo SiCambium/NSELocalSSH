@@ -1,6 +1,7 @@
 package nse
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -298,5 +299,45 @@ func TestParseDeviceAccessSourcesUnrestricted(t *testing.T) {
 	// Empty slices, not nil, so the frontend always sees a list.
 	if got.IPAddresses == nil || got.IPGroups == nil {
 		t.Fatalf("expected empty slices, got %+v", got)
+	}
+}
+
+// The guard that refuses a self-excluding restriction is only as good as
+// this matcher, so each shape the device writes is pinned — including the
+// hyphenated range the reference device actually uses.
+func TestIPMatchesAccessSpec(t *testing.T) {
+	cases := []struct {
+		ip, spec string
+		want     bool
+	}{
+		{"192.168.20.2", "192.168.20.2-192.168.20.14", true},
+		{"192.168.20.14", "192.168.20.2-192.168.20.14", true},
+		{"192.168.20.15", "192.168.20.2-192.168.20.14", false},
+		{"192.168.20.1", "192.168.20.2-192.168.20.14", false},
+		{"192.168.20.2", "192.168.20.0/24", true},
+		{"192.168.21.2", "192.168.20.0/24", false},
+		{"10.1.2.3", "10.0.0.0/8", true},
+		{"192.168.20.2", "192.168.20.2", true},
+		{"192.168.20.3", "192.168.20.2", false},
+	}
+	for _, c := range cases {
+		got, err := IPMatchesAccessSpec(net.ParseIP(c.ip), c.spec)
+		if err != nil {
+			t.Fatalf("%s in %s: unexpected error %v", c.ip, c.spec, err)
+		}
+		if got != c.want {
+			t.Errorf("%s in %s = %v, want %v", c.ip, c.spec, got, c.want)
+		}
+	}
+}
+
+// An unreadable spec must error rather than answer false: a false would
+// be read as "you are outside this range" and block a legitimate change,
+// and a true would wave through one that locks the operator out.
+func TestIPMatchesAccessSpecRejectsGarbage(t *testing.T) {
+	for _, spec := range []string{"", "not-an-ip", "192.168.20.2-", "192.168.20.0/99", "1.2.3.4-banana"} {
+		if _, err := IPMatchesAccessSpec(net.ParseIP("192.168.20.2"), spec); err == nil {
+			t.Errorf("expected an error for %q", spec)
+		}
 	}
 }
