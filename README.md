@@ -82,38 +82,103 @@ Open http://127.0.0.1:8080
 
 ### Windows
 
-Both modes run on Windows. The quickest route is a prebuilt binary from the repo's [Releases](https://github.com/SiCambium/NSELocalSSH/releases) page — no toolchain needed:
+**You do not need to clone this repository, and you do not need Go.** To run
+the tool, download one file and double-click it. Building from source is a
+separate path, further down.
 
-- `NSE-Status-windows-amd64.exe` — the desktop app (native window via WebView2).
-- `nse-status_<version>_windows_amd64.exe` — browser mode; serves http://127.0.0.1:8080 and prints to a console window.
+#### Running it
 
-To build from source instead, browser mode needs nothing but Go:
+1. Open the [Releases](https://github.com/SiCambium/NSELocalSSH/releases) page
+   and download one of:
+
+   - `NSE-Status-windows-amd64.exe` — a normal desktop window. Start here.
+   - `nse-status_<version>_windows_amd64.exe` — the same tool served to your
+     browser at http://127.0.0.1:8080, with a console window alongside it.
+
+2. Put it in a folder of its own, for example `C:\Users\<you>\NSE-Status`.
+   This matters: the app keeps your saved connections next to the executable,
+   so give it somewhere stable rather than the Downloads folder.
+
+3. Double-click it. Windows will say *"Windows protected your PC"*, because
+   the release binaries are not code-signed. Choose **More info**, then
+   **Run anyway**.
+
+4. Add your device on the **Connections** screen: address, username,
+   password, and the SSH port if it is not 22. That is the whole setup.
+
+Nothing else is required. There is no installer, no service, and no
+configuration file to write by hand.
+
+#### Where it keeps things
+
+Beside the executable, in the folder you chose:
+
+| File | What it holds |
+|---|---|
+| `profiles.json` | your saved connections, **including their passwords in cleartext** (file mode 0600) |
+| `history.json` | throughput and latency, 24 hours in detail and 30 days aggregated |
+| `journal.json` | the configuration change log, with secrets stripped |
+| `known_hosts.json` | the SSH host keys pinned on first connect |
+| `prefs.json` | your own UI preferences |
+
+Treat that folder the way you would treat a password manager's data.
+
+#### If it will not start
+
+- **The window opens blank.** The desktop build needs the **WebView2
+  runtime**. It ships with Windows 11 and current Windows 10; on an older
+  install, get Microsoft's Evergreen bootstrapper. The browser build has no
+  such requirement.
+- **Nothing happens at all.** Run it from a terminal (`.\NSE-Status-windows-amd64.exe`)
+  so you can read the error it prints.
+- **It cannot reach the device.** The tool speaks SSH only. Check that SSH is
+  enabled on the NSE and that port 22 is reachable from this machine:
+  `Test-NetConnection <device-ip> -Port 22`.
+
+#### Building from source
+
+Only needed to change the code. Browser mode needs nothing but Go 1.25+:
 
 ```powershell
-copy .env.example .env   # then set NSE_PASSWORD
+git clone https://github.com/SiCambium/NSELocalSSH.git
+cd NSELocalSSH
 go build -o nse-status.exe ./cmd/nse-status
 .\nse-status.exe
 ```
 
-The desktop app additionally needs CGO and a C++ toolchain (MinGW-w64, e.g. `choco install mingw`), and must be built **on** Windows — it does not cross-compile from macOS or Linux, because the WebView2 binding needs the Windows C headers:
+For UI work, serve `web/static` from disk so an edit needs no rebuild:
+
+```powershell
+$env:NSE_DEV_STATIC = "$PWD\web\static"
+go run ./cmd/nse-status
+```
+
+And with no device to hand, replay the recorded captures instead:
+
+```powershell
+go run ./cmd/nse-status -demo internal\nse\testdata
+```
+
+The desktop app additionally needs CGO and a C++ toolchain (MinGW-w64, e.g.
+`choco install mingw`), and must be built **on** Windows — it does not
+cross-compile from macOS or Linux, because the WebView2 binding needs the
+Windows C headers:
 
 ```powershell
 $env:CGO_ENABLED=1
 go build -ldflags "-H windowsgui -s -w" -o NSE-Status-windows-amd64.exe ./cmd/nse-app
 ```
 
-Browser mode alone *does* cross-compile from any OS, which is how the release binaries are produced:
+Browser mode alone *does* cross-compile from any OS, which is how the release
+binaries are produced:
 
 ```bash
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o nse-status.exe ./cmd/nse-status
 ```
 
-Device details can be entered through the **Connections** tab in the UI, or put in a `.env` file next to the executable. Create that file from a terminal (`copy .env.example .env`) rather than File Explorer, which will silently save it as `.env.txt`. Note that the app writes saved connections to the *working directory*, so launch it from the folder you want it to keep them in.
-
-Two Windows-specific caveats:
-
-- The desktop app needs the **WebView2 runtime**. It ships with Windows 11 and current Windows 10; on older installs, get Microsoft's Evergreen bootstrapper.
-- The release binaries are unsigned, so SmartScreen shows a "Windows protected your PC" prompt on first run — *More info* → *Run anyway*. (The macOS build is ad-hoc signed only, and gets the equivalent Gatekeeper prompt.)
+Device details can also come from a `.env` file next to the executable instead
+of the Connections screen. Create it from a terminal (`copy .env.example .env`)
+rather than File Explorer, which will silently save it as `.env.txt`.
 
 ### Linux
 
