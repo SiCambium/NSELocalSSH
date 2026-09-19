@@ -225,6 +225,13 @@ func TestParsePortAutoVLANIgnoresMsgAuthLeaf(t *testing.T) {
 	if byIface["eth4"].AutoVLAN {
 		t.Error("eth4 has only auto-vlan-msg-auth and must not read as enabled")
 	}
+	// The two are independent, so each leaf must be read on its own.
+	if !byIface["eth2"].AutoVLANMsgAuth || !byIface["eth4"].AutoVLANMsgAuth {
+		t.Error("both eth2 and eth4 carry auto-vlan-msg-auth")
+	}
+	if byIface["eth5"].AutoVLANMsgAuth {
+		t.Error("eth5 carries neither leaf")
+	}
 	if byIface["eth5"].AutoVLAN {
 		t.Error("eth5 has neither leaf and must not read as enabled")
 	}
@@ -236,5 +243,11 @@ func TestLANPortAutoVLANLine(t *testing.T) {
 	}
 	if got := LANPortAutoVLANLine(false); got != "no auto-vlan" {
 		t.Fatalf("disable = %q", got)
+	}
+	if got := LANPortAutoVLANMsgAuthLine(true); got != "auto-vlan-msg-auth" {
+		t.Fatalf("msg-auth enable = %q", got)
+	}
+	if got := LANPortAutoVLANMsgAuthLine(false); got != "no auto-vlan-msg-auth" {
+		t.Fatalf("msg-auth disable = %q", got)
 	}
 }

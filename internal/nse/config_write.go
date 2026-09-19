@@ -325,6 +325,21 @@ func LANPortAutoVLANLine(enable bool) string {
 	return "no auto-vlan"
 }
 
+// LANPortAutoVLANMsgAuthLine toggles auto-VLAN message authentication,
+// which cnMaestro offers as its own checkbox beside Auto VLAN.
+//
+// CONFIRMED live on an NSE 4000, and confirmed independent of auto-VLAN in
+// both directions: "no auto-vlan" leaves this leaf in place, and the
+// device accepts this leaf on a port where auto-VLAN is off, printing it
+// on its own. So it is toggled separately rather than being treated as a
+// sub-option that follows auto-VLAN.
+func LANPortAutoVLANMsgAuthLine(enable bool) string {
+	if enable {
+		return "auto-vlan-msg-auth"
+	}
+	return "no auto-vlan-msg-auth"
+}
+
 // NetworkAddress computes the network address for an IP/dotted-decimal
 // mask pair (e.g. 172.21.0.1 + 255.255.0.0 -> 172.21.0.0), needed for the
 // DHCP pool "network" line, which is confirmed to want the network

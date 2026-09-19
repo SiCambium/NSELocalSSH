@@ -172,7 +172,11 @@
         <input id="cfg-port-auto-vlan" type="checkbox" ${p.auto_vlan ? "checked" : ""}>
         Auto VLAN
       </label>
-      <p class="muted">Lets the port learn VLANs automatically. The related "auto-vlan-msg-auth" setting is separate on the device and is left untouched by this.</p>
+      <label class="check-row">
+        <input id="cfg-port-auto-vlan-msg-auth" type="checkbox" ${p.auto_vlan_msg_auth ? "checked" : ""}>
+        Auto VLAN Message Authentication
+      </label>
+      <p class="muted">The two are independent on the device: message authentication can be on with Auto VLAN off, and switching Auto VLAN off leaves it alone.</p>
       <p class="warn">Changing a LAN port's VLAN assignment can disconnect whatever is plugged into it — or, if this port is carrying the session doing the editing (e.g. a direct connection to the 172.23.0.1 local UI), lock you out. This change is applied through the safe-apply path: it's verified reachable over a fresh connection before it's kept, and rolled back automatically if not confirmed within 60 seconds.</p>
       <label>Speed
         <select id="cfg-port-speed">
@@ -223,6 +227,18 @@
           enabled: autoVLAN,
         });
         await renderOutcome(outcomeEl, avOutcome);
+      }
+
+      // Sent as its own change because the device treats it as its own
+      // setting, not as something that follows Auto VLAN.
+      const msgAuth = el.querySelector("#cfg-port-auto-vlan-msg-auth").checked;
+      if (msgAuth !== !!p.auto_vlan_msg_auth) {
+        const maOutcome = await postJSON("/api/config/network", {
+          action: "port_auto_vlan_msg_auth",
+          port: port,
+          enabled: msgAuth,
+        });
+        await renderOutcome(outcomeEl, maOutcome);
       }
 
       const speed = el.querySelector("#cfg-port-speed").value;

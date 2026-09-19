@@ -1118,6 +1118,12 @@ type PortVLAN struct {
 	// setting and survives auto-vlan being turned off. It shares this
 	// leaf's prefix, so the two must be told apart by exact match.
 	AutoVLAN bool `json:"auto_vlan"`
+
+	// AutoVLANMsgAuth is the "auto-vlan-msg-auth" leaf. CONFIRMED live to
+	// be fully independent of AutoVLAN in both directions: it survives
+	// auto-VLAN being switched off, and the device accepts it on a port
+	// where auto-VLAN is off, printing it alone.
+	AutoVLANMsgAuth bool `json:"auto_vlan_msg_auth"`
 }
 
 // MACBinding is one DHCP reservation ("bind <MAC> <IP>") inside an
@@ -1340,6 +1346,9 @@ func ParseLANConfig(raw string) LANConfig {
 			// different setting that would otherwise read as this one.
 			if stripped == "auto-vlan" {
 				port.AutoVLAN = true
+			}
+			if stripped == "auto-vlan-msg-auth" {
+				port.AutoVLANMsgAuth = true
 			}
 			if strings.HasPrefix(stripped, "speed ") {
 				port.Speed = strings.TrimPrefix(stripped, "speed ")

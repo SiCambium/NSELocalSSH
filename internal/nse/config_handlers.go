@@ -293,7 +293,7 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 		writeSettingsError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	isPortAction := req.Action == "port_switchport" || req.Action == "port_shutdown" || req.Action == "port_speed" || req.Action == "port_auto_vlan"
+	isPortAction := req.Action == "port_switchport" || req.Action == "port_shutdown" || req.Action == "port_speed" || req.Action == "port_auto_vlan" || req.Action == "port_auto_vlan_msg_auth"
 	if !isPortAction && req.VLANID < 1 {
 		writeSettingsError(w, http.StatusBadRequest, "vlan_id is required")
 		return
@@ -364,6 +364,18 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 			Risk:  ClassifyRisk("lan-port"),
 			Keys:  []string{fmt.Sprintf("interface eth %d", req.Port)},
 			Undo:  BuildInterfaceEthLines(req.Port, []string{LANPortAutoVLANLine(!*req.Enabled)}),
+		}
+	case "port_auto_vlan_msg_auth":
+		if req.Enabled == nil {
+			writeSettingsError(w, http.StatusBadRequest, "enabled is required")
+			return
+		}
+		block = ConfigBlock{
+			Name:  "lan-port-auto-vlan-msg-auth",
+			Lines: BuildInterfaceEthLines(req.Port, []string{LANPortAutoVLANMsgAuthLine(*req.Enabled)}),
+			Risk:  ClassifyRisk("lan-port"),
+			Keys:  []string{fmt.Sprintf("interface eth %d", req.Port)},
+			Undo:  BuildInterfaceEthLines(req.Port, []string{LANPortAutoVLANMsgAuthLine(!*req.Enabled)}),
 		}
 	case "port_speed":
 		if req.Speed == "" && req.Duplex == "" && req.Advertise == "" {
