@@ -779,6 +779,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/config/firewall", s.handleConfigFirewall)
 	mux.HandleFunc("/api/config/groups", s.handleConfigGroups)
 	mux.HandleFunc("/api/profile/export", s.handleProfileExport)
+	mux.HandleFunc("/api/backup", s.handleBackup)
+	mux.HandleFunc("/api/restore", s.handleRestore)
+	mux.HandleFunc("/api/provisioning", s.handleProvisioning)
 	static, err := fs.Sub(s.Static, "static")
 	if err != nil {
 		static = s.Static
