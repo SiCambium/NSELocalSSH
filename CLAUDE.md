@@ -68,7 +68,91 @@ Every write follows the same shape:
 
 `Keys` are the top-level config keys `ExtractStanza` (in `blocktree.go`) uses to cut the rollback pre-image out of the snapshot. `blocktree.go` parses `show config` into nested context blocks using the `blockOpeners` regex list — **add a regex there when a new CLI sub-context is supported**, or its stanza will be flattened into leaves and rollback for that section will be wrong. `blocktree_test.go` round-trip tests against `testdata/show_config_*.txt` guard this.
 
-`ClassifyRisk` is the lockout list: `wan`, `lan-port`, `vlan-management-access`, `management-service`, `high-availability`, `admin-password`, `outbound-filter`, `geo-ip`, `overrides`. Anything that could plausibly cut the session doing the editing belongs here; free-text CLI overrides are always risky because they can't be judged by inspection.
+`ClassifyRisk` is the lockout list: `wan`, `lan-port`, `vlan-management-access`, `management-service`, `high-availability`, `admin-password`, `outbound-filter`, `geo-ip`, `overrides`. Three of those became real handlers rather than reserved names: `admin-password` (`config_handlers_password.go`), `management-service` (`config_handlers_services.go`) and the WAN-scoped NAT writes (`config_handlers_nat.go`, whose rollback key is the whole `interface eth N` stanza). Gateway source precedence (`config_handlers_gateway.go`) rides the `wan` class. Anything that could plausibly cut the session doing the editing belongs here; free-text CLI overrides are always risky because they can't be judged by inspection.
+
+### Local stores (history, journal)
+
+Two things the device does not keep are kept next to the writable `.env`,
+beside `profiles.json`:
+
+- `history.json` (`history.go`) — throughput and latency time series, two
+  resolutions (1-minute buckets over 24h, 15-minute buckets over 30 days),
+  keyed by device host then by series name. A bucket holds the **mean**
+  over its window, not the last sample: for a rate, the last sample of a
+  minute is one instant, and showing it as the minute makes a chart that
+  disagrees with itself whenever the poll interval changes. `fold()` drops
+  what has aged out on every write, so the file self-trims. Written
+  through a temp file and a rename. Latency series are keyed by **WAN
+  name**, not interface, so the device's own log samples
+  (`wanlb.go`) and this app's own pings land on one series.
+- `journal.json` (`journal.go`) — the configuration change log. Every
+  `show config` the app reads passes through `Server.cli`, which hashes it
+  and files the text when the hash moves. Entries are **redacted**: a
+  journal is browsed far more often than a backup, so it is a change log,
+  not a restore artifact.
+
+Both are nil-safe throughout: a `Server` built without them simply has no
+history rather than crashing on the first poll.
+
+### Reading what `show config` will not print
+
+`service show config` is the device's own configuration store (721 keys on
+a 2.3-r6 NSE3000) and carries the fields `show config` declines to print
+as CLI lines — `periodic_speedtest`, `dyndns_mode`, a WAN's `vlan`. These
+were never cloud-only; cnMaestro reads the same store.
+
+`serviceconfig.go` reads it, and the rule from `enrichFromCloudJSON`
+applies unchanged: **only fields the CLI cannot write**. A field this app
+can edit is read from `show config`, which is the running configuration.
+`TestEnrichFromServiceConfigNeverOverwritesLiveConfig` pins it.
+
+That command dumps every secret in cleartext, so the protection is by
+construction rather than by discipline: the file declares the handful of
+display-safe fields it wants and unmarshals nothing else.
+
+### Offline development
+
+`-demo <dir>` (`demo.go`) replays the captures in `internal/nse/testdata/`
+instead of dialling. The index builds itself from the files: every capture
+begins with the command that produced it, because that is how the device
+echoes input, so there is no mapping table to drift. Read-only by
+construction — an unrecorded command fails like an unknown one, so every
+write fails too.
+
+`NSE_DEV_STATIC=<web/static>` serves the UI from disk with live reload, so
+a CSS or JS edit needs no rebuild.
+
+### Backup, restore, provisioning
+
+- `backup.go` — streams `show config` + `service show config` as one
+  download. **Cleartext secrets, deliberately**, because a redacted backup
+  cannot rebuild a site; the file's first line says so. It is a GET but
+  carries the same `isSameOrigin` check as the writes, because it hands
+  out every credential on the device.
+- `restore.go` — replays one saved section through `SafeApplier`, reusing
+  `ExtractStanza` (the same function that builds rollback pre-images).
+  Preview is the default; `apply: true` is explicit. Keys come from the
+  supplied capture, never a fixed list. **Replay cannot restore a setting
+  whose enabled state is the absence of a leaf** (inter-VLAN routing, port
+  scan) — the same limitation `ConfigBlock.Undo` documents for rollback,
+  surfaced to the operator as a caveat rather than silently mis-restored.
+- `provisioning.go` — what a new unit still needs. The admin password is
+  always reported outstanding: the device stores it obfuscated, so no
+  check can distinguish a factory password from a chosen one.
+
+### The admin password is not an ordinary write
+
+`SafeApplier` proves a risky change did not cut access by opening a
+**new** SSH login, which reads the client's credential at dial time.
+Change the password and leave the stored credential alone and the probe
+authenticates with the password the change just invalidated: it fails, the
+change is reported unreachable, and a change that worked is rolled back.
+
+So `config_handlers_password.go` moves the credential *before* the apply
+(`Client.SetPasswordInPlace`, which does not disturb the open session) and
+moves it back if the apply does not stand, then writes it to
+`profiles.json`. Anything else that changes an authenticating credential
+has to do the same.
 
 ### Connections (multi-site)
 

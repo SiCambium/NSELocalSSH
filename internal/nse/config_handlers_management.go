@@ -8,10 +8,14 @@ import (
 )
 
 // handleConfigManagement serves and edits the safe subset of Management:
-// hostname, timezone, NTP, and remote syslog. Deliberately excluded (per
-// plan): admin password and the management ssh/https/http toggles — those
-// gate the very access this app depends on and get no UI here at all, not
-// even behind a warning banner.
+// hostname, timezone, NTP, and remote syslog.
+//
+// The admin password and the ssh/https/http toggles used to be excluded
+// here, on the reasoning that they gate the very access this app depends
+// on. That held while cnMaestro could turn them back on; it does not for
+// a unit commissioned without a cloud. They now live in their own
+// handlers, both behind safe-apply: config_handlers_password.go and
+// config_handlers_services.go.
 func (s *Server) handleConfigManagement(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:

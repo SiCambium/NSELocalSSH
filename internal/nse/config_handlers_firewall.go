@@ -14,11 +14,13 @@ import (
 // handleConfigFirewall serves and edits the confirmed-syntax subset of
 // Firewall: the four DoS-protection toggles, outbound filter rules
 // (add/delete/reorder, with IP, Group, or "All" source/destination), and
-// GEO IP filtering (both directions). Port-forward and NAT 1:1/1:many
-// remain read-only — their CLI syntax beyond the confirmed pieces in
-// NSE3000-CLI-REFERENCE.md is unconfirmed, and a wrong guess there risks
-// exposing an internal host rather than just a rejected command. They
-// ship as export-only until verified on a lab unit.
+// GEO IP filtering (both directions). Port-forward and source NAT now
+// have their own handler (config_handlers_nat.go): the capture in
+// testdata/show_config_subblocks.txt settled their syntax leaf by leaf,
+// so they are no longer export-only. The concern that kept them read-only
+// — that a wrong rule exposes an internal host rather than merely being
+// rejected — is answered there by validating every rule before the device
+// sees it, not by declining to write them.
 func (s *Server) handleConfigFirewall(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
