@@ -266,3 +266,37 @@ func TestConfigFirewallFilterMoveRequiresValidDirection(t *testing.T) {
 		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
 	}
 }
+
+// The source restriction scopes every allowed-service, so reading it
+// wrong understates how locked down a device is.
+func TestParseDeviceAccessSources(t *testing.T) {
+	raw := "show config\n" +
+		"device-access allowed-service https\n" +
+		"device-access allowed-service ssh\n" +
+		"device-access ip-address 192.168.20.2-192.168.20.14\n" +
+		"device-access ip-address 10.0.0.0/8\n" +
+		"device-access ip-group Trusted_Users\n"
+	got := parseDeviceAccessSources(raw)
+	if len(got.IPAddresses) != 2 || got.IPAddresses[0] != "192.168.20.2-192.168.20.14" || got.IPAddresses[1] != "10.0.0.0/8" {
+		t.Fatalf("addresses = %v", got.IPAddresses)
+	}
+	if len(got.IPGroups) != 1 || got.IPGroups[0] != "Trusted_Users" {
+		t.Fatalf("groups = %v", got.IPGroups)
+	}
+	if !got.Restricted() {
+		t.Fatal("expected restricted")
+	}
+}
+
+// An allowed-service line is not a source line: mistaking one for the
+// other would report an unrestricted device as restricted.
+func TestParseDeviceAccessSourcesUnrestricted(t *testing.T) {
+	got := parseDeviceAccessSources("show config\ndevice-access allowed-service ssh\ndevice-access allowed-service ping\n")
+	if got.Restricted() {
+		t.Fatalf("expected no restriction, got %+v", got)
+	}
+	// Empty slices, not nil, so the frontend always sees a list.
+	if got.IPAddresses == nil || got.IPGroups == nil {
+		t.Fatalf("expected empty slices, got %+v", got)
+	}
+}

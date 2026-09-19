@@ -126,6 +126,30 @@
     return null;
   }
 
+  // The source restriction is not per-service: it scopes every
+  // allowed-service on the device, so the same lines that scope a ping
+  // also scope SSH and HTTPS. A box answering only a narrow range looks
+  // identical to an unrestricted one everywhere else in this UI, which is
+  // why it is worth stating plainly.
+  function deviceAccessSources() {
+    const d = cache.device_access_sources || {};
+    return { ips: d.ip_addresses || [], groups: d.ip_groups || [] };
+  }
+
+  function deviceAccessSourcesLabel() {
+    const { ips, groups } = deviceAccessSources();
+    const parts = [...groups.map((g) => `group ${g}`), ...ips];
+    return parts.length ? esc(parts.join(", ")) : "Any";
+  }
+
+  function deviceAccessSourcesNote() {
+    const { ips, groups } = deviceAccessSources();
+    if (!ips.length && !groups.length) {
+      return `<p class="muted">No source restriction: every allowed service answers from anywhere it is reachable.</p>`;
+    }
+    return `<p class="warn">Management access — SSH and HTTPS included, not just ping — is restricted to these sources. Changing them is the one edit whose undo would travel over the connection it can sever, so this is shown read-only here; change it from cnMaestro, or from a console session you cannot lose.</p>`;
+  }
+
   function render() {
     const panel = document.getElementById("config-firewall-panel");
     const rules = cache.outbound_filter_rules || [];
@@ -162,7 +186,9 @@
       <h2>Device Access</h2>
       <div class="grid">
         ${stat("Respond to ICMP pings from WAN", cache.respond_to_icmp_from_wan ? "Enabled" : "Disabled")}
+        ${stat("Allowed sources", deviceAccessSourcesLabel())}
       </div>
+      ${deviceAccessSourcesNote()}
       <h2>DoS Protection</h2>
       <div class="grid">
         ${stat("Anti IP-spoofing", cache.dos_protection_ip_spoof ? "Enabled" : "Disabled")}

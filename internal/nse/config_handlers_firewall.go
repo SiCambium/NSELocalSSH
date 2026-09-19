@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -47,6 +48,7 @@ func (s *Server) handleGetConfigFirewall(w http.ResponseWriter, _ *http.Request)
 		"filter_config":               cloud.FilterConfig,
 		"outbound_filter_rules":       sortedFilterRules(cfgRaw),
 		"respond_to_icmp_from_wan":    deviceAccessPingEnabled(cfgRaw),
+		"device_access_sources":       parseDeviceAccessSources(cfgRaw),
 		"geo_ip_inbound":              geoInbound,
 		"geo_ip_outbound":             geoOutbound,
 	})
@@ -73,6 +75,47 @@ func deviceAccessPingEnabled(cfgRaw string) bool {
 	tree := ParseBlockTree(cfgRaw)
 	_, ok := tree.Leaf("device-access allowed-service ping")
 	return ok
+}
+
+// DeviceAccessSources is the source restriction on management access.
+//
+// cnMaestro presents this under Device Access as "IP Group" and "IP
+// Address / Source Subnet", with the note that a service is reachable
+// from everywhere unless one of these is set. It is not per-service: the
+// restriction applies to every allowed-service on the box, so the same
+// lines that scope a ping also scope SSH and HTTPS.
+//
+// That makes it the most dangerous setting this app can read, which is
+// why it is worth showing: a device answering only a narrow source range
+// looks identical to an unrestricted one in every other view.
+type DeviceAccessSources struct {
+	IPAddresses []string `json:"ip_addresses"`
+	IPGroups    []string `json:"ip_groups"`
+}
+
+// Restricted reports whether management access is scoped at all.
+func (d DeviceAccessSources) Restricted() bool {
+	return len(d.IPAddresses) > 0 || len(d.IPGroups) > 0
+}
+
+// parseDeviceAccessSources reads the source restriction from `show
+// config`. "device-access ip-address <spec>" is CONFIRMED live — one is
+// configured on the reference device as a hyphenated range. The
+// "ip-group" spelling mirrors how cnMaestro labels the neighbouring field
+// and how groups are named elsewhere in this config; it has NOT been seen
+// on a device, so it is read defensively and never written.
+func parseDeviceAccessSources(cfgRaw string) DeviceAccessSources {
+	out := DeviceAccessSources{IPAddresses: []string{}, IPGroups: []string{}}
+	for _, line := range strings.Split(cfgRaw, "\n") {
+		t := strings.TrimSpace(strings.ReplaceAll(line, "\r", ""))
+		if v := strings.TrimPrefix(t, "device-access ip-address "); v != t && v != "" {
+			out.IPAddresses = append(out.IPAddresses, v)
+		}
+		if v := strings.TrimPrefix(t, "device-access ip-group "); v != t && v != "" {
+			out.IPGroups = append(out.IPGroups, v)
+		}
+	}
+	return out
 }
 
 type firewallRequest struct {
