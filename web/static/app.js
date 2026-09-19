@@ -724,16 +724,20 @@ function renderVlans(d) {
 
 function renderDhcp(d) {
   return `
+    ${renderDhcpUsage(d)}
     <nav class="subtabs" id="dhcp-subtabs">
       <button type="button" data-sub="pools" class="${dhcpSub === "pools" ? "active" : ""}">Pools</button>
       <button type="button" data-sub="macs" class="${dhcpSub === "macs" ? "active" : ""}">MAC bound</button>
     </nav>
-    ${dhcpSub === "macs" ? renderMacBound(d) : renderDhcpUsage(d) + renderDhcpPools(d)}
+    ${dhcpSub === "macs" ? renderMacBound(d) : renderDhcpPools(d)}
   `;
 }
 
 // cnMaestro's subnet table carries a "Leases Used" bar per VLAN, which is
-// the quickest way to see which pool is filling up. Here the same numbers
+// the quickest way to see which pool is filling up. It sits above the
+// subtabs, not inside one: it summarises the whole page, and putting it
+// under Pools meant it vanished on the MAC bound tab, which is where
+// someone hunting for a device is most likely to be standing. Here the same numbers
 // were only visible by scrolling into each pool's own block and reading
 // two separate stats, so a pool near exhaustion looked like any other.
 //
