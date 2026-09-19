@@ -34,7 +34,18 @@ func main() {
 		log.Printf("NSE_PASSWORD is not set yet; open Settings to add it")
 	}
 
-	srv := &nse.Server{Client: client, Static: web.Static, SettingsPath: nse.WritableSettingsPath()}
+	settingsPath := nse.WritableSettingsPath()
+	history := nse.NewHistoryStore(nse.HistoryPath(settingsPath))
+	defer history.Flush()
+	journal := nse.NewConfigJournal(nse.JournalPath(settingsPath))
+
+	srv := &nse.Server{
+		Client:       client,
+		Static:       web.Static,
+		SettingsPath: settingsPath,
+		History:      history,
+		Journal:      journal,
+	}
 	log.Printf("NSE status %s on http://%s (device %s)", nse.BuildVersion, cfg.Listen, cfg.Addr())
 	if err := http.ListenAndServe(cfg.Listen, srv.Handler()); err != nil {
 		log.Fatal(err)
