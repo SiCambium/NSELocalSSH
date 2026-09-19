@@ -33,6 +33,10 @@ type Server struct {
 	threatCache ThreatSummary
 	threatAt    time.Time
 
+	identityMu    sync.Mutex
+	identityCache Version
+	identityAt    time.Time
+
 	applierOnce sync.Once
 	applier     *SafeApplier
 
@@ -207,6 +211,45 @@ func writeCrossOriginBlocked(w http.ResponseWriter) {
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, map[string]string{"host": s.Client.Cfg.Host, "user": s.Client.Cfg.User})
+}
+
+// handleIdentity answers "which device is this, and is it answering?" in
+// one cheap round trip.
+//
+// Both facts were previously only learnable from the Status page — the
+// header's model name came from the overview/details payloads and its
+// connection dot from their polling — so opening or reloading straight
+// into Configuration left the header showing a generic name and an
+// uncontacted-grey dot until the user happened to visit Status. /api/health
+// cannot fill the gap: it echoes the configured host without touching the
+// device, so it proves nothing about reachability.
+//
+// This is one `show version`, unlike the overview payload's several
+// commands, and the answer is cached because a model and serial do not
+// change. The cache is deliberately short so the endpoint keeps working as
+// a liveness check rather than answering from memory long after the device
+// has gone away.
+func (s *Server) handleIdentity(w http.ResponseWriter, _ *http.Request) {
+	s.identityMu.Lock()
+	if !s.identityAt.IsZero() && time.Since(s.identityAt) < 15*time.Second {
+		cached := s.identityCache
+		s.identityMu.Unlock()
+		writeJSON(w, map[string]any{"version": cached})
+		return
+	}
+	s.identityMu.Unlock()
+
+	raw, ok := s.cli(w, "show version", 20*time.Second)
+	if !ok {
+		return
+	}
+	version := ParseVersion(raw)
+
+	s.identityMu.Lock()
+	s.identityCache, s.identityAt = version, time.Now()
+	s.identityMu.Unlock()
+
+	writeJSON(w, map[string]any{"version": version})
 }
 
 func (s *Server) withRates(ifaces []IfconfigIface) (rates []Throughput, sampled bool, intervalMs int64) {
@@ -624,6 +667,7 @@ func itoa(i int) string {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", s.handleHealth)
+	mux.HandleFunc("/api/identity", s.handleIdentity)
 	mux.HandleFunc("/api/settings", s.handleSettings)
 	mux.HandleFunc("/api/iplookup", s.handleIPLookup)
 	mux.HandleFunc("/api/overview", s.handleOverview)
