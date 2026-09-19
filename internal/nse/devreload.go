@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"time"
 )
@@ -94,4 +95,38 @@ func (s *Server) registerDevReload(mux *http.ServeMux, dir string) {
 			}
 		}
 	})
+}
+
+// devAssetRefRE matches the href/src of a local asset in index.html.
+var devAssetRefRE = regexp.MustCompile(`((?:src|href)=")(/static/[^"?]+)(")`)
+
+// devVersionedIndex stamps a version query onto every /static/ reference
+// in index.html.
+//
+// "Cache-Control: no-store" fixes the next fetch, but it cannot evict what
+// a browser cached earlier: a tab loaded before dev mode existed keeps
+// using its stored app.js, showing some merges and not others, and looking
+// exactly like a bug in the code. Changing the URL sidesteps the cache
+// entirely, because a versioned URL was never stored under that key.
+//
+// The version is the same fingerprint the reload watcher uses, so it moves
+// whenever any file under the served directory does.
+func devVersionedIndex(dir string, raw []byte) []byte {
+	version := devFingerprint(dir)
+	if len(version) > 12 {
+		version = version[:12]
+	}
+	return devAssetRefRE.ReplaceAll(raw, []byte("${1}${2}?v="+version+"${3}"))
+}
+
+// serveDevIndex serves index.html from disk with versioned asset URLs.
+func serveDevIndex(w http.ResponseWriter, dir string) bool {
+	raw, err := os.ReadFile(filepath.Join(dir, "index.html"))
+	if err != nil {
+		return false
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, must-revalidate")
+	_, _ = w.Write(devVersionedIndex(dir, raw))
+	return true
 }
