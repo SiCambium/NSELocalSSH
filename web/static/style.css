@@ -569,3 +569,12 @@ tr[hidden] { display: none; }
 }
 .link-cell:hover { text-decoration: underline; }
 .rule-detail { background: var(--bg-2); }
+
+/* A connection that is not the active one has no known state — the dot is
+   hollow rather than coloured, so being selected never reads as healthy. */
+.conn-dot.unknown {
+  background: transparent;
+  border: 1px solid var(--line);
+  box-sizing: border-box;
+}
+.conn-row-tag.is-down { color: var(--down); }
