@@ -491,3 +491,22 @@ func (c *Client) closeLocked() {
 	c.incoming = nil
 }
 
+// SetPasswordInPlace changes the credential this client will authenticate
+// with on its *next* connection, without disturbing the session it
+// already holds.
+//
+// This exists for one caller: changing the device's admin password.
+// ApplyConfig would reconnect, which is exactly wrong there — the open
+// session is the one sending the change, and it stays authenticated
+// because SSH authenticates at connect time. What must move to the new
+// credential is the fresh login SafeApplier makes to prove the device is
+// still reachable, and that reads Cfg at dial time.
+//
+// Without this, a successful password change looks like a lockout: the
+// probe dials with the credential the change just invalidated, fails, and
+// the change is undone.
+func (c *Client) SetPasswordInPlace(password string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Cfg.Password = password
+}
