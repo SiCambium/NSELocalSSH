@@ -199,6 +199,11 @@ function setConnDot(state) {
       : "Not contacted yet";
 }
 
+// The Configuration pages talk to the device too, and while they are open
+// nothing else is polling — so their traffic is the only liveness signal
+// there is. config-common.js reports through this.
+window.NSEHeader = { setConnDot };
+
 async function load(tab, force = false, quiet = false) {
   const state = document.getElementById("poll-state");
   const err = document.getElementById("error");
@@ -301,6 +306,23 @@ function throughputTable(rows, empty) {
 // last value — the Configuration and Settings pages must keep the same brand
 // line even though their payloads have no version block.
 let deviceModel = "";
+
+// Establishes the header before anything else runs, so the model name and
+// the connection dot are right on whichever page the app opens on.
+// Previously both were side effects of the Status page rendering, which
+// meant a reload on Configuration sat on a generic name and a grey dot
+// until the user visited Status and came back.
+async function initHeader() {
+  try {
+    const res = await fetch("/api/identity");
+    if (!res.ok) throw new Error("identity unavailable");
+    const data = await res.json();
+    setBrand(data.version || {});
+    setConnDot("on");
+  } catch (e) {
+    setConnDot("down");
+  }
+}
 
 function setBrand(v) {
   if (v && v.model) deviceModel = v.model;
@@ -1460,3 +1482,4 @@ fetch("/api/settings")
   .catch(() => {});
 
 startAutoRefresh();
+initHeader();

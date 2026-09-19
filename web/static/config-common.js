@@ -23,6 +23,13 @@
       .replaceAll(">", "&gt;");
   }
 
+  // Every call here is a round trip to the device, so success and failure
+  // are exactly the liveness signal the header's dot needs while a
+  // Configuration page is open and the Status poll is not running.
+  function reportLiveness(ok) {
+    if (window.NSEHeader) window.NSEHeader.setConnDot(ok ? "on" : "down");
+  }
+
   async function postJSON(url, body) {
     const res = await fetch(url, {
       method: "POST",
@@ -30,14 +37,22 @@
       body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || res.statusText);
+    if (!res.ok) {
+      reportLiveness(false);
+      throw new Error(data.detail || res.statusText);
+    }
+    reportLiveness(true);
     return data;
   }
 
   async function getJSON(url) {
     const res = await fetch(url);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.detail || res.statusText);
+    if (!res.ok) {
+      reportLiveness(false);
+      throw new Error(data.detail || res.statusText);
+    }
+    reportLiveness(true);
     return data;
   }
 
