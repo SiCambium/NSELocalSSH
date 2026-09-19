@@ -773,3 +773,77 @@ func TestReplaceFilterRulesLinesPreservesUnmarkedRateLimitRule(t *testing.T) {
 		t.Fatalf("rate limit no longer identifiable after a reorder:\n%s", joined)
 	}
 }
+
+// The device adds rather than replaces and holds at most two servers, so
+// setting them is a diff — and every removal must precede every addition,
+// or swapping both would transiently need a third slot and be refused with
+// "Maximum number of entries[2] already configured".
+func TestNTPServerSetLines(t *testing.T) {
+	cases := []struct {
+		name             string
+		current, desired []string
+		want             []string
+	}{
+		{
+			name:    "replace one of two",
+			current: []string{"time.google.com", "time.cloudflare.com"},
+			desired: []string{"time.google.com", "time.apple.com"},
+			want:    []string{"no ntp server time.cloudflare.com", "ntp server time.apple.com"},
+		},
+		{
+			name:    "swap both, removals first",
+			current: []string{"a.example", "b.example"},
+			desired: []string{"c.example", "d.example"},
+			want: []string{
+				"no ntp server a.example", "no ntp server b.example",
+				"ntp server c.example", "ntp server d.example",
+			},
+		},
+		{
+			name:    "drop the second",
+			current: []string{"time.google.com", "time.cloudflare.com"},
+			desired: []string{"time.google.com"},
+			want:    []string{"no ntp server time.cloudflare.com"},
+		},
+		{
+			name:    "add a second to a single",
+			current: []string{"time.google.com"},
+			desired: []string{"time.google.com", "time.cloudflare.com"},
+			want:    []string{"ntp server time.cloudflare.com"},
+		},
+		{
+			name:    "no change sends nothing",
+			current: []string{"time.google.com", "time.cloudflare.com"},
+			desired: []string{"time.google.com", "time.cloudflare.com"},
+			want:    nil,
+		},
+		{
+			name:    "from empty",
+			current: nil,
+			desired: []string{"a.example", "b.example"},
+			want:    []string{"ntp server a.example", "ntp server b.example"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := NTPServerSetLines(c.current, c.desired)
+			if len(got) != len(c.want) {
+				t.Fatalf("got %v, want %v", got, c.want)
+			}
+			for i := range c.want {
+				if got[i] != c.want[i] {
+					t.Fatalf("line %d = %q, want %q (full: %v)", i, got[i], c.want[i], got)
+				}
+			}
+			// Whatever the case, no addition may precede a removal.
+			seenAdd := false
+			for _, l := range got {
+				if strings.HasPrefix(l, "ntp server ") {
+					seenAdd = true
+				} else if seenAdd && strings.HasPrefix(l, "no ntp server ") {
+					t.Fatalf("a removal follows an addition: %v", got)
+				}
+			}
+		})
+	}
+}

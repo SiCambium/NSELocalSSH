@@ -2,6 +2,7 @@ package nse
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 )
@@ -44,6 +45,7 @@ type managementRequest struct {
 	Hostname string `json:"hostname"`
 	TZName   string `json:"tz_name"`
 	NTP      string `json:"ntp_server"`
+	NTP2     string `json:"ntp_server_2"`
 	SyslogIP string `json:"syslog_ip"`
 	SyslogPt string `json:"syslog_port"`
 	Severity *int   `json:"severity"`
@@ -79,7 +81,38 @@ func (s *Server) handlePostConfigManagement(w http.ResponseWriter, r *http.Reque
 			writeSettingsError(w, http.StatusBadRequest, "ntp_server is required")
 			return
 		}
-		lines = []string{NTPServerLine(req.NTP)}
+		desired := []string{req.NTP}
+		if req.NTP2 != "" {
+			if req.NTP2 == req.NTP {
+				writeSettingsError(w, http.StatusBadRequest, "the two NTP servers must be different")
+				return
+			}
+			desired = append(desired, req.NTP2)
+		}
+		if len(desired) > MaxNTPServers {
+			writeSettingsError(w, http.StatusBadRequest, fmt.Sprintf("this device holds at most %d NTP servers", MaxNTPServers))
+			return
+		}
+		// The device adds rather than replaces and caps the list at two, so
+		// the current servers have to be known before anything is sent —
+		// otherwise setting a server on a device with both slots filled
+		// just fails as an attempted third.
+		cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
+		if err != nil {
+			writeSettingsError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		var current []string
+		for _, n := range cloud.NTPServer {
+			if n.Address != "" {
+				current = append(current, n.Address)
+			}
+		}
+		lines = NTPServerSetLines(current, desired)
+		if len(lines) == 0 {
+			writeJSON(w, ApplyOutcome{Status: "applied", Reason: "NTP servers already set to those values"})
+			return
+		}
 	case "cambium_remote":
 		if req.Enable == nil {
 			writeSettingsError(w, http.StatusBadRequest, "enable is required")
