@@ -915,8 +915,8 @@ function renderOverview(d) {
       <section class="box hero">
         <h2>${icon("link")}Total WAN throughput</h2>
         <div class="hero-pair">
-          <div><p class="hero-figure">${esc(bps(totalRx))}</p><p class="legend">Total downlink</p></div>
-          <div><p class="hero-figure">${esc(bps(totalTx))}</p><p class="legend">Total uplink</p></div>
+          <div><p class="hero-figure">${esc(bps(totalRx))}</p><p class="legend">Downlink</p></div>
+          <div><p class="hero-figure">${esc(bps(totalTx))}</p><p class="legend">Uplink</p></div>
         </div>
         ${boxLink("throughput", "Throughput detail")}
       </section>

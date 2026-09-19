@@ -453,7 +453,13 @@ h2 .icon { color: var(--ink-2); }
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
-.hero-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.hero-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+/* A paired figure has half the width of a lone one, which was enough for
+   "491.1 kbps" to break between the number and its unit and leave the two
+   columns' labels on different lines. A reading and its unit are one
+   value, so they do not come apart; the smaller size is what buys the
+   room to keep them together. */
+.hero-pair .hero-figure { font-size: 20px; white-space: nowrap; }
 .hero-pair p { margin: 0; }
 .hero-badge {
   display: inline-flex;
