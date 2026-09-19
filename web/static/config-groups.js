@@ -64,7 +64,7 @@
 
     panel.innerHTML = `
       <h2>User Groups</h2>
-      <p class="muted">IDs 1-64 only — index 65 crashes the device's CLI parser instead of rejecting cleanly (confirmed live).</p>
+      <p class="muted">Group IDs run from 1 to 64.</p>
       <p><button type="button" class="row-edit" id="add-user-group-btn">Add User Group</button></p>
       <div class="table-wrap"><table>
         <thead><tr><th>ID</th><th>Name</th><th>Source Subnet</th><th></th></tr></thead>

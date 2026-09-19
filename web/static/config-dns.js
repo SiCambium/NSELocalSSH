@@ -56,7 +56,7 @@
       .map(
         (name) => `<tr>
           <td>${esc(name)}</td>
-          <td><button type="button" class="row-edit" data-delete-bypass="${esc(name)}">Delete</button></td>
+          <td><button type="button" class="row-edit danger" data-delete-bypass="${esc(name)}">Delete</button></td>
         </tr>`
       )
       .join("");
@@ -66,7 +66,7 @@
         (h) => `<tr>
           <td>${esc(h.domain)}</td>
           <td class="mono">${esc(h.ip)}</td>
-          <td><button type="button" class="row-edit" data-delete-local-host="${esc(h.domain)}|${esc(h.ip)}">Delete</button></td>
+          <td><button type="button" class="row-edit danger" data-delete-local-host="${esc(h.domain)}|${esc(h.ip)}">Delete</button></td>
         </tr>`
       )
       .join("");
@@ -76,7 +76,7 @@
         (z) => `<tr>
           <td>${esc(z.domain)}</td>
           <td class="mono">${esc(z.server)}</td>
-          <td><button type="button" class="row-edit" data-delete-forward-zone="${esc(z.domain)}|${esc(z.server)}">Delete</button></td>
+          <td><button type="button" class="row-edit danger" data-delete-forward-zone="${esc(z.domain)}|${esc(z.server)}">Delete</button></td>
         </tr>`
       )
       .join("");
@@ -91,7 +91,7 @@
           <td>${esc((p.deny_categories || []).join(", ") || "-")}</td>
           <td>
             <button type="button" class="row-edit" data-edit-policy="${esc(p.id)}">Edit</button>
-            <button type="button" class="row-edit" data-delete-policy="${esc(p.id)}">Delete</button>
+            <button type="button" class="row-edit danger" data-delete-policy="${esc(p.id)}">Delete</button>
           </td>
         </tr>`
       )
@@ -354,7 +354,7 @@
       <label>Other categories (comma separated)
         <input id="cfg-policy-other-cats" type="text" value="${esc(otherCats.join(","))}">
       </label>
-      <p class="warn">Applied through the safe-apply path, same as filter rules.</p>
+      <p class="muted">Applied through the safe-apply path, same as filter rules.</p>
       <div id="cfg-policy-outcome"></div>
     `;
     const modalEl = openModal(existing ? `Edit DNS Filter Policy ${policyID}` : "Add DNS Filter Policy", body, async (el) => {

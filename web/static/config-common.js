@@ -86,8 +86,57 @@
     return modalRoot;
   }
 
-  function closeModal() {
-    if (modalRoot) modalRoot.innerHTML = "";
+  // The dialog refuses to close while a safe-apply countdown is still
+  // running inside it. That countdown is the product's one real
+  // guarantee, and it was reachable only from this dialog: an overlay
+  // click, an Escape or a stray Cancel took the Confirm button away, the
+  // change expired unconfirmed, and nothing on screen ever said so.
+  function modalIsSettling() {
+    return !!(modalRoot && modalRoot.querySelector("[data-settling]"));
+  }
+
+  let modalReturnFocus = null;
+  function closeModal(force) {
+    if (!modalRoot) return false;
+    if (!force && modalIsSettling()) {
+      const err = modalRoot.querySelector(".modal-error");
+      if (err) {
+        err.hidden = false;
+        err.textContent = "Confirm or wait for the countdown first. Closing now would leave the change to be undone.";
+      }
+      return false;
+    }
+    modalRoot.innerHTML = "";
+    if (modalReturnFocus && document.contains(modalReturnFocus)) modalReturnFocus.focus();
+    modalReturnFocus = null;
+    document.removeEventListener("keydown", modalKeydown, true);
+    return true;
+  }
+
+  // Escape closes, and Tab stays inside. A dialog that announces
+  // aria-modal and then leaves focus on the page behind it is lying to
+  // every keyboard and screen-reader user.
+  function modalKeydown(e) {
+    if (!modalRoot || !modalRoot.firstChild) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      closeModal();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const focusables = Array.from(
+      modalRoot.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')
+    ).filter((el) => el.offsetParent !== null);
+    if (!focusables.length) return;
+    const first = focusables[0];
+    const last = focusables[focusables.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
   }
 
   // openModal renders a titled dialog with bodyHTML and a Save/Cancel
@@ -116,6 +165,8 @@
     const errEl = root.querySelector(".modal-error");
     const saveBtn = root.querySelector('[data-role="save"]');
     const close = () => closeModal();
+    modalReturnFocus = document.activeElement;
+    document.addEventListener("keydown", modalKeydown, true);
     overlay.addEventListener("click", (e) => {
       if (e.target === overlay) close();
     });
@@ -141,6 +192,10 @@
         saveBtn.textContent = "Save";
       }
     });
+    const firstField = modalEl.querySelector(
+      'input:not([type="hidden"]):not([disabled]), select:not([disabled]), textarea:not([disabled])'
+    );
+    (firstField || saveBtn).focus();
     return modalEl;
   }
 
@@ -152,6 +207,11 @@
   // changes are shown as errors. Returns a promise that resolves once the
   // outcome is fully settled (confirmed, or auto-rolled-back).
   function renderOutcome(container, outcome) {
+    // The dashboard refreshes silently every few seconds, so an applied
+    // change that is only shown is a change a screen-reader user is never
+    // told about.
+    container.setAttribute("role", "status");
+    container.setAttribute("aria-live", "polite");
     return new Promise((resolve) => {
       if (outcome.status === "applied") {
         // An "applied" outcome can still carry a reason — the change took
@@ -193,7 +253,7 @@
         // expired unconfirmed and a later click reported "no pending
         // change for that token". Only the seconds are updated now; the
         // button and its listener are never replaced.
-        container.innerHTML = `<div class="apply-provisional">
+        container.innerHTML = `<div class="apply-provisional" data-settling>
           <p>Applied — verifying reachability. Confirm within <strong data-role="countdown">${remaining}s</strong> or it will be undone automatically.</p>
           <button type="button" class="modal-save" data-role="confirm-apply">Confirm</button>
         </div>`;
@@ -288,6 +348,7 @@
     renderOutcome,
     registerSection,
     onShow,
+    show: selectSection,
   };
 
   // A plain navigation (not fetch) so the browser's own download handling

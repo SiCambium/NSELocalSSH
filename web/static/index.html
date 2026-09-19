@@ -9,75 +9,74 @@
   <link rel="stylesheet" href="/static/config.css">
 </head>
 <body>
-  <header class="top">
-    <div class="brand">
-      <img class="brand-icon" src="/static/icon.png" alt="NSE firewall">
-      <div>
-        <p class="kicker" id="kicker">Cambium NSE</p>
-        <h1 id="title">Status</h1>
-      </div>
-      <div class="conn-switcher" id="conn-switcher">
-        <button type="button" id="conn-current" aria-haspopup="true" aria-expanded="false" title="Switch to another site">
-          <span class="conn-dot" id="conn-dot"></span>
-          <span class="conn-current-text">
-            <span class="conn-current-kicker">Connected to</span>
-            <span id="conn-current-label">—</span>
-          </span>
-          <span class="conn-caret" aria-hidden="true">▾</span>
+  <div class="app" id="app">
+    <aside class="rail" id="rail">
+      <div class="rail-head">
+        <img class="brand-icon" src="/static/icon.png" alt="">
+        <div class="rail-id">
+          <h1 id="title">Status</h1>
+          <p class="brand-model" id="kicker"></p>
+        </div>
+        <button type="button" id="rail-toggle" class="rail-toggle" aria-expanded="true" aria-controls="rail" title="Collapse menu">
+          <svg class="icon rail-caret" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
         </button>
+      </div>
+
+      <div class="conn-switcher" id="conn-switcher">
+        <div class="conn-row">
+          <button type="button" id="conn-current" aria-haspopup="true" aria-expanded="false" title="Switch to another site">
+            <span class="conn-dot" id="conn-dot"></span>
+            <span class="conn-current-text">
+              <span class="conn-current-kicker">Connected to</span>
+              <span id="conn-current-label">&mdash;</span>
+            </span>
+            <span class="conn-caret" aria-hidden="true">&#9662;</span>
+          </button>
+          <button type="button" id="refresh" title="Read this device again now" aria-label="Read this device again now">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.3 6.3"/><path d="M20 5v6h-6"/></svg>
+          </button>
+        </div>
+        <p id="poll-state">Idle</p>
         <div class="conn-menu" id="conn-menu" hidden></div>
       </div>
-    </div>
-    <nav class="menu" aria-label="Main">
-      <button type="button" data-page="status" class="active">Status</button>
-      <button type="button" data-page="config">Configuration</button>
-      <button type="button" data-page="connections">Connections</button>
-      <button type="button" data-page="settings">Settings</button>
-    </nav>
-    <div class="top-meta">
-      <span id="clock"></span>
-      <span id="poll-state">Idle</span>
-      <div class="auto-refresh" id="auto-refresh-label">
-        <label>
-          <input type="checkbox" id="auto-refresh">
-          Auto-refresh
-        </label>
-        <select id="auto-refresh-interval" aria-label="Auto-refresh interval">
-          <option value="1000">1s</option>
-          <option value="2000">2s</option>
-          <option value="5000">5s</option>
-          <option value="10000">10s</option>
-          <option value="20000">20s</option>
-          <option value="30000">30s</option>
-          <option value="60000">1min</option>
-        </select>
+
+      <nav class="menu" aria-label="Main">
+          <button type="button" data-page="status" class="active"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg><span class="menu-text">Status</span></button>
+          <button type="button" data-page="config"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9v.09a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span class="menu-text">Configuration</span></button>
+          <button type="button" data-page="connections"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="7" rx="2"/><rect x="2" y="14" width="20" height="7" rx="2"/><path d="M6 6.5h.01M6 17.5h.01"/></svg><span class="menu-text">Connections</span></button>
+          <button type="button" data-page="settings"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v2M12 19v2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M3 12h2M19 12h2M5.6 18.4 7 17M17 7l1.4-1.4"/><circle cx="12" cy="12" r="4"/></svg><span class="menu-text">Settings</span></button>
+      </nav>
+
+      <nav class="tabs" id="status-tabs" role="tablist">
+        <button type="button" data-tab="overview" class="active">Overview</button>
+        <button type="button" data-tab="throughput">Throughput</button>
+        <button type="button" data-tab="details">Details</button>
+        <button type="button" data-tab="memory">Memory</button>
+        <button type="button" data-tab="conntrack">Conn tracking</button>
+        <button type="button" data-tab="interfaces">Interfaces</button>
+        <button type="button" data-tab="vlans">VLANs</button>
+        <button type="button" data-tab="routing">Routing</button>
+        <button type="button" data-tab="dhcp">DHCP</button>
+        <button type="button" data-tab="neighbors">Neighbors</button>
+        <button type="button" data-tab="devices">Devices</button>
+        <button type="button" data-tab="tunnels">VPN</button>
+        <button type="button" data-tab="tailscale">Tailscale</button>
+        <button type="button" data-tab="firewallcounters">Firewall Counters</button>
+        <button type="button" data-tab="traffic">Traffic</button>
+        <button type="button" data-tab="events">Events</button>
+        <button type="button" data-tab="config">Config</button>
+        <button type="button" data-tab="debug">Diagnostics</button>
+      </nav>
+      <nav class="config-nav" id="config-nav"></nav>
+
+      <div class="rail-foot">
+        <button type="button" id="export-profile-btn" title="Download this device's configuration as a cnMaestro-compatible profile">Export Profile</button>
+        <button type="button" id="open-in-browser" hidden title="Open this page in your default browser, alongside the app window">Open in Browser</button>
       </div>
-      <button type="button" id="refresh">Refresh</button>
-      <button type="button" id="open-in-browser" hidden title="Open this page in your default browser, alongside the app window">Open in Browser</button>
-    </div>
-  </header>
+    </aside>
 
-  <nav class="tabs" id="status-tabs" role="tablist">
-    <button type="button" data-tab="overview" class="active">Overview</button>
-    <button type="button" data-tab="throughput">Throughput</button>
-    <button type="button" data-tab="details">Details</button>
-    <button type="button" data-tab="memory">Memory</button>
-    <button type="button" data-tab="conntrack">Conn tracking</button>
-    <button type="button" data-tab="interfaces">Interfaces</button>
-    <button type="button" data-tab="vlans">VLANs</button>
-    <button type="button" data-tab="routing">Routing</button>
-    <button type="button" data-tab="dhcp">DHCP</button>
-    <button type="button" data-tab="neighbors">Neighbors</button>
-    <button type="button" data-tab="devices">Devices</button>
-    <button type="button" data-tab="tunnels">VPN</button>
-    <button type="button" data-tab="tailscale">Tailscale</button>
-    <button type="button" data-tab="firewallcounters">Firewall Counters</button>
-    <button type="button" data-tab="traffic">Traffic</button>
-    <button type="button" data-tab="events">Events</button>
-    <button type="button" data-tab="config">Config</button>
-  </nav>
-
-  <main>
+    <div class="workspace">
+      <main>
     <p id="error" hidden></p>
     <div id="page-status">
       <section id="panel-overview" class="panel active"></section>
@@ -97,11 +96,10 @@
       <section id="panel-traffic" class="panel"></section>
       <section id="panel-events" class="panel"></section>
       <section id="panel-config" class="panel"></section>
+      <section id="panel-debug" class="panel"></section>
     </div>
 
     <section id="page-config" hidden>
-      <nav class="config-nav" id="config-nav"></nav>
-      <p class="config-export-row"><button type="button" class="row-edit" id="export-profile-btn">Export Profile</button></p>
       <section class="config-section" data-section="network" id="config-network-panel"></section>
       <section class="config-section" data-section="wan" id="config-wan-panel" hidden></section>
       <section class="config-section" data-section="management" id="config-management-panel" hidden></section>
@@ -153,6 +151,27 @@
     </section>
 
     <section id="page-settings" hidden>
+      <h2>Reading the device</h2>
+      <div id="auto-refresh-label">
+        <label class="check-row">
+          <input type="checkbox" id="auto-refresh">
+          Re-read the device on a timer while the Status page is open
+        </label>
+        <label class="check-row">
+          Read again every
+          <select id="auto-refresh-interval" aria-label="Auto-refresh interval">
+            <option value="1000">1s</option>
+            <option value="2000">2s</option>
+            <option value="5000">5s</option>
+            <option value="10000">10s</option>
+            <option value="20000">20s</option>
+            <option value="30000">30s</option>
+            <option value="60000">1min</option>
+          </select>
+        </label>
+      </div>
+      <p class="muted">Refresh in the menu reads the device once, whichever page is open. The device's own clock is under Status, Details.</p>
+
       <h2>Conn tracking</h2>
       <label class="check-row">
         <input type="checkbox" id="set-live-conntrack">
@@ -160,7 +179,9 @@
       </label>
       <p class="warn">Warning: the live table runs <span class="mono">show conntrack</span>. If there are too many connections this can overload the NSE CPU and make this app slow. Leave it off unless you need the table.</p>
     </section>
-  </main>
+      </main>
+    </div>
+  </div>
 
   <script src="/static/app.js"></script>
   <script src="/static/config-common.js"></script>
@@ -172,6 +193,7 @@
   <script src="/static/config-threat.js"></script>
   <script src="/static/config-firewall.js"></script>
   <script src="/static/config-vpn.js"></script>
+  <script src="/static/diagnostics.js"></script>
   <script src="/static/dev-reload.js"></script>
 </body>
 </html>

@@ -25,13 +25,28 @@
     const panel = document.getElementById("config-wan-panel");
     const wans = cache.wans || [];
     const cards = wans.map(renderCard).join("") || `<p class="muted">No WAN interfaces found.</p>`;
-    const addBtnHTML = `<button type="button" class="row-edit" id="add-wan-btn">Enable a port as WAN</button>`;
+    // Promoting a LAN port to WAN is a different job from tuning the WAN
+    // links that already exist: it changes what a physical port is. It
+    // sits above the links as a page action rather than trailing the last
+    // card, where it read as one more control belonging to that card.
+    const addBtnHTML = `<button type="button" class="row-edit primary" id="add-wan-btn">Turn a LAN port into a WAN</button>`;
     // A base (non-Security-Plus) unit is limited to 2 WAN ports; a 3rd or
     // later requires the overlay-wan license, confirmed by diffing a paid
     // vs. free cnMaestro account against this WAN tab's own "Add Virtual
     // WAN" control.
     const addBtn = wans.length >= 2 ? licenseGate(license, "overlay_wan", addBtnHTML) : addBtnHTML;
-    panel.innerHTML = `<p>${addBtn}</p>${cards}`;
+    // Named and explained rather than left as a lone button: promoting a
+    // port is the one action on this page that changes the hardware's
+    // wiring, and a button on its own at the page edge read as a minor
+    // control rather than the different job it is.
+    const promote = `<section class="plate service-strip">
+      <div>
+        <h2>Port roles</h2>
+        <p class="muted">Every port is a LAN port until it is promoted. Promoting one moves it out of the LAN and gives it its own uplink.</p>
+      </div>
+      ${addBtn}
+    </section>`;
+    panel.innerHTML = `${promote}${loadBalanceSummary(wans)}${cards}`;
     panel.querySelectorAll(".row-edit[data-port]").forEach((btn) => {
       btn.addEventListener("click", () => editWAN(parseInt(btn.dataset.port, 10)));
     });
@@ -40,6 +55,117 @@
     });
     const addWanBtn = document.getElementById("add-wan-btn");
     if (addWanBtn) addWanBtn.addEventListener("click", addWAN);
+  }
+
+  // --- Load balancing ----------------------------------------------------
+  // Load balancing is the reason most people open this page, and it was
+  // the one thing the page did not show: each WAN card carried its own
+  // "lb_mode" and "traffic share %" as two more rows of CLI vocabulary,
+  // and nothing anywhere said which link the traffic actually leaves by,
+  // or what happens when it fails. That is a property of the set of WANs,
+  // not of any one of them, so it is stated once, above the cards, in the
+  // order someone asks it: what carries traffic now, what takes over, and
+  // what is out of the rotation.
+
+  function lbOf(w) {
+    return w.load_balance_config || {};
+  }
+
+  function shareOf(w) {
+    const n = parseInt(lbOf(w)["lb_traffic-share-percentage"], 10);
+    return Number.isNaN(n) ? 0 : n;
+  }
+
+  function priorityOf(w) {
+    const n = parseInt(lbOf(w)["lb_backup-link-priority"], 10);
+    return Number.isNaN(n) ? 0 : n;
+  }
+
+  function roleOf(w) {
+    const mode = (lbOf(w).lb_mode || "").toLowerCase();
+    if (mode === "shared") return "active";
+    if (mode === "backup") return "backup";
+    return "off";
+  }
+
+  // The role as the operator would say it out loud, used both on the card
+  // heading and in the summary.
+  function roleLabel(w) {
+    const role = roleOf(w);
+    if (role === "active") return `Carrying traffic · ${shareOf(w)}%`;
+    if (role === "backup") return `Standby · priority ${priorityOf(w)}`;
+    return "Not in load balancing";
+  }
+
+  function loadBalanceSummary(wans) {
+    if (!wans.length) return "";
+    const active = wans.filter((w) => roleOf(w) === "active");
+    const backup = wans
+      .filter((w) => roleOf(w) === "backup")
+      .sort((a, b) => priorityOf(a) - priorityOf(b));
+    const off = wans.filter((w) => roleOf(w) === "off");
+    const total = active.reduce((sum, w) => sum + shareOf(w), 0);
+
+    // The bar is the division of outbound traffic, drawn to scale. With
+    // one active link it is a single full-width band, which is the true
+    // picture: everything leaves by that link.
+    const bar = active.length
+      ? `<div class="lb-bar" role="img" aria-label="${esc(
+          active.map((w) => `${w.name} ${shareOf(w)}%`).join(", ")
+        )}">${active
+          .map(
+            (w, i) =>
+              `<span class="lb-seg lb-seg-${(i % 4) + 1}" style="flex: ${Math.max(shareOf(w), 1)}">
+                 <span class="lb-seg-name">${esc(w.name || w.lan_intf)}</span>
+                 <span class="lb-seg-pct">${shareOf(w)}%</span>
+               </span>`
+          )
+          .join("")}</div>`
+      : `<p class="box-empty">No link is set to carry traffic. Every WAN here is either standby or out of load balancing.</p>`;
+
+    // One sentence, built from the same numbers the bar is drawn from.
+    let sentence;
+    if (active.length === 1) {
+      sentence = `Everything leaves by ${active[0].name}.`;
+    } else if (active.length > 1) {
+      sentence = `Outbound traffic is split across ${active.length} links: ${active
+        .map((w) => `${w.name} ${shareOf(w)}%`)
+        .join(", ")}.`;
+    } else {
+      sentence = "Nothing is set to carry traffic right now.";
+    }
+    if (backup.length === 1) {
+      sentence += ` ${backup[0].name} takes over if the active link fails.`;
+    } else if (backup.length > 1) {
+      sentence += ` ${backup.map((w) => w.name).join(", then ")} take over in that order if the active links fail.`;
+    } else if (active.length === 1) {
+      sentence += " There is no standby link: if it fails, the site is offline.";
+    }
+
+    const warn =
+      active.length && total !== 100
+        ? `<p class="warn">The active shares add up to ${total}%, not 100%. The device splits traffic by the ratio between them, so this still works, but the numbers will not read the way an operator expects.</p>`
+        : "";
+
+    const standbyRow = backup.length
+      ? `<p class="lb-row"><span class="legend">Standby</span>${backup
+          .map((w) => `<span class="role-chip role-backup">${esc(w.name)} · priority ${priorityOf(w)}</span>`)
+          .join("")}</p>`
+      : "";
+    const offRow = off.length
+      ? `<p class="lb-row"><span class="legend">Out of rotation</span>${off
+          .map((w) => `<span class="role-chip role-off">${esc(w.name)}</span>`)
+          .join("")}</p>`
+      : "";
+
+    return `<h2>Load balancing</h2>
+      <p class="lb-sentence">${esc(sentence)}</p>
+      ${bar}
+      ${standbyRow}
+      ${offRow}
+      ${warn}
+      <p class="muted">Set each link's role and share on its own card below. A link is declared down after the
+        number of failed pings set under Connection check, and traffic moves to the next link in line.</p>`;
   }
 
   function portOf(w) {
@@ -59,43 +185,76 @@
     return (cache.pppoe || {})[port] || null;
   }
 
+  // A card is one link, read top to bottom the way someone standing in
+  // front of the rack asks about it: what is this link's job, how does it
+  // get its address, how fast is it, and how does the device decide it
+  // has died. The raw CLI vocabulary the card used to print ("dynamic",
+  // "enable") is translated, because nobody configures a WAN by those
+  // words.
+  function ipModeLabel(w, pppoe) {
+    if (pppoe) return "PPPoE";
+    return (w.ip_mode || "").toLowerCase() === "static" ? "Static" : "DHCP";
+  }
+
+  function healthSentence(lb) {
+    const fails = lb["lb_num-hosts-fail-interface-down"] || "1";
+    const interval = lb["lb_ping-interval"] || "2";
+    const timeout = lb["lb_ping-timeout"] || "2";
+    const detect = lb["lb_ping-failure-detect-time"] || "5";
+    return `Pings every ${interval}s, gives up after ${timeout}s, and declares the link down once ${fails} host(s) stay unreachable for ${detect}s.`;
+  }
+
   function renderCard(w) {
     const port = portOf(w);
-    const lb = w.load_balance_config || {};
+    const lb = lbOf(w);
     const bw = w.bandwidth_config || {};
-    const starlink = w.starlink_enable
-      ? `<div class="grid">
-          ${stat("Starlink dish IP", w.starlink_dish_ip)}
-          ${stat("Starlink dish mode", w.starlink_dish_mode)}
-          ${stat("Starlink dish port", w.starlink_dish_port)}
-        </div>`
-      : "";
     const pppoe = pppoeOf(port);
-    const pppoeBlock = pppoe
-      ? `<div class="grid">
-          ${stat("PPPoE user", pppoe.user)}
-          ${stat("PPPoE MTU", pppoe.mtu)}
-          ${stat("PPPoE MSS clamping", pppoe.mss_clamp ? "Enabled" : "Disabled")}
-          ${stat("PPPoE AC name", pppoe.ac_name || "-")}
-          ${stat("PPPoE service name", pppoe.service_name || "-")}
-        </div>`
+    const role = roleOf(w);
+
+    const starlink = w.starlink_enable
+      ? `<h3>Starlink</h3>
+         ${readout([
+           ["Dish address", w.starlink_dish_ip, "mono"],
+           ["Dish mode", w.starlink_dish_mode],
+           ["Dish port", w.starlink_dish_port, "mono"],
+         ])}`
       : "";
+
+    const pppoeBlock = pppoe
+      ? `<h3>PPPoE</h3>
+         ${readout([
+           ["User name", pppoe.user],
+           ["MTU", pppoe.mtu],
+           ["MSS clamping", pppoe.mss_clamp ? "On" : "Off"],
+           ["AC name", pppoe.ac_name || "-"],
+           ["Service name", pppoe.service_name || "-"],
+         ])}`
+      : "";
+
     // A device that has never had a "wan-name" set prints no such leaf, so
     // in show-config fallback mode the name can be empty — fall back to the
     // physical port rather than rendering a headless card. "Change port"
     // still needs a real name and says so if one is missing.
-    const heading = w.name
-      ? `${esc(w.name)} <span class="muted">(${esc(w.lan_intf)})</span>`
-      : `<span class="muted">Unnamed WAN</span> (${esc(w.lan_intf)})`;
-    return `<h2>${heading}</h2>
-      <div class="grid">
-        ${stat("IP mode", pppoe ? "pppoe" : w.ip_mode)}
-        ${stat("Source NAT", w.source_nat)}
-        ${stat("Load balance mode", lb.lb_mode)}
-        ${stat("Traffic share", (lb["lb_traffic-share-percentage"] || "-") + "%")}
-        ${stat("Monitor hosts", (lb["lb_monitor-hosts"] || []).join(", "))}
-        ${stat("Uplink", (bw.uplink_bandwidth || "-") + " Mbps")}
-        ${stat("Downlink", (bw.downlink_bandwidth || "-") + " Mbps")}
+    const title = w.name ? esc(w.name) : "Unnamed WAN";
+    return `<h2>${title} <span class="wan-port">${esc(w.lan_intf)}</span>
+        <span class="role-chip role-${role}">${esc(roleLabel(w))}</span></h2>
+      <div class="readout-cols">
+        <div>
+          <h3>Connection</h3>
+          ${readout([
+            ["Address", ipModeLabel(w, pppoe)],
+            ["Source NAT", (w.source_nat || "").toLowerCase() === "enable" ? "On" : "Off"],
+            ["Uplink", bw.uplink_bandwidth ? `${bw.uplink_bandwidth} Mbps` : "-"],
+            ["Downlink", bw.downlink_bandwidth ? `${bw.downlink_bandwidth} Mbps` : "-"],
+          ])}
+        </div>
+        <div>
+          <h3>Connection check</h3>
+          ${readout([
+            ["Monitor hosts", (lb["lb_monitor-hosts"] || []).join(" ") || "none", "list"],
+          ])}
+          <p class="muted">${esc(healthSentence(lb))}</p>
+        </div>
       </div>
       ${pppoeBlock}
       ${starlink}
@@ -116,60 +275,86 @@
     const currentMode = isPPPoE ? "pppoe" : isStatic ? "static" : "dhcp";
     const lbMode = lb.lb_mode || "shared";
     const body = `
-      <label>IP mode
-        <select id="cfg-wan-mode">
-          <option value="dhcp" ${currentMode === "dhcp" ? "selected" : ""}>DHCP</option>
-          <option value="static" ${currentMode === "static" ? "selected" : ""}>Static</option>
-          <option value="pppoe" ${currentMode === "pppoe" ? "selected" : ""}>PPPoE</option>
-        </select>
-      </label>
-      <div id="cfg-wan-static-fields" ${isStatic ? "" : "hidden"}>
-        <label>IP address <input id="cfg-wan-ip" type="text" placeholder="e.g. 203.0.113.10"></label>
-        <label>Subnet mask <input id="cfg-wan-mask" type="text" placeholder="e.g. 255.255.255.0"></label>
-        <label>Gateway <input id="cfg-wan-gw" type="text" placeholder="e.g. 203.0.113.1"></label>
-      </div>
-      <div id="cfg-wan-pppoe-fields" ${isPPPoE ? "" : "hidden"}>
-        <label>PPPoE user name <input id="cfg-wan-pppoe-user" type="text" value="${esc(pppoe ? pppoe.user : "")}"></label>
-        <label>PPPoE password <input id="cfg-wan-pppoe-password" type="password"></label>
-        ${pppoe ? '<p class="muted">The stored password can\'t be read back, so it must be re-entered every time you save this form, even if it hasn\'t changed.</p>' : ""}
-        <label>AC Name (optional) <input id="cfg-wan-pppoe-ac" type="text" value="${esc(pppoe ? pppoe.ac_name || "" : "")}"></label>
-        <label>Service Name (optional) <input id="cfg-wan-pppoe-service" type="text" value="${esc(pppoe ? pppoe.service_name || "" : "")}"></label>
-        <label>MTU (500-1492) <input id="cfg-wan-pppoe-mtu" type="number" min="500" max="1492" value="${pppoe ? pppoe.mtu : 1492}"></label>
-        <label class="check-row"><input id="cfg-wan-pppoe-mss" type="checkbox" ${pppoe && pppoe.mss_clamp ? "checked" : ""}> TCP MSS clamping</label>
-      </div>
-      <label>Load balance mode
-        <select id="cfg-wan-lbmode">
-          <option value="shared" ${lbMode === "shared" ? "selected" : ""}>Shared</option>
-          <option value="backup" ${lbMode === "backup" ? "selected" : ""}>Backup</option>
-          <option value="disabled" ${lbMode === "disabled" ? "selected" : ""}>Disabled</option>
-        </select>
-      </label>
-      <div id="cfg-wan-priority-field" ${lbMode === "backup" ? "" : "hidden"}>
-        <label>Backup priority (0 = highest, 10 = lowest)
-          <input id="cfg-wan-priority" type="number" min="0" max="10" value="0">
+      <fieldset class="form-section">
+        <legend>How this link gets its address</legend>
+        <label>Address mode
+          <select id="cfg-wan-mode">
+            <option value="dhcp" ${currentMode === "dhcp" ? "selected" : ""}>DHCP</option>
+            <option value="static" ${currentMode === "static" ? "selected" : ""}>Static</option>
+            <option value="pppoe" ${currentMode === "pppoe" ? "selected" : ""}>PPPoE</option>
+          </select>
         </label>
-      </div>
-      <label>Monitor hosts (comma separated)
-        <input id="cfg-wan-hosts" type="text" value="${esc((lb["lb_monitor-hosts"] || []).join(","))}">
-      </label>
-      <h3>Connection Health</h3>
-      <label>Number of host failures to declare interface down
-        <input id="cfg-wan-numfail" type="number" min="1" value="${esc(lb["lb_num-hosts-fail-interface-down"] || "1")}">
-      </label>
-      <label>Failure detect time (5-60 seconds)
-        <input id="cfg-wan-faildetect" type="number" min="5" max="60" value="${esc(lb["lb_ping-failure-detect-time"] || "5")}">
-      </label>
-      <label>Ping interval (2-10 seconds)
-        <input id="cfg-wan-pinginterval" type="number" min="2" max="10" value="${esc(lb["lb_ping-interval"] || "2")}">
-      </label>
-      <label>Ping timeout (1-10 seconds)
-        <input id="cfg-wan-pingtimeout" type="number" min="1" max="10" value="${esc(lb["lb_ping-timeout"] || "2")}">
-      </label>
-      <label>Traffic share % (when load-balance mode is shared)
-        <input id="cfg-wan-share" type="number" min="0" max="100" value="${esc(lb["lb_traffic-share-percentage"] || "")}">
-      </label>
-      <label>Uplink Mbps <input id="cfg-wan-up" type="number" min="1" value="${esc(bw.uplink_bandwidth || "")}"></label>
-      <label>Downlink Mbps <input id="cfg-wan-down" type="number" min="1" value="${esc(bw.downlink_bandwidth || "")}"></label>
+        <div id="cfg-wan-static-fields" class="field-grid" ${isStatic ? "" : "hidden"}>
+          <label>IP address <input id="cfg-wan-ip" type="text" placeholder="e.g. 203.0.113.10"></label>
+          <label>Subnet mask <input id="cfg-wan-mask" type="text" placeholder="e.g. 255.255.255.0"></label>
+          <label>Gateway <input id="cfg-wan-gw" type="text" placeholder="e.g. 203.0.113.1"></label>
+        </div>
+        <div id="cfg-wan-pppoe-fields" ${isPPPoE ? "" : "hidden"}>
+          <div class="field-grid">
+            <label>User name <input id="cfg-wan-pppoe-user" type="text" value="${esc(pppoe ? pppoe.user : "")}"></label>
+            <label>Password <input id="cfg-wan-pppoe-password" type="password"></label>
+            <label>AC name (optional) <input id="cfg-wan-pppoe-ac" type="text" value="${esc(pppoe ? pppoe.ac_name || "" : "")}"></label>
+            <label>Service name (optional) <input id="cfg-wan-pppoe-service" type="text" value="${esc(pppoe ? pppoe.service_name || "" : "")}"></label>
+            <label>MTU (500-1492) <input id="cfg-wan-pppoe-mtu" type="number" min="500" max="1492" value="${pppoe ? pppoe.mtu : 1492}"></label>
+          </div>
+          <label class="check-row"><input id="cfg-wan-pppoe-mss" type="checkbox" ${pppoe && pppoe.mss_clamp ? "checked" : ""}> TCP MSS clamping</label>
+          ${pppoe ? '<p class="muted">The stored password cannot be read back, so it must be re-entered every time you save this form, even if it has not changed.</p>' : ""}
+        </div>
+      </fieldset>
+
+      <fieldset class="form-section">
+        <legend>What this link does for load balancing</legend>
+        <label>Role
+          <select id="cfg-wan-lbmode">
+            <option value="shared" ${lbMode === "shared" ? "selected" : ""}>Carry traffic</option>
+            <option value="backup" ${lbMode === "backup" ? "selected" : ""}>Stand by as backup</option>
+            <option value="disabled" ${lbMode === "disabled" ? "selected" : ""}>Stay out of load balancing</option>
+          </select>
+        </label>
+        <div id="cfg-wan-share-field" ${lbMode === "shared" ? "" : "hidden"}>
+          <label>Share of outbound traffic (%)
+            <input id="cfg-wan-share" type="number" min="0" max="100" value="${esc(lb["lb_traffic-share-percentage"] || "")}">
+          </label>
+          <p class="muted">The device splits traffic by the ratio between the links that carry it. With one such link, this is 100%.</p>
+        </div>
+        <div id="cfg-wan-priority-field" ${lbMode === "backup" ? "" : "hidden"}>
+          <label>Takeover order
+            <input id="cfg-wan-priority" type="number" min="0" max="10" value="${esc(lb["lb_backup-link-priority"] || "0")}">
+          </label>
+          <p class="muted">0 takes over first, 10 last.</p>
+        </div>
+      </fieldset>
+
+      <fieldset class="form-section">
+        <legend>How the device decides this link is down</legend>
+        <label>Monitor hosts (comma separated)
+          <input id="cfg-wan-hosts" type="text" value="${esc((lb["lb_monitor-hosts"] || []).join(","))}">
+        </label>
+        <div class="field-grid">
+          <label>Failed hosts
+            <input id="cfg-wan-numfail" type="number" min="1" value="${esc(lb["lb_num-hosts-fail-interface-down"] || "1")}">
+          </label>
+          <label>Detect (s)
+            <input id="cfg-wan-faildetect" type="number" min="5" max="60" value="${esc(lb["lb_ping-failure-detect-time"] || "5")}">
+          </label>
+          <label>Interval (s)
+            <input id="cfg-wan-pinginterval" type="number" min="2" max="10" value="${esc(lb["lb_ping-interval"] || "2")}">
+          </label>
+          <label>Timeout (s)
+            <input id="cfg-wan-pingtimeout" type="number" min="1" max="10" value="${esc(lb["lb_ping-timeout"] || "2")}">
+          </label>
+        </div>
+        <p class="muted">Detect 5-60 s, interval 2-10 s, timeout 1-10 s.</p>
+      </fieldset>
+
+      <fieldset class="form-section">
+        <legend>Link speed the device shapes to</legend>
+        <div class="field-grid">
+          <label>Uplink (Mbps) <input id="cfg-wan-up" type="number" min="1" value="${esc(bw.uplink_bandwidth || "")}"></label>
+          <label>Downlink (Mbps) <input id="cfg-wan-down" type="number" min="1" value="${esc(bw.downlink_bandwidth || "")}"></label>
+        </div>
+      </fieldset>
+
       <p class="warn">WAN changes go through the safe-apply path: the device must still accept a fresh connection afterwards, and the change is undone within 60 seconds unless you confirm it. If a change cuts off access entirely, that undo cannot reach the device either — but the change is not saved until you confirm, so power-cycling the device restores the previous configuration.</p>
       <div id="cfg-wan-outcome"></div>
     `;
@@ -206,11 +391,12 @@
       }
 
       const newLBMode = el.querySelector("#cfg-wan-lbmode").value;
-      if (newLBMode !== lbMode) {
+      const newPriority = parseInt(el.querySelector("#cfg-wan-priority").value, 10) || 0;
+      const priorityChanged =
+        newLBMode === "backup" && String(newPriority) !== String(lb["lb_backup-link-priority"] || "0");
+      if (newLBMode !== lbMode || priorityChanged) {
         const req = { action: "load_balance_mode", port, lb_mode: newLBMode };
-        if (newLBMode === "backup") {
-          req.priority = parseInt(el.querySelector("#cfg-wan-priority").value, 10) || 0;
-        }
+        if (newLBMode === "backup") req.priority = newPriority;
         const outcome = await postJSON("/api/config/wan", req);
         await renderOutcome(outcomeEl, outcome);
       }
@@ -271,7 +457,9 @@
     });
     modalEl.querySelector("#cfg-wan-lbmode").addEventListener("change", (e) => {
       modalEl.querySelector("#cfg-wan-priority-field").hidden = e.target.value !== "backup";
+      modalEl.querySelector("#cfg-wan-share-field").hidden = e.target.value !== "shared";
     });
+    modalEl.classList.add("modal-wide");
   }
 
   function addWAN() {

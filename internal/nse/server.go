@@ -351,9 +351,34 @@ func (s *Server) handleOverview(w http.ResponseWriter, _ *http.Request) {
 	if !ok {
 		return
 	}
-	ifaces := ParseIfconfig(ifc, s.wanPorts())
+	brief, ok := s.cli(w, "show interface brief", 20*time.Second)
+	if !ok {
+		return
+	}
+	ev, ok := s.cli(w, "show events", 20*time.Second)
+	if !ok {
+		return
+	}
+	// The same command the Devices tab runs. Counted here rather than
+	// shipped whole: the dashboard needs "how many", and the table of who
+	// they are belongs on the tab that exists for it.
+	//
+	// VPN sessions deliberately have no equivalent. ParseVPNSessions can
+	// report that the device returned nothing or an error, but it has
+	// never been given output with a session in it, so it populates no
+	// rows — and a count derived from a parser that cannot parse would be
+	// a zero the UI had no right to show.
+	clientsRaw, ok := s.cli(w, "show connected-clients", 20*time.Second)
+	if !ok {
+		return
+	}
+	wan := s.wanPorts()
+	ifaces := ParseIfconfig(ifc, wan)
 	rates, sampled, intervalMs := s.withRates(ifaces)
 	writeJSON(w, map[string]any{
+		"ports":             PortLegend(ParseInterfaceBrief(brief), wan),
+		"alarms":            SummarizeAlarms(ParseEvents(ev)),
+		"lan_clients":       len(ParseConnectedClients(clientsRaw)),
 		"version":           ParseVersion(ver),
 		"clock":             ParseClock(clock),
 		"remote":            ParseRemote(remote).Summary,
@@ -476,8 +501,13 @@ func (s *Server) handleInterfaces(w http.ResponseWriter, _ *http.Request) {
 	if !ok {
 		return
 	}
+	// The role is what the technician came here to check against, and it
+	// was only on the Overview: this table listed eth1..eth6 with no way
+	// to tell a WAN uplink from a LAN port.
+	brief := ParseInterfaceBrief(ifaces)
 	writeJSON(w, map[string]any{
-		"interfaces": ParseInterfaceBrief(ifaces),
+		"interfaces": brief,
+		"ports":      PortLegend(brief, s.wanPorts()),
 		"pppoe":      ParsePPPoE(pppoe),
 		"power":      ParsePower(power),
 		"usb":        ParseUSB(usb),

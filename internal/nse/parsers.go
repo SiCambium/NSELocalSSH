@@ -396,6 +396,61 @@ type Event struct {
 	Time    string `json:"time"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Severity is the middle field of the Cisco-style event code
+	// ("WANLB-3-LINK-DOWN" is severity 3), following the syslog scale:
+	// 0 emergency through 7 debug. -1 when the line carried no code.
+	Severity int `json:"severity"`
+}
+
+// eventSeverityRE pulls the digit out of a code like "SYSTEM-5-REBOOT-REASON".
+var eventSeverityRE = regexp.MustCompile(`^[A-Za-z0-9]+-(\d)-`)
+
+func eventSeverity(code string) int {
+	m := eventSeverityRE.FindStringSubmatch(code)
+	if m == nil {
+		return -1
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return -1
+	}
+	return n
+}
+
+// AlarmSummary counts the events the device is currently reporting by the
+// severity bands the cloud console shows.
+//
+// The period is deliberately not claimed to be "last 24 hours": `show
+// events` returns a bounded recent list with no year on its timestamps,
+// so the honest label is however many events the device still holds.
+type AlarmSummary struct {
+	Critical int `json:"critical"`
+	Major    int `json:"major"`
+	Minor    int `json:"minor"`
+	Total    int `json:"total"`
+}
+
+// SummarizeAlarms bands events the way an operator reads them: emergency
+// through critical is critical, error is major, warning is minor, and
+// notice/info/debug are not alarms at all.
+func SummarizeAlarms(events []Event) AlarmSummary {
+	var a AlarmSummary
+	for _, e := range events {
+		switch {
+		case e.Severity < 0:
+			continue
+		case e.Severity <= 2:
+			a.Critical++
+		case e.Severity == 3:
+			a.Major++
+		case e.Severity == 4:
+			a.Minor++
+		default:
+			continue
+		}
+	}
+	a.Total = len(events)
+	return a
 }
 
 func ParseEvents(raw string) []Event {
@@ -406,9 +461,9 @@ func ParseEvents(raw string) []Event {
 			continue
 		}
 		if m := eventRE.FindStringSubmatch(line); m != nil {
-			rows = append(rows, Event{Time: m[1], Code: m[2], Message: m[3]})
+			rows = append(rows, Event{Time: m[1], Code: m[2], Message: m[3], Severity: eventSeverity(m[2])})
 		} else {
-			rows = append(rows, Event{Message: line})
+			rows = append(rows, Event{Message: line, Severity: -1})
 		}
 	}
 	return rows
@@ -1630,6 +1685,50 @@ func ParseConnectedClients(raw string) []ConnectedClient {
 			OSVer:    vals["os_ver"],
 			LastSeen: vals["last_seen"],
 		})
+	}
+	return out
+}
+
+// PortLegendEntry is one physical port as the Status page labels it:
+// designation, the role the running config gives it, and its link
+// reading. It is deliberately flat — the frontend prints a label, not a
+// nested object.
+type PortLegendEntry struct {
+	Name   string `json:"name"`
+	Role   string `json:"role"` // "wan" | "lan"
+	Up     bool   `json:"up"`
+	Speed  string `json:"speed,omitempty"`
+	Duplex string `json:"duplex,omitempty"`
+	MAC    string `json:"mac,omitempty"`
+}
+
+// PortLegend pairs `show interface brief` with the set of ports the
+// running config has turned into WANs, so a port can be labelled with
+// the job it actually does rather than just its link state.
+//
+// The number of entries is whatever the device reported — six on an
+// NSE3000, ten on an NSE4000 — so nothing here walks a fixed eth1..eth6
+// range. A port missing from the WAN set is a LAN port, which is what
+// the CLI means by the absence of a `type wan` line.
+func PortLegend(brief []Interface, wan map[string]bool) []PortLegendEntry {
+	out := make([]PortLegendEntry, 0, len(brief))
+	for _, p := range brief {
+		role := "lan"
+		if wan[p.Interface] {
+			role = "wan"
+		}
+		e := PortLegendEntry{
+			Name: p.Interface,
+			Role: role,
+			Up:   strings.EqualFold(p.Status, "UP"),
+			MAC:  p.MAC,
+		}
+		// "N/A" is how this CLI spells "no link"; printing it on a label
+		// would be repeating the status column in worse words.
+		if e.Up {
+			e.Speed, e.Duplex = p.Speed, p.Duplex
+		}
+		out = append(out, e)
 	}
 	return out
 }
