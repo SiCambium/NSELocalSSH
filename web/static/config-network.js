@@ -106,6 +106,7 @@
           <td>${esc(p.mode || "-")}</td>
           <td>${esc(p.mode === "trunk" ? p.native_vlan || "-" : p.access_vlan || "-")}</td>
           <td>${esc(p.allowed_vlans || "-")}</td>
+          <td>${p.auto_vlan ? '<span class="badge-on">Enabled</span>' : '<span class="badge-off">Disabled</span>'}</td>
           <td>${speedCell(p)}</td>
           <td>${duplexCell(p)}</td>
           <td><button type="button" class="row-edit" data-port="${esc(p.interface)}">Edit</button></td>
@@ -124,8 +125,8 @@
       <h2>LAN Ports</h2>
       <p class="muted">WAN ports aren't shown here — manage them from the WAN tab instead.</p>
       <div class="table-wrap"><table>
-        <thead><tr><th>Port</th><th>Mode</th><th>VLAN</th><th>Allowed VLANs</th><th>Speed</th><th>Duplex</th><th></th></tr></thead>
-        <tbody>${portRows || '<tr><td colspan="7" class="muted">No LAN ports found.</td></tr>'}</tbody>
+        <thead><tr><th>Port</th><th>Mode</th><th>VLAN</th><th>Allowed VLANs</th><th>Auto VLAN</th><th>Speed</th><th>Duplex</th><th></th></tr></thead>
+        <tbody>${portRows || '<tr><td colspan="8" class="muted">No LAN ports found.</td></tr>'}</tbody>
       </table></div>
     `;
 
@@ -167,6 +168,15 @@
         <label>Native VLAN <input id="cfg-port-native-vlan" type="text" value="${esc(p.native_vlan || "1")}"></label>
         <label>Allowed VLANs (comma separated) <input id="cfg-port-allowed-vlans" type="text" value="${esc(p.allowed_vlans || "")}"></label>
       </div>
+      <label class="check-row">
+        <input id="cfg-port-auto-vlan" type="checkbox" ${p.auto_vlan ? "checked" : ""}>
+        Auto VLAN
+      </label>
+      <label class="check-row">
+        <input id="cfg-port-auto-vlan-msg-auth" type="checkbox" ${p.auto_vlan_msg_auth ? "checked" : ""}>
+        Auto VLAN Message Authentication
+      </label>
+      <p class="muted">The two are independent on the device: message authentication can be on with Auto VLAN off, and switching Auto VLAN off leaves it alone.</p>
       <p class="warn">Changing a LAN port's VLAN assignment can disconnect whatever is plugged into it — or, if this port is carrying the session doing the editing (e.g. a direct connection to the 172.23.0.1 local UI), lock you out. This change is applied through the safe-apply path: it's verified reachable over a fresh connection before it's kept, and rolled back automatically if not confirmed within 60 seconds.</p>
       <label>Speed
         <select id="cfg-port-speed">
@@ -208,6 +218,28 @@
       }
       const outcome = await postJSON("/api/config/network", req);
       await renderOutcome(outcomeEl, outcome);
+
+      const autoVLAN = el.querySelector("#cfg-port-auto-vlan").checked;
+      if (autoVLAN !== !!p.auto_vlan) {
+        const avOutcome = await postJSON("/api/config/network", {
+          action: "port_auto_vlan",
+          port: port,
+          enabled: autoVLAN,
+        });
+        await renderOutcome(outcomeEl, avOutcome);
+      }
+
+      // Sent as its own change because the device treats it as its own
+      // setting, not as something that follows Auto VLAN.
+      const msgAuth = el.querySelector("#cfg-port-auto-vlan-msg-auth").checked;
+      if (msgAuth !== !!p.auto_vlan_msg_auth) {
+        const maOutcome = await postJSON("/api/config/network", {
+          action: "port_auto_vlan_msg_auth",
+          port: port,
+          enabled: msgAuth,
+        });
+        await renderOutcome(outcomeEl, maOutcome);
+      }
 
       const speed = el.querySelector("#cfg-port-speed").value;
       const duplex = el.querySelector("#cfg-port-duplex").value;
