@@ -728,8 +728,64 @@ function renderDhcp(d) {
       <button type="button" data-sub="pools" class="${dhcpSub === "pools" ? "active" : ""}">Pools</button>
       <button type="button" data-sub="macs" class="${dhcpSub === "macs" ? "active" : ""}">MAC bound</button>
     </nav>
-    ${dhcpSub === "macs" ? renderMacBound(d) : renderDhcpPools(d)}
+    ${dhcpSub === "macs" ? renderMacBound(d) : renderDhcpUsage(d) + renderDhcpPools(d)}
   `;
+}
+
+// cnMaestro's subnet table carries a "Leases Used" bar per VLAN, which is
+// the quickest way to see which pool is filling up. Here the same numbers
+// were only visible by scrolling into each pool's own block and reading
+// two separate stats, so a pool near exhaustion looked like any other.
+//
+// The device reports both figures directly: "allocated" is the pool's
+// capacity and "usage" the number of leases handed out. They are strings,
+// and are absent on a pool slot that is not configured.
+function vlanFromPoolInterface(iface) {
+  const m = /^br\d+\.(\d+)$/.exec(iface || "");
+  return m ? m[1] : "";
+}
+
+function dhcpUsageRows(d) {
+  const live = Object.fromEntries((d.pools || []).map((p) => [p.pool, p]));
+  return (d.pool_config || [])
+    .map((c) => {
+      const p = live[c.pool] || {};
+      const used = parseInt(p.usage, 10);
+      const total = parseInt(p.allocated, 10);
+      return {
+        pool: c.pool,
+        vlan: vlanFromPoolInterface(p.interface),
+        range: c.address_range || "",
+        used: Number.isNaN(used) ? null : used,
+        total: Number.isNaN(total) ? null : total,
+      };
+    })
+    .sort((a, b) => (parseInt(a.vlan, 10) || 0) - (parseInt(b.vlan, 10) || 0));
+}
+
+function renderDhcpUsage(d) {
+  const rows = dhcpUsageRows(d);
+  if (!rows.length) return "";
+  const cells = rows
+    .map((r) => {
+      // A pool with no capacity reported gets no bar rather than a
+      // misleading empty one, and never a division by zero.
+      const known = r.used != null && r.total != null && r.total > 0;
+      const pct = known ? Math.min(100, Math.round((r.used / r.total) * 100)) : 0;
+      const bar = known
+        ? `<div class="bar"><span style="width:${pct}%"></span></div>`
+        : `<span class="muted">-</span>`;
+      const count = known ? `${r.used} / ${r.total}` : "-";
+      return `<tr>
+        <td>${esc(r.vlan || "-")}</td>
+        <td>${esc(r.pool)}</td>
+        <td class="mono">${esc(r.range)}</td>
+        <td style="min-width:140px">${bar}</td>
+        <td class="mono">${esc(count)}</td>
+      </tr>`;
+    });
+  return `<h2>Leases used</h2>
+    ${table(["VLAN", "Pool", "Range", "", "Used"], cells)}`;
 }
 
 function renderDhcpPools(d) {
