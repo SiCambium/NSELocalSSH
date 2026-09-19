@@ -1147,12 +1147,13 @@ func (s *Server) applyWANLoadBalance(w http.ResponseWriter, links []wanLink) {
 		}
 	}
 
-	// The device would accept any total and treat the numbers as a ratio,
-	// but a set that does not add to 100 is a half-finished edit rather
-	// than an intent, and it is what makes a split unreadable afterwards:
-	// a link marked 50% out of 150% is really getting a third.
-	if shared > 0 && total != 100 {
-		writeSettingsError(w, http.StatusBadRequest, fmt.Sprintf("the shares add up to %d%%, not 100%%", total))
+	// Over 100 is the state worth refusing: the device treats the numbers
+	// as a ratio, so a link marked 50% out of 150% is really getting a
+	// third, and the page can no longer be read as percentages at all.
+	// Under 100 is allowed, because the shares are a ratio and a set that
+	// leaves headroom still divides the traffic exactly as written.
+	if total > 100 {
+		writeSettingsError(w, http.StatusBadRequest, fmt.Sprintf("the shares add up to %d%%, which is more than 100%%", total))
 		return
 	}
 	// Every link standing by leaves nothing carrying traffic, which is an

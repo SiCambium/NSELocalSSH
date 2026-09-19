@@ -179,7 +179,8 @@
     const editor = wans.length
       ? `<div class="lb-editor" id="lb-edit">
            <table class="flat lb-table">
-             <thead><tr><th>Link</th><th>Role</th><th class="num">Share</th><th>Takeover order</th></tr></thead>
+             <thead><tr><th>Link</th><th>Role</th><th class="num">Share</th>
+             <th>Takeover order <span class="th-note">0 first, 10 last</span></th></tr></thead>
              <tbody>${wans
                .map((w) => {
                  const role = roleOf(w);
@@ -195,16 +196,18 @@
                      </select>
                    </td>
                    <td class="num">
-                     <span class="lb-cell-share"${role === "active" ? "" : " hidden"}>
-                       <input type="number" min="0" max="100" step="1"
+                     <span class="lb-num lb-cell-share"${role === "active" ? "" : " hidden"}>
+                       <input type="number" min="0" max="100" step="1" inputmode="numeric"
+                              aria-label="Share of outbound traffic for ${esc(w.name || w.lan_intf)}"
                               data-lb-port="${port}" data-lb-saved="${shareOf(w)}" value="${shareOf(w)}">
-                       <span class="lb-edit-pct">%</span>
+                       <span class="lb-num-unit">%</span>
                      </span>
                      <span class="muted lb-cell-dash"${role === "active" ? " hidden" : ""}>&mdash;</span>
                    </td>
                    <td>
-                     <span class="lb-cell-prio"${role === "backup" ? "" : " hidden"}>
-                       <input type="number" min="0" max="10" step="1"
+                     <span class="lb-num lb-cell-prio"${role === "backup" ? "" : " hidden"}>
+                       <input type="number" min="0" max="10" step="1" inputmode="numeric"
+                              aria-label="Takeover order for ${esc(w.name || w.lan_intf)}"
                               data-lb-prio="${port}" data-lb-saved-prio="${priorityOf(w)}"
                               value="${priorityOf(w)}">
                      </span>
@@ -241,8 +244,8 @@
       ${offRow}
       ${warn}
       ${editor}
-      <p class="muted">Only links set to carry traffic take a share, and the shares have to add up to
-        100%. A link is declared down after the
+      <p class="muted">Only links set to carry traffic take a share, and the shares cannot come to
+        more than 100%. A link is declared down after the
         number of failed pings set under Connection check, and traffic moves to the next link in line.</p>`;
   }
 
@@ -339,10 +342,11 @@
     const saveBtn = document.getElementById("lb-save");
     let blocked = "";
     if (!fields.length) blocked = "At least one link has to carry traffic.";
-    else if (total !== 100) blocked = `The shares add up to ${total}%, not 100%.`;
+    else if (total > 100) blocked = `The shares add up to ${total}%, which is more than 100%.`;
 
     if (totalEl) {
-      totalEl.textContent = blocked || (fields.length > 1 ? "Shares add up to 100%" : "");
+      totalEl.textContent =
+        blocked || (fields.length > 1 ? `Shares add up to ${total}%` : "");
       totalEl.classList.toggle("bad", Boolean(blocked));
     }
     if (evenBtn) evenBtn.hidden = fields.length < 2;

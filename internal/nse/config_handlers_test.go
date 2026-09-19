@@ -214,7 +214,7 @@ func TestConfigWANLoadBalanceRejectsBadSets(t *testing.T) {
 		name string
 		body string
 	}{
-		{"shares do not total 100", `{"action":"load_balance","links":[{"port":1,"mode":"shared","percent":100},{"port":2,"mode":"shared","percent":50}]}`},
+		{"shares add up to more than 100", `{"action":"load_balance","links":[{"port":1,"mode":"shared","percent":100},{"port":2,"mode":"shared","percent":50}]}`},
 		{"nothing carries traffic", `{"action":"load_balance","links":[{"port":1,"mode":"backup","priority":0},{"port":2,"mode":"disabled"}]}`},
 		{"empty", `{"action":"load_balance","links":[]}`},
 		{"duplicate port", `{"action":"load_balance","links":[{"port":1,"mode":"shared","percent":50},{"port":1,"mode":"shared","percent":50}]}`},
@@ -251,6 +251,19 @@ func TestConfigWANLoadBalanceAcceptsWholeArrangement(t *testing.T) {
 	s.handleConfigWAN(rec, req)
 	if rec.Code == http.StatusBadRequest {
 		t.Fatalf("valid arrangement rejected: %s", rec.Body.String())
+	}
+}
+
+// Shares that leave headroom are a ratio the device divides exactly as
+// written, so they are accepted; only exceeding 100 is refused.
+func TestConfigWANLoadBalanceAcceptsSharesUnderOneHundred(t *testing.T) {
+	s := testConfigServer(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/config/wan",
+		strings.NewReader(`{"action":"load_balance","links":[{"port":1,"mode":"shared","percent":60},{"port":2,"mode":"shared","percent":30}]}`))
+	rec := httptest.NewRecorder()
+	s.handleConfigWAN(rec, req)
+	if rec.Code == http.StatusBadRequest {
+		t.Fatalf("90%% total rejected: %s", rec.Body.String())
 	}
 }
 

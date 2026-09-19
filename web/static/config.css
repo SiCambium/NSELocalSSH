@@ -457,24 +457,56 @@
 .lb-table td + td { padding-left: 20px; }
 .lb-table th.num, .lb-table td.num { text-align: left; }
 .lb-table select { min-height: 34px; min-width: 15ch; }
-.lb-table input[type="number"] {
-  /* Room for three digits beside the spinner arrows, which otherwise sat
-     over the last one at exactly the value set most often. */
-  width: 4.75rem;
-  min-height: 34px;
-  padding: 4px 22px 4px 6px;
+/* The value and its unit are one reading, so they share one box: the box
+   is drawn here and the input inside it carries no chrome of its own.
+   The native spinner is removed rather than padded around -- it is a
+   browser surface belonging to no design system, it rendered over the
+   last digit of "100", and its hit target was smaller than the text it
+   covered. Stepping survives on the arrow keys, which is where anyone
+   adjusting a percentage by one reaches anyway. */
+.lb-num {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 1px;
+  padding: 6px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--label);
+}
+.lb-num:focus-within {
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px rgb(0 58 112 / 12%);
+}
+.lb-num input {
+  width: 3ch;
+  padding: 0;
+  border: 0;
+  background: transparent;
   text-align: right;
-  font-variant-numeric: tabular-nums;
+  font: inherit;
   font-size: 14px;
   font-weight: 700;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  background: var(--label);
+  font-variant-numeric: tabular-nums;
   color: var(--ink);
+}
+.lb-num input:focus { outline: none; }
+.lb-num input::-webkit-outer-spin-button,
+.lb-num input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.lb-num input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+.lb-num-unit { font-size: 13px; font-weight: 700; color: var(--muted); }
+
+/* The range belongs beside the column it governs, not in a tooltip. */
+.lb-table .th-note {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
 }
 .lb-table td.num { white-space: nowrap; }
 .lb-table td .muted { font-weight: 400; margin-left: 6px; }
-.lb-edit-pct { color: var(--muted); margin-left: 4px; }
 
 .lb-actions {
   display: flex;
@@ -489,7 +521,7 @@
 /* An arrangement that cannot be saved says why, rather than leaving the
    disabled button to imply it. */
 .lb-edit-total.bad { color: var(--fault); font-weight: 700; }
-.lb-actions .row-edit[hidden] { display: none; }
+.lb-editor [hidden] { display: none; }
 .lb-actions .row-edit { margin-left: auto; }
 .lb-actions .row-edit + .row-edit { margin-left: 0; }
 
