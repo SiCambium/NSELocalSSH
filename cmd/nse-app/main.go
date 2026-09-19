@@ -45,7 +45,18 @@ func main() {
 	}
 	defer ln.Close()
 
-	srv := &nse.Server{Client: client, Static: web.Static, SettingsPath: nse.WritableSettingsPath()}
+	settingsPath := nse.WritableSettingsPath()
+	history := nse.NewHistoryStore(nse.HistoryPath(settingsPath))
+	defer history.Flush()
+	journal := nse.NewConfigJournal(nse.JournalPath(settingsPath))
+
+	srv := &nse.Server{
+		Client:       client,
+		Static:       web.Static,
+		SettingsPath: settingsPath,
+		History:      history,
+		Journal:      journal,
+	}
 	go func() {
 		if err := http.Serve(ln, srv.Handler()); err != nil && err != http.ErrServerClosed {
 			log.Printf("status server: %v", err)
