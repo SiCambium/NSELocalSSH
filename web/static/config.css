@@ -441,36 +441,26 @@
 }
 .port-roles .row-edit { flex: 0 0 auto; align-self: center; }
 
-/* The split editor. Laid out as one line of readings so the numbers sit
-   in a row and the running total reads as their sum, which is the whole
-   point of editing them together. */
-.lb-edit {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px 14px;
+/* The load balancing editor. A row per link, because the decision is
+   made by comparing them: what each one does, and the single number that
+   role takes. */
+.lb-editor {
   padding: 14px;
   margin: 0 0 14px;
   border: 1px solid var(--rule);
   border-radius: 10px;
   background: var(--label-2);
 }
-.lb-edit-field {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--ink-2);
-}
-.lb-edit-field input {
-  /* Wide enough for "100" beside the spinner arrows. At 5.5ch they
-     overlapped the third digit, so the one value that matters most here
-     was the one you could not read. */
+.lb-table { margin: 0; background: transparent; }
+.lb-table td { vertical-align: middle; }
+.lb-table select { min-height: 34px; min-width: 15ch; }
+.lb-table input[type="number"] {
+  /* Room for three digits beside the spinner arrows, which otherwise sat
+     over the last one at exactly the value set most often. */
   width: 4.75rem;
   min-height: 34px;
-  padding: 4px 6px;
+  padding: 4px 22px 4px 6px;
   text-align: right;
-  padding-right: 22px;
   font-variant-numeric: tabular-nums;
   font-size: 14px;
   font-weight: 700;
@@ -479,19 +469,25 @@
   background: var(--label);
   color: var(--ink);
 }
-.lb-edit-pct { color: var(--muted); }
-.lb-edit-total {
-  font-size: 14px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink);
-  padding-left: 2px;
+.lb-table td.num { white-space: nowrap; }
+.lb-table td .muted { font-weight: 400; margin-left: 6px; }
+.lb-edit-pct { color: var(--muted); margin-left: 4px; }
+
+.lb-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin: 14px 0 0;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--rule);
 }
-/* A total that is not 100 cannot be saved, so it is marked as the reason
-   rather than left for the disabled button to imply. */
-.lb-edit-total.bad { color: var(--fault); }
-.lb-edit .row-edit { margin-left: auto; }
-.lb-edit .row-edit + .row-edit { margin-left: 0; }
+.lb-edit-total { font-size: 13px; color: var(--ink-2); }
+/* An arrangement that cannot be saved says why, rather than leaving the
+   disabled button to imply it. */
+.lb-edit-total.bad { color: var(--fault); font-weight: 700; }
+.lb-actions .row-edit { margin-left: auto; }
+.lb-actions .row-edit + .row-edit { margin-left: 0; }
 
 .service-strip {
   display: flex;

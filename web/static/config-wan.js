@@ -58,34 +58,47 @@
     });
     const addWanBtn = document.getElementById("add-wan-btn");
     if (addWanBtn) addWanBtn.addEventListener("click", addWAN);
-    wireSplitEditor();
+    wireEditor();
   }
 
-  // --- The split editor --------------------------------------------------
+  // --- The load balancing editor ------------------------------------
 
-  function splitFields() {
-    return Array.from(document.querySelectorAll("#lb-edit [data-lb-port]"));
+  const MODE_OF = { active: "shared", backup: "backup", off: "disabled" };
+
+  function lbRows() {
+    return Array.from(document.querySelectorAll("#lb-edit [data-lb-row]"));
   }
 
-  // Everything the editor shows follows from the fields, so it is drawn
-  // from them in one place: the running total, and whether there is
-  // anything left to save.
-  function refreshSplit(fields, saved) {
-    const total = fields.reduce((sum, f) => sum + (parseInt(f.value, 10) || 0), 0);
-    const totalEl = document.getElementById("lb-edit-total");
-    const saveEl = document.getElementById("lb-save");
-    const changed = fields.some((f) => (parseInt(f.value, 10) || 0) !== saved[f.dataset.lbPort]);
-    if (totalEl) {
-      totalEl.textContent = total === 100 ? "= 100%" : `= ${total}%`;
-      totalEl.classList.toggle("bad", total !== 100);
-    }
-    if (saveEl) saveEl.disabled = !changed || total !== 100;
+  function roleSelect(row) {
+    return row.querySelector("[data-lb-role]");
   }
 
-  // Moves the difference into the other links. Proportionally, so an
-  // established 70/30 pair stays in proportion when a third link takes a
-  // slice; evenly when there is no proportion to keep. The last field
-  // absorbs the rounding so the set always lands on exactly 100.
+  function shareInput(row) {
+    return row.querySelector("[data-lb-port]");
+  }
+
+  function activeInputs() {
+    return lbRows()
+      .filter((r) => roleSelect(r).value === "active")
+      .map(shareInput);
+  }
+
+  // A row shows the one number its role takes and nothing else, so the
+  // table never offers a share for a link that carries no traffic or a
+  // takeover order for one that is not standing by.
+  function syncRow(row) {
+    const role = roleSelect(row).value;
+    row.querySelector(".lb-cell-share").hidden = role !== "active";
+    row.querySelector(".lb-cell-prio").hidden = role !== "backup";
+    const dashes = row.querySelectorAll(".lb-cell-dash");
+    dashes[0].hidden = role === "active";
+    dashes[1].hidden = role === "backup";
+  }
+
+  // Moves the difference into the other carrying links. Proportionally,
+  // so an established 70/30 pair keeps its proportion when a third link
+  // takes a slice, and evenly when there is no proportion to keep. The
+  // last field absorbs the rounding so the set lands on exactly 100.
   function absorb(fields, changed) {
     const value = Math.min(100, Math.max(0, parseInt(changed.value, 10) || 0));
     changed.value = String(value);
@@ -99,61 +112,105 @@
     let spent = 0;
     others.forEach((f, i) => {
       let share;
-      if (i === others.length - 1) {
-        share = remainder - spent;
-      } else if (base > 0) {
-        share = Math.round(((parseInt(f.value, 10) || 0) / base) * remainder);
-      } else {
-        share = Math.round(remainder / others.length);
-      }
+      if (i === others.length - 1) share = remainder - spent;
+      else if (base > 0) share = Math.round(((parseInt(f.value, 10) || 0) / base) * remainder);
+      else share = Math.round(remainder / others.length);
       share = Math.min(100, Math.max(0, share));
       spent += share;
       f.value = String(share);
     });
   }
 
-  function wireSplitEditor() {
-    const fields = splitFields();
-    if (!fields.length) return;
-    // The values as the device currently holds them, so the editor can
-    // tell an edit from a redraw and keep Save quiet until there is
-    // something to save.
-    const saved = {};
-    fields.forEach((f) => {
-      saved[f.dataset.lbPort] = parseInt(f.dataset.lbSaved, 10) || 0;
+  function spreadEvenly(fields) {
+    const each = Math.floor(100 / fields.length);
+    fields.forEach((f, i) => {
+      f.value = String(i === fields.length - 1 ? 100 - each * (fields.length - 1) : each);
+    });
+  }
+
+  // Everything the editor reports follows from the rows, so it is read
+  // from them in one place: the running total, whether the arrangement
+  // can be saved, and whether anything has actually changed.
+  function refreshEditor() {
+    const rows = lbRows();
+    const fields = activeInputs();
+    const total = fields.reduce((sum, f) => sum + (parseInt(f.value, 10) || 0), 0);
+    const changed = rows.some((r) => {
+      const sel = roleSelect(r);
+      if (sel.value !== sel.dataset.lbSavedRole) return true;
+      if (sel.value === "active") {
+        const f = shareInput(r);
+        return (parseInt(f.value, 10) || 0) !== (parseInt(f.dataset.lbSaved, 10) || 0);
+      }
+      if (sel.value === "backup") {
+        const f = r.querySelector("[data-lb-prio]");
+        return (parseInt(f.value, 10) || 0) !== (parseInt(f.dataset.lbSavedPrio, 10) || 0);
+      }
+      return false;
     });
 
-    fields.forEach((f) => {
-      f.addEventListener("input", () => {
-        absorb(fields, f);
-        refreshSplit(fields, saved);
+    const totalEl = document.getElementById("lb-edit-total");
+    const evenBtn = document.getElementById("lb-even");
+    const saveBtn = document.getElementById("lb-save");
+    let blocked = "";
+    if (!fields.length) blocked = "At least one link has to carry traffic.";
+    else if (total !== 100) blocked = `The shares add up to ${total}%, not 100%.`;
+
+    if (totalEl) {
+      totalEl.textContent = blocked || (fields.length > 1 ? "Shares add up to 100%" : "");
+      totalEl.classList.toggle("bad", Boolean(blocked));
+    }
+    if (evenBtn) evenBtn.hidden = fields.length < 2;
+    if (saveBtn) saveBtn.disabled = Boolean(blocked) || !changed;
+  }
+
+  function wireEditor() {
+    const rows = lbRows();
+    if (!rows.length) return;
+
+    rows.forEach((row) => {
+      roleSelect(row).addEventListener("change", () => {
+        syncRow(row);
+        // A link joining or leaving the rotation changes what the rest
+        // are dividing, so the shares are re-spread rather than left to
+        // add up to whatever they happened to before.
+        const fields = activeInputs();
+        if (fields.length) spreadEvenly(fields);
+        refreshEditor();
       });
+      const share = shareInput(row);
+      if (share) {
+        share.addEventListener("input", () => {
+          absorb(activeInputs(), share);
+          refreshEditor();
+        });
+      }
+      const prio = row.querySelector("[data-lb-prio]");
+      if (prio) prio.addEventListener("input", refreshEditor);
     });
 
     const evenBtn = document.getElementById("lb-even");
     if (evenBtn) {
       evenBtn.addEventListener("click", () => {
-        const each = Math.floor(100 / fields.length);
-        fields.forEach((f, i) => {
-          f.value = String(i === fields.length - 1 ? 100 - each * (fields.length - 1) : each);
-        });
-        refreshSplit(fields, saved);
+        spreadEvenly(activeInputs());
+        refreshEditor();
       });
     }
 
     const saveBtn = document.getElementById("lb-save");
     if (saveBtn) {
       saveBtn.addEventListener("click", async () => {
-        const shares = fields.map((f) => ({
-          port: parseInt(f.dataset.lbPort, 10),
-          percent: parseInt(f.value, 10) || 0,
-        }));
+        const links = lbRows().map((r) => {
+          const role = roleSelect(r).value;
+          const link = { port: parseInt(r.dataset.lbRow, 10), mode: MODE_OF[role] };
+          if (role === "active") link.percent = parseInt(shareInput(r).value, 10) || 0;
+          if (role === "backup") link.priority = parseInt(r.querySelector("[data-lb-prio]").value, 10) || 0;
+          return link;
+        });
         saveBtn.disabled = true;
-        const outcomeEl = document.createElement("div");
-        outcomeEl.className = "lb-edit-outcome";
-        document.getElementById("lb-edit").appendChild(outcomeEl);
+        const outcomeEl = document.getElementById("lb-outcome");
         try {
-          const outcome = await postJSON("/api/config/wan", { action: "traffic_shares", shares });
+          const outcome = await postJSON("/api/config/wan", { action: "load_balance", links });
           await renderOutcome(outcomeEl, outcome);
           await load();
         } catch (e) {
@@ -163,182 +220,7 @@
       });
     }
 
-    refreshSplit(fields, saved);
-  }
-
-  // --- Load balancing ----------------------------------------------------
-  // Load balancing is the reason most people open this page, and it was
-  // the one thing the page did not show: each WAN card carried its own
-  // "lb_mode" and "traffic share %" as two more rows of CLI vocabulary,
-  // and nothing anywhere said which link the traffic actually leaves by,
-  // or what happens when it fails. That is a property of the set of WANs,
-  // not of any one of them, so it is stated once, below the cards, in the
-  // order someone asks it: what carries traffic now, what takes over, and
-  // what is out of the rotation. It sits after the links because it is
-  // about them: the summary and the split editor both name links the
-  // reader has to have met first.
-
-  function lbOf(w) {
-    return w.load_balance_config || {};
-  }
-
-  function shareOf(w) {
-    const n = parseInt(lbOf(w)["lb_traffic-share-percentage"], 10);
-    return Number.isNaN(n) ? 0 : n;
-  }
-
-  // What a link is really getting, once the device has treated the shares
-  // as a ratio. Equal to the raw share whenever the set totals 100.
-  function effectiveShare(w, total) {
-    if (!total) return 0;
-    return Math.round((shareOf(w) / total) * 100);
-  }
-
-  function priorityOf(w) {
-    const n = parseInt(lbOf(w)["lb_backup-link-priority"], 10);
-    return Number.isNaN(n) ? 0 : n;
-  }
-
-  function roleOf(w) {
-    const mode = (lbOf(w).lb_mode || "").toLowerCase();
-    if (mode === "shared") return "active";
-    if (mode === "backup") return "backup";
-    return "off";
-  }
-
-  // The role as the operator would say it out loud, used both on the card
-  // heading and in the summary.
-  function roleLabel(w) {
-    const role = roleOf(w);
-    if (role === "active") return `Carrying traffic · ${shareOf(w)}%`;
-    if (role === "backup") return `Standby · priority ${priorityOf(w)}`;
-    return "Not in load balancing";
-  }
-
-  function loadBalanceSummary(wans) {
-    if (!wans.length) return "";
-    const active = wans.filter((w) => roleOf(w) === "active");
-    const backup = wans
-      .filter((w) => roleOf(w) === "backup")
-      .sort((a, b) => priorityOf(a) - priorityOf(b));
-    const off = wans.filter((w) => roleOf(w) === "off");
-    const total = active.reduce((sum, w) => sum + shareOf(w), 0);
-
-    // The bar is the division of outbound traffic, drawn to scale. With
-    // one active link it is a single full-width band, which is the true
-    // picture: everything leaves by that link.
-    const bar = active.length
-      ? `<div class="lb-bar" role="img" aria-label="${esc(
-          active.map((w) => `${w.name} ${shareOf(w)}%`).join(", ")
-        )}">${active
-          .map(
-            (w, i) =>
-              `<span class="lb-seg lb-seg-${(i % 4) + 1}" style="flex: ${Math.max(shareOf(w), 1)}">
-                 <span class="lb-seg-name">${esc(w.name || w.lan_intf)}</span>
-                 <span class="lb-seg-pct">${shareOf(w)}%</span>
-               </span>`
-          )
-          .join("")}</div>`
-      : `<p class="box-empty">No link is set to carry traffic. Every WAN here is either standby or out of load balancing.</p>`;
-
-    // One sentence, built from the same numbers the bar is drawn from.
-    let sentence;
-    if (active.length === 1) {
-      sentence = `Everything leaves by ${active[0].name}.`;
-    } else if (active.length > 1) {
-      sentence = `Outbound traffic is split across ${active.length} links: ${active
-        .map((w) => `${w.name} ${shareOf(w)}%`)
-        .join(", ")}.`;
-    } else {
-      sentence = "Nothing is set to carry traffic right now.";
-    }
-    if (backup.length === 1) {
-      sentence += ` ${backup[0].name} takes over if the active link fails.`;
-    } else if (backup.length > 1) {
-      sentence += ` ${backup.map((w) => w.name).join(", then ")} take over in that order if the active links fail.`;
-    } else if (active.length === 1) {
-      sentence += " There is no standby link: if it fails, the site is offline.";
-    }
-
-    // The device divides traffic by the ratio between the shares, so a set
-    // totalling 150 is not broken, it is unreadable: "50%" on a card means
-    // a third of the traffic. What the numbers actually come to is stated
-    // rather than left for the operator to work out.
-    const warn =
-      active.length > 1 && total !== 100
-        ? `<p class="warn">These shares add up to ${total}%, not 100%. The device splits traffic by the ratio
-             between them, so ${active
-               .map((w) => `${esc(w.name)} is really getting ${effectiveShare(w, total)}%`)
-               .join(" and ")}. Set them below to say what you mean.</p>`
-        : "";
-
-    // Shares are only meaningful against each other, so they are edited
-    // together here rather than one at a time on each card. Changing one
-    // moves the difference into the others, which is the behaviour the
-    // numbers imply: turning a second link up to 50% has to take 50% from
-    // somewhere.
-    //
-    // It appears for a single active link too. Moving the second link to
-    // standby leaves the first holding whatever share it had, and with no
-    // editor and no field on the card there was then nothing anywhere
-    // that could change it. One link carries everything by definition, so
-    // the field opens at 100 and saving writes what the device already
-    // does.
-    //
-    // With one active link there is nothing to divide, so the editor has
-    // a job only when the device is still holding some other number from
-    // when the link had company. Then it says so and offers the one
-    // correction available. Otherwise it stays away: a lone read-only
-    // field under the word "Split" is a control that does nothing.
-    const lone = active.length === 1;
-    const loneStale = lone && shareOf(active[0]) !== 100;
-    const editor =
-      active.length > 1 || loneStale
-        ? `<div class="lb-edit" id="lb-edit">
-             <span class="legend">${lone ? "Share" : "Split"}</span>
-             ${active
-               .map(
-                 (w) => `<label class="lb-edit-field">
-                     <span>${esc(w.name || w.lan_intf)}</span>
-                     <input type="number" min="0" max="100" step="1"
-                            data-lb-port="${portOf(w)}" value="${lone ? 100 : shareOf(w)}"
-                            data-lb-saved="${shareOf(w)}"${lone ? " readonly" : ""}>
-                     <span class="lb-edit-pct">%</span>
-                   </label>`
-               )
-               .join("")}
-             ${
-               lone
-                 ? `<span class="lb-edit-note">${esc(active[0].name)} carries everything, but the device still
-                      holds ${shareOf(active[0])}%. Save to make the two agree.</span>`
-                 : '<span class="lb-edit-total" id="lb-edit-total"></span>'
-             }
-             ${lone ? "" : '<button type="button" class="row-edit" id="lb-even">Split evenly</button>'}
-             <button type="button" class="row-edit primary" id="lb-save" disabled>Save split</button>
-           </div>`
-        : "";
-
-    const standbyRow = backup.length
-      ? `<p class="lb-row"><span class="legend">Standby</span>${backup
-          .map((w) => `<span class="role-chip role-backup">${esc(w.name)} · priority ${priorityOf(w)}</span>`)
-          .join("")}</p>`
-      : "";
-    const offRow = off.length
-      ? `<p class="lb-row"><span class="legend">Out of rotation</span>${off
-          .map((w) => `<span class="role-chip role-off">${esc(w.name)}</span>`)
-          .join("")}</p>`
-      : "";
-
-    return `<h2 class="lb-heading">Load balancing</h2>
-      <p class="lb-sentence">${esc(sentence)}</p>
-      ${bar}
-      ${standbyRow}
-      ${offRow}
-      ${warn}
-      ${editor}
-      <p class="muted">Only links set to carry traffic take a share. Give a link that role on its own
-        card above to bring it into the split. A link is declared down after the
-        number of failed pings set under Connection check, and traffic moves to the next link in line.</p>`;
+    refreshEditor();
   }
 
   function portOf(w) {
@@ -470,7 +352,6 @@
     const isStatic = !pppoe && w.ip_mode === "static";
     const isPPPoE = !!pppoe;
     const currentMode = isPPPoE ? "pppoe" : isStatic ? "static" : "dhcp";
-    const lbMode = lb.lb_mode || "shared";
     const body = `
       <fieldset class="form-section">
         <legend>How this link gets its address</legend>
@@ -499,26 +380,9 @@
         </div>
       </fieldset>
 
-      <fieldset class="form-section">
-        <legend>What this link does for load balancing</legend>
-        <label>Role
-          <select id="cfg-wan-lbmode">
-            <option value="shared" ${lbMode === "shared" ? "selected" : ""}>Carry traffic</option>
-            <option value="backup" ${lbMode === "backup" ? "selected" : ""}>Stand by as backup</option>
-            <option value="disabled" ${lbMode === "disabled" ? "selected" : ""}>Stay out of load balancing</option>
-          </select>
-        </label>
-        <p class="muted" id="cfg-wan-share-note" ${lbMode === "shared" ? "" : "hidden"}>
-          This link's share of outbound traffic is set under Load balancing, with the others it is
-          shared with. A share only means something next to the rest of the set.
-        </p>
-        <div id="cfg-wan-priority-field" ${lbMode === "backup" ? "" : "hidden"}>
-          <label>Takeover order
-            <input id="cfg-wan-priority" type="number" min="0" max="10" value="${esc(lb["lb_backup-link-priority"] || "0")}">
-          </label>
-          <p class="muted">0 takes over first, 10 last.</p>
-        </div>
-      </fieldset>
+      <p class="muted">This link's role in load balancing, its share of outbound traffic and its
+        takeover order are set together under Load balancing, where the other links are visible.</p>
+
 
       <fieldset class="form-section">
         <legend>How the device decides this link is down</legend>
@@ -585,16 +449,6 @@
         await renderOutcome(outcomeEl, outcome);
       }
 
-      const newLBMode = el.querySelector("#cfg-wan-lbmode").value;
-      const newPriority = parseInt(el.querySelector("#cfg-wan-priority").value, 10) || 0;
-      const priorityChanged =
-        newLBMode === "backup" && String(newPriority) !== String(lb["lb_backup-link-priority"] || "0");
-      if (newLBMode !== lbMode || priorityChanged) {
-        const req = { action: "load_balance_mode", port, lb_mode: newLBMode };
-        if (newLBMode === "backup") req.priority = newPriority;
-        const outcome = await postJSON("/api/config/wan", req);
-        await renderOutcome(outcomeEl, outcome);
-      }
 
       const hosts = el
         .querySelector("#cfg-wan-hosts")
@@ -643,10 +497,6 @@
     modalEl.querySelector("#cfg-wan-mode").addEventListener("change", (e) => {
       modalEl.querySelector("#cfg-wan-static-fields").hidden = e.target.value !== "static";
       modalEl.querySelector("#cfg-wan-pppoe-fields").hidden = e.target.value !== "pppoe";
-    });
-    modalEl.querySelector("#cfg-wan-lbmode").addEventListener("change", (e) => {
-      modalEl.querySelector("#cfg-wan-priority-field").hidden = e.target.value !== "backup";
-      modalEl.querySelector("#cfg-wan-share-note").hidden = e.target.value !== "shared";
     });
     modalEl.classList.add("modal-wide");
   }

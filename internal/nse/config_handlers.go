@@ -828,11 +828,16 @@ func pppoeStatusByPort(cfgRaw string) map[int]PPPoEStatus {
 	return out
 }
 
-// wanShare is one link's slice of outbound traffic, as sent by the load
-// balancing editor.
-type wanShare struct {
-	Port    int `json:"port"`
-	Percent int `json:"percent"`
+// wanLink is one link's whole part in load balancing, as sent by the
+// Load balancing editor: the role it plays and the one number that role
+// takes. Role and share are the same decision, since a share means
+// nothing until the link is carrying traffic at all, so they are sent
+// and written together.
+type wanLink struct {
+	Port     int    `json:"port"`
+	Mode     string `json:"mode"` // "shared" | "backup" | "disabled"
+	Percent  int    `json:"percent"`
+	Priority int    `json:"priority"`
 }
 
 type wanRequest struct {
@@ -845,17 +850,17 @@ type wanRequest struct {
 	Hosts   []string `json:"hosts"`
 	Percent int      `json:"percent"`
 
-	// Shares carries the whole active set for action "traffic_shares".
-	// The device divides outbound traffic by the ratio between these
-	// numbers, so they are only meaningful against each other and are
-	// written in one block rather than one port at a time.
-	Shares       []wanShare `json:"shares"`
-	UplinkMbps   int        `json:"uplink_mbps"`
-	DownlinkMbps int        `json:"downlink_mbps"`
-	Name         string     `json:"name"`     // for "enable" and "change_port"
-	LBMode       string     `json:"lb_mode"`  // "shared" | "backup" | "disabled"
-	Priority     *int       `json:"priority"` // backup-link-priority, only meaningful with lb_mode=backup
-	NewPort      int        `json:"new_port"` // for "change_port": the eth port to move this WAN to
+	// Links carries every WAN's role and number for action
+	// "load_balance". The device divides outbound traffic by the ratio
+	// between the shared links' percentages, so no single entry can be
+	// judged on its own; the set is written in one block.
+	Links        []wanLink `json:"links"`
+	UplinkMbps   int       `json:"uplink_mbps"`
+	DownlinkMbps int       `json:"downlink_mbps"`
+	Name         string    `json:"name"`     // for "enable" and "change_port"
+	LBMode       string    `json:"lb_mode"`  // "shared" | "backup" | "disabled"
+	Priority     *int      `json:"priority"` // backup-link-priority, only meaningful with lb_mode=backup
+	NewPort      int       `json:"new_port"` // for "change_port": the eth port to move this WAN to
 
 	// PPPoE fields, only used when Mode == "pppoe".
 	PPPoEUser        string `json:"pppoe_user"`
@@ -934,8 +939,8 @@ func (s *Server) handlePostConfigWAN(w http.ResponseWriter, r *http.Request) {
 	// are. Editing it one port at a time is how a device ends up with
 	// shares that add to 150, so the whole set is written in one block and
 	// confirmed once.
-	if req.Action == "traffic_shares" {
-		s.applyWANTrafficShares(w, req.Shares)
+	if req.Action == "load_balance" {
+		s.applyWANLoadBalance(w, req.Links)
 		return
 	}
 	if req.Port < 1 {
@@ -1093,56 +1098,90 @@ func (s *Server) handlePostConfigWAN(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, outcome)
 }
 
-// applyWANTrafficShares writes one traffic-share leaf per port in a single
-// ConfigBlock, so the set either lands together or not at all. Applying
-// them one at a time would leave the device holding a half-updated split
-// between the two requests, and would ask the operator to confirm a
-// lockout-risk change once per link.
-func (s *Server) applyWANTrafficShares(w http.ResponseWriter, shares []wanShare) {
-	if len(shares) == 0 {
-		writeSettingsError(w, http.StatusBadRequest, "shares is required")
-		return
-	}
-	total := 0
-	seen := make(map[int]bool, len(shares))
-	for _, sh := range shares {
-		if sh.Port < 1 {
-			writeSettingsError(w, http.StatusBadRequest, "each share needs a port")
-			return
-		}
-		if seen[sh.Port] {
-			writeSettingsError(w, http.StatusBadRequest, fmt.Sprintf("port %d listed twice", sh.Port))
-			return
-		}
-		seen[sh.Port] = true
-		if sh.Percent < 0 || sh.Percent > 100 {
-			writeSettingsError(w, http.StatusBadRequest, "percent must be between 0 and 100")
-			return
-		}
-		total += sh.Percent
-	}
-	// The device treats the numbers as a ratio and would accept any total,
-	// but a set that does not add to 100 is almost always a half-finished
-	// edit rather than an intent, and it is what makes the split unreadable
-	// later. The editor that calls this always sends a balanced set.
-	if total != 100 {
-		writeSettingsError(w, http.StatusBadRequest, fmt.Sprintf("shares add up to %d%%, not 100%%", total))
+// applyWANLoadBalance writes every WAN's role and its accompanying number
+// in a single ConfigBlock, so the whole arrangement either lands or does
+// not.
+//
+// It has to be one block. Applying link by link would leave the device
+// holding a half-changed arrangement between requests -- briefly with no
+// link carrying traffic, or with two links each believing they carry all
+// of it -- and would ask the operator to confirm a lockout-risk change
+// once per link, on a page where the whole point is that the links are
+// judged against each other.
+func (s *Server) applyWANLoadBalance(w http.ResponseWriter, links []wanLink) {
+	if len(links) == 0 {
+		writeSettingsError(w, http.StatusBadRequest, "links is required")
 		return
 	}
 
-	// Sorted so the same set always produces the same command sequence,
-	// which keeps the block name and the rollback stanza stable.
-	ordered := append([]wanShare(nil), shares...)
+	shared := 0
+	total := 0
+	seen := make(map[int]bool, len(links))
+	for _, l := range links {
+		if l.Port < 1 {
+			writeSettingsError(w, http.StatusBadRequest, "each link needs a port")
+			return
+		}
+		if seen[l.Port] {
+			writeSettingsError(w, http.StatusBadRequest, fmt.Sprintf("port %d listed twice", l.Port))
+			return
+		}
+		seen[l.Port] = true
+		switch l.Mode {
+		case "shared":
+			if l.Percent < 0 || l.Percent > 100 {
+				writeSettingsError(w, http.StatusBadRequest, "percent must be between 0 and 100")
+				return
+			}
+			shared++
+			total += l.Percent
+		case "backup":
+			if l.Priority < 0 || l.Priority > 10 {
+				writeSettingsError(w, http.StatusBadRequest, "priority must be between 0 and 10")
+				return
+			}
+		case "disabled":
+		default:
+			writeSettingsError(w, http.StatusBadRequest, "mode must be 'shared', 'backup', or 'disabled'")
+			return
+		}
+	}
+
+	// The device would accept any total and treat the numbers as a ratio,
+	// but a set that does not add to 100 is a half-finished edit rather
+	// than an intent, and it is what makes a split unreadable afterwards:
+	// a link marked 50% out of 150% is really getting a third.
+	if shared > 0 && total != 100 {
+		writeSettingsError(w, http.StatusBadRequest, fmt.Sprintf("the shares add up to %d%%, not 100%%", total))
+		return
+	}
+	// Every link standing by leaves nothing carrying traffic, which is an
+	// outage rather than a configuration.
+	if shared == 0 {
+		writeSettingsError(w, http.StatusBadRequest, "at least one link has to carry traffic")
+		return
+	}
+
+	// Sorted so the same arrangement always produces the same command
+	// sequence, which keeps the rollback stanza stable.
+	ordered := append([]wanLink(nil), links...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Port < ordered[j].Port })
 
 	var lines, keys []string
-	for _, sh := range ordered {
-		lines = append(lines, BuildInterfaceEthLines(sh.Port, []string{WANTrafficSharePercentageLine(sh.Percent)})...)
-		keys = append(keys, fmt.Sprintf("interface eth %d", sh.Port))
+	for _, l := range ordered {
+		leaves := []string{WANLoadBalanceModeLine(l.Mode)}
+		switch l.Mode {
+		case "shared":
+			leaves = append(leaves, WANTrafficSharePercentageLine(l.Percent))
+		case "backup":
+			leaves = append(leaves, WANBackupLinkPriorityLine(l.Priority))
+		}
+		lines = append(lines, BuildInterfaceEthLines(l.Port, leaves)...)
+		keys = append(keys, fmt.Sprintf("interface eth %d", l.Port))
 	}
 
 	outcome, err := s.safeApplier().Apply(ConfigBlock{
-		Name:  "wan-traffic_shares",
+		Name:  "wan-load_balance",
 		Lines: lines,
 		Risk:  ClassifyRisk("wan"),
 		Keys:  keys,
