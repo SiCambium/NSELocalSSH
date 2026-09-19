@@ -122,7 +122,7 @@ func (c *Client) noteCloudJSONHit() {
 func (c *Client) cachedDerivedConfig(ttl time.Duration) (CloudConfig, bool) {
 	c.capMu.Lock()
 	defer c.capMu.Unlock()
-	if !c.derivedCfgOK || time.Since(c.derivedCfgAt) > ttl {
+	if !c.derivedCfgOK || time.Since(c.derivedCfgAt) >= ttl {
 		return CloudConfig{}, false
 	}
 	return c.derivedCfg, true
