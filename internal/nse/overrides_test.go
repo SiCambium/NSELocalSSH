@@ -144,7 +144,13 @@ func TestOverrideStoreRoundTrip(t *testing.T) {
 	if got["3"].Text != "no snmp-server" || !got["3"].AppliedAt.Equal(now) {
 		t.Errorf("round trip = %+v", got["3"])
 	}
-	if OverridesPath("/tmp/x/.env") != "/tmp/x/overrides.json" {
-		t.Errorf("OverridesPath = %q", OverridesPath("/tmp/x/.env"))
+	// filepath.Join is correct to use here and correct to return
+	// backslashes on Windows, so the expectation has to be built the same
+	// way rather than written as a POSIX literal. As a hardcoded string
+	// this failed on every Windows run and on no CI run.
+	settings := filepath.Join("tmp", "x", ".env")
+	want := filepath.Join("tmp", "x", "overrides.json")
+	if got := OverridesPath(settings); got != want {
+		t.Errorf("OverridesPath(%q) = %q, want %q", settings, got, want)
 	}
 }
