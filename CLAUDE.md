@@ -17,12 +17,15 @@ go test ./internal/nse -run 'TestConfig.*VPN' -v
 go vet ./...
 
 go run ./cmd/nse-status          # browser mode, http://127.0.0.1:8080
+sh scripts/dev.sh                # same, plus live reload of web/static (see below)
 sh scripts/package-macos.sh      # local .app into dist/ (copies ./.env into the bundle)
 sh scripts/build-portable.sh     # cross-compile nse-status for all platforms into build/
 sh scripts/build-release.sh v0.3 # portable + macOS app
 ```
 
 There is no linter config and no frontend build step — `web/static/*` is served straight from `embed.FS`, so a JS/CSS edit just needs a rebuild of the Go binary (or a reload in `go run` mode after restart).
+
+`scripts/dev.sh` avoids that round trip: setting `NSE_DEV_STATIC` to a directory serves the UI from disk instead of the embedded copy and enables `/api/dev/reload`, an SSE channel the page subscribes to and reloads on (see `devreload.go` and `web/static/dev-reload.js`). It is env-gated rather than build-tagged because it serves a directory and streams an unauthenticated event, neither of which belongs in a shipped build; with the variable unset nothing is registered. **Go changes still need a restart** — the page can reload itself, the process cannot — so after a `git pull` touching any `.go` file, restart rather than trusting the reload.
 
 Device credentials come from `.env` (`NSE_HOST`, `NSE_USER`, `NSE_PASSWORD`, `NSE_PORT`); `cp .env.example .env` to start. `LoadConfig` merges several candidate paths (exe dir, cwd, `~/.config/nse-status/`, `~/Library/Application Support/NSE Status/`) and env vars win over files; `WritableSettingsPath()` picks where the Settings UI writes back — inside a `.app` bundle that is Application Support, otherwise `./.env`. `prefs.json`, `profiles.json`, and `known_hosts.json` all live next to the writable `.env`.
 
