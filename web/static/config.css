@@ -101,6 +101,7 @@
 }
 .modal-body input[type="text"],
 .modal-body input[type="number"],
+.modal-body input[type="search"],
 .modal-body select {
   background: var(--bg-2);
   color: var(--text);
@@ -210,3 +211,8 @@
   text-transform: none;
   letter-spacing: normal;
 }
+
+/* A filtered-out country row must actually disappear. .check-row sets
+   display:flex, which outranks the browser's own [hidden] rule, so
+   without this the search would hide nothing. */
+.modal-body .check-row[hidden] { display: none; }
