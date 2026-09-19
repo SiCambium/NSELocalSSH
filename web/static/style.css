@@ -485,3 +485,20 @@ td.mono, .mono { font-family: var(--mono); }
    answering, red is not — without this a failed poll left the dot green,
    which is the one reading that would actively mislead. */
 .conn-dot.down { background: var(--down); }
+
+/* WAN activity, reusing the header's dot. A third state sits between up
+   and down: a backup link can be plugged in and healthy while carrying no
+   traffic, which is neither "active" nor a fault. */
+.conn-dot.idle { background: var(--warn); }
+.wan-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  vertical-align: middle;
+}
