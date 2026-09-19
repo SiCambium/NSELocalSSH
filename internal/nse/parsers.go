@@ -753,6 +753,74 @@ type FilterRule struct {
 	Rule       string   `json:"rule,omitempty"`
 	Kind       string   `json:"kind,omitempty"`
 	Extra      []string `json:"extra,omitempty"`
+
+	// Parsed is Rule broken into the fields cnMaestro shows when you open
+	// a rule. It is display only: Rule stays the authority, and everything
+	// that rewrites the table replays Rule verbatim, so a shape this
+	// parser does not recognise is passed through untouched rather than
+	// rebuilt from these.
+	Parsed *FilterRuleParts `json:"parsed,omitempty"`
+}
+
+// FilterRuleParts is the readable form of a layer3-filter body.
+//
+// The device writes an endpoint as "address/mask", or the bare word "any",
+// or a group name; cnMaestro splits address and mask into their own rows,
+// so they are split here too.
+type FilterRuleParts struct {
+	Action          string `json:"action,omitempty"`
+	Protocol        string `json:"protocol,omitempty"`
+	Source          string `json:"source,omitempty"`
+	SourceMask      string `json:"source_mask,omitempty"`
+	SourcePort      string `json:"source_port,omitempty"`
+	Destination     string `json:"destination,omitempty"`
+	DestinationMask string `json:"destination_mask,omitempty"`
+	DestinationPort string `json:"destination_port,omitempty"`
+}
+
+func splitFilterEndpoint(token string) (addr, mask string) {
+	if i := strings.Index(token, "/"); i > 0 {
+		return token[:i], token[i+1:]
+	}
+	return token, ""
+}
+
+// ParseFilterRuleBody breaks a layer3-filter body into its parts.
+//
+// Two shapes occur. "<action> proto <proto> <src> <sport> <dst> <dport> in"
+// is what this app and cnMaestro write for an operator rule, and
+// "<action> ip <src> <dst> <dport>" is what a VLAN rate-limit rule uses.
+// Anything else returns nil, so the caller shows the raw line rather than
+// a confidently mislabelled breakdown.
+func ParseFilterRuleBody(rule string) *FilterRuleParts {
+	f := strings.Fields(strings.TrimSpace(rule))
+	if len(f) < 4 {
+		return nil
+	}
+	out := &FilterRuleParts{Action: f[0]}
+	switch f[1] {
+	case "proto":
+		if len(f) < 7 {
+			return nil
+		}
+		out.Protocol = f[2]
+		out.Source, out.SourceMask = splitFilterEndpoint(f[3])
+		out.SourcePort = f[4]
+		out.Destination, out.DestinationMask = splitFilterEndpoint(f[5])
+		out.DestinationPort = f[6]
+	case "ip":
+		out.Protocol = "ip"
+		out.Source, out.SourceMask = splitFilterEndpoint(f[2])
+		if len(f) > 3 {
+			out.Destination, out.DestinationMask = splitFilterEndpoint(f[3])
+		}
+		if len(f) > 4 {
+			out.DestinationPort = f[4]
+		}
+	default:
+		return nil
+	}
+	return out
 }
 
 // FullLine returns the complete match-content leaf line for this rule,
@@ -772,6 +840,9 @@ func ParseConfigFilter(raw string) []FilterRule {
 	has := false
 	flush := func() {
 		if has {
+			if current.Kind == "layer3" {
+				current.Parsed = ParseFilterRuleBody(current.Rule)
+			}
 			rows = append(rows, current)
 			current = FilterRule{}
 			has = false
