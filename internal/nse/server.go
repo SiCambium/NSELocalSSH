@@ -739,6 +739,11 @@ func (s *Server) Handler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
+		// Dev mode stamps a version onto the asset URLs so a browser
+		// cannot reuse a copy it cached before this server started.
+		if dir := devStaticDir(); dir != "" && serveDevIndex(w, dir) {
+			return
+		}
 		http.ServeFileFS(w, r, static, "index.html")
 	})
 	return mux
