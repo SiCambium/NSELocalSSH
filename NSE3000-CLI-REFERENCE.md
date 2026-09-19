@@ -384,6 +384,57 @@ Many guessed `show <feature>` names also fail (`show firewall`, `show wan`, `sho
 
 This NSE is cloud-managed; cnMaestro remains the source of truth and may overwrite local CLI edits.
 
+**Firmware carries two partitions, and upgrades alternate (2026-09-19).**
+`show boot` reports both on a live NSE3000:
+
+```text
+Active Software Version  : 2.3-r6
+Backup Software Version  : 2.2-r6
+```
+
+`show upgrade` also exists and answers `Upgrade status not available` when
+nothing is in flight, so there is an upgrade subsystem with a status
+command. Per the device owner: an upgrade runs against the primary
+partition the first time and the secondary the next, alternating, so two
+consecutive upgrades leave both partitions current. The write side
+(starting an upgrade, switching the active partition) has **not** been
+probed: guessing a keyword in a config-mode CLI on a production unit is
+exactly the mistake this document exists to prevent. Establish it on a
+lab unit.
+
+**`service show config` holds the fields `show config` will not print
+(2026-09-19).** 721 keys on a 2.3-r6 NSE3000, including
+`interface_eth.N.periodic_speedtest`, `interface_eth.N.dyndns_mode`,
+`interface_eth.N.vlan` and `interface_vlan.N.management_access`. These
+were never cloud-only: cnMaestro reads this same store. Note the key
+naming maps to CLI leaves by swapping `_` for `-` in the cases already
+confirmed (`wan_name` ↔ `wan-name`, `management_access` ↔
+`management-access`), which makes `periodic_speedtest` ↔
+`periodic-speedtest` a testable hypothesis rather than a guess. This
+command dumps every secret in cleartext.
+
+**Monitor-host latency is already measured and logged (2026-09-19).**
+`service show debug-logs wanlb` carries per-cycle summaries from the load
+balancer's own pinging:
+
+```text
+{"Interface":"eth1","Package":"interfacehealthchecker",
+ "msg":"Ping stats for 1.1.1.1: {0 21.443417ms 52.545039ms 243.228697ms}
+",
+ "time":"2026-09-19T11:29:35-03:00"}
+```
+
+The three durations are min, mean and max (ascending in every sample
+captured, on both a LAN gateway and a public resolver). The leading
+integer is unconfirmed. `Interface` is the kernel's name, not the CLI's.
+
+**No speedtest result is retrievable (2026-09-19).** `show speedtest`,
+`show speed-test`, `show wan speedtest`, `show speedtest result`, `show
+speedtest history` and `service show speedtest` all answer `%Error
+processing cli command`. The device runs tests but keeps no readable
+history, so any speedtest chart has to be built from runs this app
+triggered itself.
+
 ---
 
 ## Notes from this session
