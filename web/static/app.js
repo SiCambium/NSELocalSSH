@@ -26,6 +26,10 @@ let dhcpSub = "pools";
 // for all of them. Kept next to dhcpSub because both are view state the
 // page rebuilds from, not data.
 let dhcpPoolFilter = null;
+// The Devices search box. Held here rather than read from the input
+// because the page re-renders on every poll, which would otherwise wipe
+// the filter out from under whoever is typing.
+let deviceSearch = "";
 // 0 means "nothing chosen yet", so the first load of the Settings page
 // edits whichever connection is actually live rather than whichever one
 // happens to hold id 1.
@@ -257,7 +261,12 @@ function render(tab, data) {
   if (tab === "routing") el.innerHTML = renderRouting(data);
   if (tab === "dhcp") el.innerHTML = renderDhcp(data);
   if (tab === "neighbors") el.innerHTML = renderNeighbors(data);
-  if (tab === "devices") el.innerHTML = renderDevices(data);
+  if (tab === "devices") {
+    el.innerHTML = renderDevices(data);
+    // Re-apply after every render, including the ones a poll triggers, so
+    // a filter set a minute ago still holds.
+    applyDeviceFilter();
+  }
   if (tab === "tunnels") el.innerHTML = renderTunnels(data);
   if (tab === "tailscale") el.innerHTML = renderTailscale(data);
   if (tab === "firewallcounters") el.innerHTML = renderFirewallCounters(data);
@@ -890,13 +899,45 @@ function renderNeighbors(d) {
   `;
 }
 
+// Filtering hides rows in place rather than re-rendering the table: the
+// search input keeps its focus and caret while typing, which a re-render
+// would take away on every keystroke.
+function applyDeviceFilter() {
+  const panel = panels.devices;
+  if (!panel) return;
+  const countEl = panel.querySelector("#device-count");
+  const rows = [...panel.querySelectorAll("[data-device]")];
+  if (!rows.length) {
+    if (countEl) countEl.textContent = "";
+    return;
+  }
+  const q = deviceSearch.trim().toLowerCase();
+  let shown = 0;
+  rows.forEach((row) => {
+    const match = !q || row.dataset.search.includes(q);
+    row.hidden = !match;
+    if (match) shown++;
+  });
+  if (countEl) {
+    countEl.textContent = q
+      ? `${shown} of ${rows.length} devices match "${deviceSearch.trim()}"`
+      : `${rows.length} devices`;
+  }
+}
+
 function renderDevices(d) {
   const clients = d.clients || [];
   const rows = table(
     ["MAC", "IP Address", "Hostname", "Type", "Type Name", "Brand", "OS", "OS Version", "Last Seen"],
     clients.map(
       (c) =>
-        `<tr>
+        // Every identifying field goes in data-search, so one box covers
+        // MAC, IP, hostname and OS without the user having to pick which
+        // column they are thinking of — and matching never depends on the
+        // rendered text, which carries markup.
+        `<tr data-device data-search="${esc(
+          [c.mac, c.ip, c.hostname, c.type, c.type_name, c.brand, c.os, c.os_version].join(" ").toLowerCase()
+        )}">
           <td class="mono">${esc(c.mac)}</td>
           <td class="mono">${esc(c.ip)}</td>
           <td>${esc(c.hostname)}</td>
@@ -911,6 +952,10 @@ function renderDevices(d) {
   );
   return `
     <h2>Connected Devices</h2>
+    <div class="panel-search">
+      <input id="device-search" type="search" value="${esc(deviceSearch)}" placeholder="Search MAC, IP, hostname, OS, brand…" autocomplete="off" aria-label="Search connected devices">
+      <span class="muted" id="device-count"></span>
+    </div>
     <p class="muted">Device-identification fingerprints (type, brand, OS) for hosts the NSE has seen on the LAN — this is the result of Vulnerability Scan/Device Identification, gated by the same per-VLAN toggles on the Config page's Network tab. Discovered open ports aren't exposed by this CLI, only the identification result.</p>
     ${rows || '<p class="muted">No connected clients found.</p>'}
   `;
@@ -1396,6 +1441,12 @@ document.getElementById("settings-clear").addEventListener("click", async () => 
     err.hidden = false;
     err.textContent = e.message;
   }
+});
+
+document.getElementById("panel-devices").addEventListener("input", (ev) => {
+  if (!ev.target.closest("#device-search")) return;
+  deviceSearch = ev.target.value;
+  applyDeviceFilter();
 });
 
 document.getElementById("panel-dhcp").addEventListener("click", (ev) => {

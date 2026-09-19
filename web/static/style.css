@@ -510,3 +510,31 @@ td.mono, .mono { font-family: var(--mono); }
   background: var(--bg-2);
   box-shadow: inset 2px 0 0 var(--accent);
 }
+
+/* A filtered-out device row must actually disappear; tr carries its own
+   display value, so rely on an explicit rule rather than the UA default. */
+tr[hidden] { display: none; }
+
+/* A search box on a status panel. The form styling in config.css is
+   scoped to .modal-body, so without this the input would render as a pale
+   browser default on a dark page. */
+.panel-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 12px;
+}
+.panel-search input[type="search"] {
+  flex: 1 1 280px;
+  max-width: 420px;
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 8px 10px;
+  font: inherit;
+}
+.panel-search input[type="search"]:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
