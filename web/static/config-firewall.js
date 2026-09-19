@@ -126,6 +126,30 @@
     return null;
   }
 
+  // The source restriction is not per-service: it scopes every
+  // allowed-service on the device, so the same lines that scope a ping
+  // also scope SSH and HTTPS. A box answering only a narrow range looks
+  // identical to an unrestricted one everywhere else in this UI, which is
+  // why it is worth stating plainly.
+  function deviceAccessSources() {
+    const d = cache.device_access_sources || {};
+    return { ips: d.ip_addresses || [], groups: d.ip_groups || [] };
+  }
+
+  function deviceAccessSourcesLabel() {
+    const { ips, groups } = deviceAccessSources();
+    const parts = [...groups.map((g) => `group ${g}`), ...ips];
+    return parts.length ? esc(parts.join(", ")) : "Any";
+  }
+
+  function deviceAccessSourcesNote() {
+    const { ips, groups } = deviceAccessSources();
+    if (!ips.length && !groups.length) {
+      return `<p class="muted">No source restriction: every allowed service answers from anywhere it is reachable.</p>`;
+    }
+    return `<p class="warn">Management access — SSH and HTTPS included, not just ping — is restricted to these sources.</p>`;
+  }
+
   function render() {
     const panel = document.getElementById("config-firewall-panel");
     const rules = cache.outbound_filter_rules || [];
@@ -162,7 +186,9 @@
       <h2>Device Access</h2>
       <div class="grid">
         ${stat("Respond to ICMP pings from WAN", cache.respond_to_icmp_from_wan ? "Enabled" : "Disabled")}
+        ${stat("Allowed sources", deviceAccessSourcesLabel())}
       </div>
+      ${deviceAccessSourcesNote()}
       <h2>DoS Protection</h2>
       <div class="grid">
         ${stat("Anti IP-spoofing", cache.dos_protection_ip_spoof ? "Enabled" : "Disabled")}
@@ -498,6 +524,10 @@
   function editFirewall() {
     const body = `
       <label class="check-row"><input id="cfg-fw-icmp" type="checkbox" ${cache.respond_to_icmp_from_wan ? "checked" : ""}> Respond to ICMP pings from WAN</label>
+      <label>Allowed sources (IP address, range or subnet)
+        <input id="cfg-fw-da-source" type="text" value="${esc((deviceAccessSources().ips || [])[0] || "")}" placeholder="empty = reachable from anywhere">
+      </label>
+      <p class="muted">Applies to every service above, SSH and HTTPS included — not just ping. One value only: setting it replaces whatever is there. A range that excludes the address this session connects from is refused before anything is sent, because the rollback would travel over the connection it cuts.</p>
       <label class="check-row"><input id="cfg-fw-spoof" type="checkbox" ${cache.dos_protection_ip_spoof ? "checked" : ""}> Anti IP-spoofing</label>
       <label class="check-row"><input id="cfg-fw-spoof-log" type="checkbox" ${cache.dos_protection_ip_spoof_log ? "checked" : ""}> Log IP-spoof hits</label>
       <label class="check-row"><input id="cfg-fw-smurf" type="checkbox" ${cache.dos_protection_smurf_attack ? "checked" : ""}> Smurf-attack protection</label>
@@ -519,6 +549,19 @@
           const outcome = await postJSON("/api/config/firewall", { action, enable });
           await renderOutcome(outcomeEl, outcome);
         }
+      }
+
+      // Sent last, so the toggles above are already applied if this one is
+      // refused — and it is the one the backend can refuse outright, when
+      // the range would exclude the session applying it.
+      const source = el.querySelector("#cfg-fw-da-source").value.trim();
+      const sourceWas = (deviceAccessSources().ips || [])[0] || "";
+      if (source !== sourceWas) {
+        const outcome = await postJSON("/api/config/firewall", {
+          action: "device_access_ip_address",
+          device_access_ip_address: source,
+        });
+        await renderOutcome(outcomeEl, outcome);
       }
       await load();
     });

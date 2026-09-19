@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"regexp"
 	"strings"
 	"sync"
@@ -382,6 +383,27 @@ func (c *Client) unwindLocked(lastOut string, timeout time.Duration) {
 		out = next
 	}
 	c.closeLocked()
+}
+
+// LocalAddr reports the address this session reaches the device from, as
+// the device sees it — the local end of the live SSH connection.
+//
+// It exists so a source restriction cannot be set to a range that
+// excludes the session setting it. Any NAT between here and the device
+// would make this the pre-NAT address and the check unreliable, but on
+// the LAN path this app is built for, it is the address the device
+// applies its device-access rules against.
+func (c *Client) LocalAddr() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := c.ensure(); err != nil || c.conn == nil {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(c.conn.LocalAddr().String())
+	if err != nil {
+		return ""
+	}
+	return host
 }
 
 func (c *Client) Snapshot() Config {
