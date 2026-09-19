@@ -314,6 +314,17 @@ func NormalizeFilterAction(action string) string {
 	return action
 }
 
+// LANPortAutoVLANLine toggles auto-VLAN on a LAN port. CONFIRMED live on
+// an NSE 4000: "no auto-vlan" removes the leaf and "auto-vlan" restores
+// it, and the sibling "auto-vlan-msg-auth" is untouched either way — it is
+// an independent setting that survives auto-VLAN being turned off.
+func LANPortAutoVLANLine(enable bool) string {
+	if enable {
+		return "auto-vlan"
+	}
+	return "no auto-vlan"
+}
+
 // NetworkAddress computes the network address for an IP/dotted-decimal
 // mask pair (e.g. 172.21.0.1 + 255.255.0.0 -> 172.21.0.0), needed for the
 // DHCP pool "network" line, which is confirmed to want the network

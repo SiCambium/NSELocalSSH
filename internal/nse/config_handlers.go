@@ -293,7 +293,7 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 		writeSettingsError(w, http.StatusBadRequest, "invalid JSON")
 		return
 	}
-	isPortAction := req.Action == "port_switchport" || req.Action == "port_shutdown" || req.Action == "port_speed"
+	isPortAction := req.Action == "port_switchport" || req.Action == "port_shutdown" || req.Action == "port_speed" || req.Action == "port_auto_vlan"
 	if !isPortAction && req.VLANID < 1 {
 		writeSettingsError(w, http.StatusBadRequest, "vlan_id is required")
 		return
@@ -349,6 +349,21 @@ func (s *Server) handlePostConfigNetwork(w http.ResponseWriter, r *http.Request)
 			Lines: BuildInterfaceEthLines(req.Port, []string{LANPortShutdownLine(*req.Enabled)}),
 			Risk:  ClassifyRisk("lan-port"),
 			Keys:  []string{fmt.Sprintf("interface eth %d", req.Port)},
+		}
+	case "port_auto_vlan":
+		if req.Enabled == nil {
+			writeSettingsError(w, http.StatusBadRequest, "enabled is required")
+			return
+		}
+		// Enabled is the presence of a leaf, so a stanza pre-image cannot
+		// undo switching it on — there is nothing in the old stanza saying
+		// the leaf should not be there. The inverse is explicit.
+		block = ConfigBlock{
+			Name:  "lan-port-auto-vlan",
+			Lines: BuildInterfaceEthLines(req.Port, []string{LANPortAutoVLANLine(*req.Enabled)}),
+			Risk:  ClassifyRisk("lan-port"),
+			Keys:  []string{fmt.Sprintf("interface eth %d", req.Port)},
+			Undo:  BuildInterfaceEthLines(req.Port, []string{LANPortAutoVLANLine(!*req.Enabled)}),
 		}
 	case "port_speed":
 		if req.Speed == "" && req.Duplex == "" && req.Advertise == "" {

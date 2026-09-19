@@ -205,3 +205,36 @@ func TestDefaultRouteInterfacesWithTwoUplinks(t *testing.T) {
 		t.Fatalf("both default routes should be reported: %v", got)
 	}
 }
+
+// "auto-vlan-msg-auth" is a separate setting that shares this leaf's
+// prefix and survives auto-VLAN being switched off — CONFIRMED live. A
+// prefix match would report a port as auto-VLAN enabled purely because
+// msg-auth is set.
+func TestParsePortAutoVLANIgnoresMsgAuthLeaf(t *testing.T) {
+	raw := "show config\n!\n" +
+		"interface eth 2\n type lan\n auto-vlan\n auto-vlan-msg-auth\n no shutdown\n exit\n!\n" +
+		"interface eth 4\n type lan\n auto-vlan-msg-auth\n no shutdown\n exit\n!\n" +
+		"interface eth 5\n type lan\n no shutdown\n exit\n!\n"
+	byIface := map[string]PortVLAN{}
+	for _, p := range ParseLANConfig(raw).Ports {
+		byIface[p.Interface] = p
+	}
+	if !byIface["eth2"].AutoVLAN {
+		t.Error("eth2 has the auto-vlan leaf and should read as enabled")
+	}
+	if byIface["eth4"].AutoVLAN {
+		t.Error("eth4 has only auto-vlan-msg-auth and must not read as enabled")
+	}
+	if byIface["eth5"].AutoVLAN {
+		t.Error("eth5 has neither leaf and must not read as enabled")
+	}
+}
+
+func TestLANPortAutoVLANLine(t *testing.T) {
+	if got := LANPortAutoVLANLine(true); got != "auto-vlan" {
+		t.Fatalf("enable = %q", got)
+	}
+	if got := LANPortAutoVLANLine(false); got != "no auto-vlan" {
+		t.Fatalf("disable = %q", got)
+	}
+}

@@ -1109,6 +1109,15 @@ type PortVLAN struct {
 	Duplex       string `json:"duplex,omitempty"`
 	Advertise    string `json:"advertise,omitempty"`
 	Shutdown     bool   `json:"shutdown"`
+
+	// AutoVLAN is the "auto-vlan" leaf, present when enabled and absent
+	// when not — CONFIRMED live: "no auto-vlan" removes the leaf and
+	// "auto-vlan" puts it back.
+	//
+	// Note the sibling leaf "auto-vlan-msg-auth", which is a separate
+	// setting and survives auto-vlan being turned off. It shares this
+	// leaf's prefix, so the two must be told apart by exact match.
+	AutoVLAN bool `json:"auto_vlan"`
 }
 
 // MACBinding is one DHCP reservation ("bind <MAC> <IP>") inside an
@@ -1326,6 +1335,11 @@ func ParseLANConfig(raw string) LANConfig {
 			}
 			if strings.HasPrefix(stripped, "switchport trunk allowed vlan ") {
 				port.AllowedVLANs = strings.TrimPrefix(stripped, "switchport trunk allowed vlan ")
+			}
+			// Exact match, not a prefix: "auto-vlan-msg-auth" is a
+			// different setting that would otherwise read as this one.
+			if stripped == "auto-vlan" {
+				port.AutoVLAN = true
 			}
 			if strings.HasPrefix(stripped, "speed ") {
 				port.Speed = strings.TrimPrefix(stripped, "speed ")
