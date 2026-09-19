@@ -61,6 +61,191 @@
     wireEditor();
   }
 
+  // --- Load balancing ----------------------------------------------------
+  // Load balancing is the reason most people open this page, and it was
+  // the one thing the page did not show: each WAN card carried its own
+  // "lb_mode" and "traffic share %" as two more rows of CLI vocabulary,
+  // and nothing anywhere said which link the traffic actually leaves by,
+  // or what happens when it fails. That is a property of the set of WANs,
+  // not of any one of them, so it is stated once, below the cards, in the
+  // order someone asks it: what carries traffic now, what takes over, and
+  // what is out of the rotation. It sits after the links because it is
+  // about them: the summary and the split editor both name links the
+  // reader has to have met first.
+
+  function lbOf(w) {
+    return w.load_balance_config || {};
+  }
+
+  function shareOf(w) {
+    const n = parseInt(lbOf(w)["lb_traffic-share-percentage"], 10);
+    return Number.isNaN(n) ? 0 : n;
+  }
+
+  // What a link is really getting, once the device has treated the shares
+  // as a ratio. Equal to the raw share whenever the set totals 100.
+  function effectiveShare(w, total) {
+    if (!total) return 0;
+    return Math.round((shareOf(w) / total) * 100);
+  }
+
+  function priorityOf(w) {
+    const n = parseInt(lbOf(w)["lb_backup-link-priority"], 10);
+    return Number.isNaN(n) ? 0 : n;
+  }
+
+  function roleOf(w) {
+    const mode = (lbOf(w).lb_mode || "").toLowerCase();
+    if (mode === "shared") return "active";
+    if (mode === "backup") return "backup";
+    return "off";
+  }
+
+  // The role as the operator would say it out loud, used both on the card
+  // heading and in the summary.
+  function roleLabel(w) {
+    const role = roleOf(w);
+    if (role === "active") return `Carrying traffic · ${shareOf(w)}%`;
+    if (role === "backup") return `Standby · priority ${priorityOf(w)}`;
+    return "Not in load balancing";
+  }
+
+  function loadBalanceSummary(wans) {
+    if (!wans.length) return "";
+    const active = wans.filter((w) => roleOf(w) === "active");
+    const backup = wans
+      .filter((w) => roleOf(w) === "backup")
+      .sort((a, b) => priorityOf(a) - priorityOf(b));
+    const off = wans.filter((w) => roleOf(w) === "off");
+    const total = active.reduce((sum, w) => sum + shareOf(w), 0);
+
+    // The bar is the division of outbound traffic, drawn to scale. With
+    // one active link it is a single full-width band, which is the true
+    // picture: everything leaves by that link.
+    const bar = active.length
+      ? `<div class="lb-bar" role="img" aria-label="${esc(
+          active.map((w) => `${w.name} ${shareOf(w)}%`).join(", ")
+        )}">${active
+          .map(
+            (w, i) =>
+              `<span class="lb-seg lb-seg-${(i % 4) + 1}" style="flex: ${Math.max(shareOf(w), 1)}">
+                 <span class="lb-seg-name">${esc(w.name || w.lan_intf)}</span>
+                 <span class="lb-seg-pct">${shareOf(w)}%</span>
+               </span>`
+          )
+          .join("")}</div>`
+      : `<p class="box-empty">No link is set to carry traffic. Every WAN here is either standby or out of load balancing.</p>`;
+
+    // One sentence, built from the same numbers the bar is drawn from.
+    let sentence;
+    if (active.length === 1) {
+      sentence = `Everything leaves by ${active[0].name}.`;
+    } else if (active.length > 1) {
+      sentence = `Outbound traffic is split across ${active.length} links: ${active
+        .map((w) => `${w.name} ${shareOf(w)}%`)
+        .join(", ")}.`;
+    } else {
+      sentence = "Nothing is set to carry traffic right now.";
+    }
+    if (backup.length === 1) {
+      sentence += ` ${backup[0].name} takes over if the active link fails.`;
+    } else if (backup.length > 1) {
+      sentence += ` ${backup.map((w) => w.name).join(", then ")} take over in that order if the active links fail.`;
+    } else if (active.length === 1) {
+      sentence += " There is no standby link: if it fails, the site is offline.";
+    }
+
+    // The device divides traffic by the ratio between the shares, so a set
+    // totalling 150 is not broken, it is unreadable: "50%" on a card means
+    // a third of the traffic. What the numbers actually come to is stated
+    // rather than left for the operator to work out.
+    const warn =
+      active.length > 1 && total !== 100
+        ? `<p class="warn">These shares add up to ${total}%, not 100%. The device splits traffic by the ratio
+             between them, so ${active
+               .map((w) => `${esc(w.name)} is really getting ${effectiveShare(w, total)}%`)
+               .join(" and ")}. Set them below to say what you mean.</p>`
+        : "";
+
+    // Role and share are one decision, so they are made in one place.
+    // Splitting them, role on each WAN's own card and share here, meant
+    // neither view was complete: a share typed on a card could only be
+    // judged against links that card could not show. That is how a device
+    // ends up dividing traffic 150 ways.
+    //
+    // Every link gets a row whatever its role, because taking one out of
+    // the rotation and giving its traffic to another is a single change,
+    // and here it is a single save.
+    const editor = wans.length
+      ? `<div class="lb-editor" id="lb-edit">
+           <table class="flat lb-table">
+             <thead><tr><th>Link</th><th>Role</th><th class="num">Share</th><th>Takeover order</th></tr></thead>
+             <tbody>${wans
+               .map((w) => {
+                 const role = roleOf(w);
+                 const port = portOf(w);
+                 return `<tr data-lb-row="${port}">
+                   <td><strong>${esc(w.name || w.lan_intf)}</strong>
+                       <span class="muted">${esc(w.lan_intf)}</span></td>
+                   <td>
+                     <select data-lb-role="${port}" data-lb-saved-role="${role}">
+                       <option value="active"${role === "active" ? " selected" : ""}>Carry traffic</option>
+                       <option value="backup"${role === "backup" ? " selected" : ""}>Stand by as backup</option>
+                       <option value="off"${role === "off" ? " selected" : ""}>Out of rotation</option>
+                     </select>
+                   </td>
+                   <td class="num">
+                     <span class="lb-cell-share"${role === "active" ? "" : " hidden"}>
+                       <input type="number" min="0" max="100" step="1"
+                              data-lb-port="${port}" data-lb-saved="${shareOf(w)}" value="${shareOf(w)}">
+                       <span class="lb-edit-pct">%</span>
+                     </span>
+                     <span class="muted lb-cell-dash"${role === "active" ? " hidden" : ""}>&mdash;</span>
+                   </td>
+                   <td>
+                     <span class="lb-cell-prio"${role === "backup" ? "" : " hidden"}>
+                       <input type="number" min="0" max="10" step="1"
+                              data-lb-prio="${port}" data-lb-saved-prio="${priorityOf(w)}"
+                              value="${priorityOf(w)}">
+                     </span>
+                     <span class="muted lb-cell-dash"${role === "backup" ? " hidden" : ""}>&mdash;</span>
+                   </td>
+                 </tr>`;
+               })
+               .join("")}</tbody>
+           </table>
+           <div class="lb-actions">
+             <span class="lb-edit-total" id="lb-edit-total"></span>
+             <button type="button" class="row-edit" id="lb-even">Split evenly</button>
+             <button type="button" class="row-edit primary" id="lb-save" disabled>Save load balancing</button>
+           </div>
+           <div class="lb-edit-outcome" id="lb-outcome"></div>
+         </div>`
+      : "";
+
+    const standbyRow = backup.length
+      ? `<p class="lb-row"><span class="legend">Standby</span>${backup
+          .map((w) => `<span class="role-chip role-backup">${esc(w.name)} · priority ${priorityOf(w)}</span>`)
+          .join("")}</p>`
+      : "";
+    const offRow = off.length
+      ? `<p class="lb-row"><span class="legend">Out of rotation</span>${off
+          .map((w) => `<span class="role-chip role-off">${esc(w.name)}</span>`)
+          .join("")}</p>`
+      : "";
+
+    return `<h2 class="lb-heading">Load balancing</h2>
+      <p class="lb-sentence">${esc(sentence)}</p>
+      ${bar}
+      ${standbyRow}
+      ${offRow}
+      ${warn}
+      ${editor}
+      <p class="muted">Only links set to carry traffic take a share, and the shares have to add up to
+        100%. A link is declared down after the
+        number of failed pings set under Connection check, and traffic moves to the next link in line.</p>`;
+  }
+
   // --- The load balancing editor ------------------------------------
 
   const MODE_OF = { active: "shared", backup: "backup", off: "disabled" };

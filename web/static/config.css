@@ -453,6 +453,9 @@
 }
 .lb-table { margin: 0; background: transparent; }
 .lb-table td { vertical-align: middle; }
+.lb-table th + th,
+.lb-table td + td { padding-left: 20px; }
+.lb-table th.num, .lb-table td.num { text-align: left; }
 .lb-table select { min-height: 34px; min-width: 15ch; }
 .lb-table input[type="number"] {
   /* Room for three digits beside the spinner arrows, which otherwise sat
@@ -486,6 +489,7 @@
 /* An arrangement that cannot be saved says why, rather than leaving the
    disabled button to imply it. */
 .lb-edit-total.bad { color: var(--fault); font-weight: 700; }
+.lb-actions .row-edit[hidden] { display: none; }
 .lb-actions .row-edit { margin-left: auto; }
 .lb-actions .row-edit + .row-edit { margin-left: 0; }
 
