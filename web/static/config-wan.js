@@ -120,7 +120,7 @@
     // something to save.
     const saved = {};
     fields.forEach((f) => {
-      saved[f.dataset.lbPort] = parseInt(f.value, 10) || 0;
+      saved[f.dataset.lbPort] = parseInt(f.dataset.lbSaved, 10) || 0;
     });
 
     fields.forEach((f) => {
@@ -150,6 +150,7 @@
         }));
         saveBtn.disabled = true;
         const outcomeEl = document.createElement("div");
+        outcomeEl.className = "lb-edit-outcome";
         document.getElementById("lb-edit").appendChild(outcomeEl);
         try {
           const outcome = await postJSON("/api/config/wan", { action: "traffic_shares", shares });
@@ -276,8 +277,16 @@
     // moves the difference into the others, which is the behaviour the
     // numbers imply: turning a second link up to 50% has to take 50% from
     // somewhere.
+    //
+    // It appears for a single active link too. Moving the second link to
+    // standby leaves the first holding whatever share it had, and with no
+    // editor and no field on the card there was then nothing anywhere
+    // that could change it. One link carries everything by definition, so
+    // the field opens at 100 and saving writes what the device already
+    // does.
+    const lone = active.length === 1;
     const editor =
-      active.length > 1
+      active.length
         ? `<div class="lb-edit" id="lb-edit">
              <span class="legend">Split</span>
              ${active
@@ -285,13 +294,14 @@
                  (w) => `<label class="lb-edit-field">
                      <span>${esc(w.name || w.lan_intf)}</span>
                      <input type="number" min="0" max="100" step="1"
-                            data-lb-port="${portOf(w)}" value="${shareOf(w)}">
+                            data-lb-port="${portOf(w)}" value="${lone ? 100 : shareOf(w)}"
+                            data-lb-saved="${shareOf(w)}"${lone ? " readonly" : ""}>
                      <span class="lb-edit-pct">%</span>
                    </label>`
                )
                .join("")}
              <span class="lb-edit-total" id="lb-edit-total"></span>
-             <button type="button" class="row-edit" id="lb-even">Split evenly</button>
+             ${lone ? "" : '<button type="button" class="row-edit" id="lb-even">Split evenly</button>'}
              <button type="button" class="row-edit primary" id="lb-save" disabled>Save split</button>
            </div>`
         : "";

@@ -514,3 +514,10 @@
 /* Load balancing follows the WAN cards, so it needs the break between a
    card and a new subject that the cards otherwise give each other. */
 .lb-heading { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--rule); }
+
+/* The split editor is a wrapping flex row. An apply outcome, and the
+   confirm countdown that comes with a lockout-risk change, belongs below
+   the controls rather than beside them, where it pushed the fields out of
+   line. */
+.lb-edit-outcome { flex: 1 0 100%; margin: 2px 0 0; }
+.lb-edit-outcome .apply-provisional { margin: 0; }
