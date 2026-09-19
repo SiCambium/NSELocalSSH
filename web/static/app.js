@@ -22,6 +22,10 @@ const panels = Object.fromEntries(TAB_IDS.map((id) => [id, document.getElementBy
 
 let current = "overview";
 let dhcpSub = "pools";
+// Which VLAN's pool the DHCP page is narrowed to, by pool number, or null
+// for all of them. Kept next to dhcpSub because both are view state the
+// page rebuilds from, not data.
+let dhcpPoolFilter = null;
 // 0 means "nothing chosen yet", so the first load of the Settings page
 // edits whichever connection is actually live rather than whichever one
 // happens to hold id 1.
@@ -780,7 +784,8 @@ function renderDhcpUsage(d) {
         ? `<div class="bar"><span style="width:${pct}%"></span></div>`
         : `<span class="muted">-</span>`;
       const count = known ? `${r.used} / ${r.total}` : "-";
-      return `<tr>
+      const selected = dhcpPoolFilter === r.pool;
+      return `<tr data-pool="${esc(r.pool)}" class="row-pick${selected ? " is-picked" : ""}" title="${selected ? "Show every VLAN again" : `Show only VLAN ${esc(r.vlan || r.pool)}`}">
         <td>${esc(r.vlan || "-")}</td>
         <td>${esc(r.pool)}</td>
         <td class="mono">${esc(r.range)}</td>
@@ -788,12 +793,17 @@ function renderDhcpUsage(d) {
         <td class="mono">${esc(count)}</td>
       </tr>`;
     });
+  const picked = rows.find((r) => r.pool === dhcpPoolFilter);
+  const banner = picked
+    ? `<p class="muted">Showing VLAN ${esc(picked.vlan || picked.pool)} only. <button type="button" class="row-edit" data-pool-clear>Show all</button></p>`
+    : `<p class="muted">Select a row to show just that VLAN below.</p>`;
   return `<h2>Leases used</h2>
-    ${table(["VLAN", "Pool", "Range", "", "Used"], cells)}`;
+    ${table(["VLAN", "Pool", "Range", "", "Used"], cells)}
+    ${banner}`;
 }
 
 function renderDhcpPools(d) {
-  const cfgs = d.pool_config || [];
+  const cfgs = (d.pool_config || []).filter((c) => dhcpPoolFilter === null || c.pool === dhcpPoolFilter);
   const live = Object.fromEntries((d.pools || []).map((p) => [p.pool, p]));
   const blocks = cfgs
     .map((c) => {
@@ -841,7 +851,9 @@ function renderDhcpPools(d) {
 function renderMacBound(d) {
   const rows = table(
     ["Pool", "MAC", "IP", "Description"],
-    (d.bindings || []).map(
+    (d.bindings || [])
+      .filter((b) => dhcpPoolFilter === null || b.pool === dhcpPoolFilter)
+      .map(
       (b) =>
         `<tr><td>${esc(b.pool)}</td><td class="mono">${esc(b.mac)}</td><td class="mono">${esc(b.ip)}</td><td>${esc(b.description)}</td></tr>`
     )
@@ -1387,9 +1399,23 @@ document.getElementById("settings-clear").addEventListener("click", async () => 
 });
 
 document.getElementById("panel-dhcp").addEventListener("click", (ev) => {
-  const b = ev.target.closest("[data-sub]");
-  if (!b) return;
-  dhcpSub = b.dataset.sub;
+  const clear = ev.target.closest("[data-pool-clear]");
+  const row = ev.target.closest("[data-pool]");
+  const sub = ev.target.closest("[data-sub]");
+  if (clear) {
+    dhcpPoolFilter = null;
+  } else if (row) {
+    // Clicking the selected VLAN again clears the filter, so the row is
+    // its own way back out.
+    const pool = parseInt(row.dataset.pool, 10);
+    dhcpPoolFilter = dhcpPoolFilter === pool ? null : pool;
+  } else if (sub) {
+    // The filter deliberately survives a subtab switch: it names a VLAN,
+    // and both subtabs show that VLAN's data.
+    dhcpSub = sub.dataset.sub;
+  } else {
+    return;
+  }
   if (cache.dhcp) render("dhcp", cache.dhcp);
 });
 
