@@ -502,3 +502,11 @@ td.mono, .mono { font-family: var(--mono); }
   letter-spacing: 0.05em;
   vertical-align: middle;
 }
+
+/* A row in the DHCP "Leases used" table selects that VLAN below. */
+.row-pick { cursor: pointer; }
+.row-pick:hover td { background: var(--bg-2); }
+.row-pick.is-picked td {
+  background: var(--bg-2);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
