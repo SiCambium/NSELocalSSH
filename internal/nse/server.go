@@ -229,6 +229,24 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 // change. The cache is deliberately short so the endpoint keeps working as
 // a liveness check rather than answering from memory long after the device
 // has gone away.
+// noStore stops the browser caching UI assets, for dev mode only.
+//
+// Serving from disk means the file on disk is the truth, but a browser
+// that already has app.js will happily keep using its copy: the page then
+// shows some changes and not others, depending on when the tab was last
+// loaded, and looks for all the world like a bug in the code. That cost
+// real time to diagnose — a feature was fully working server-side while
+// the tab rendered a version from several merges earlier.
+//
+// Only dev mode pays for this. A shipped build serves the assets compiled
+// into the binary, where caching is exactly what you want.
+func noStore(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store, must-revalidate")
+		h.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) handleIdentity(w http.ResponseWriter, _ *http.Request) {
 	s.identityMu.Lock()
 	if !s.identityAt.IsZero() && time.Since(s.identityAt) < 15*time.Second {
@@ -712,6 +730,9 @@ func (s *Server) Handler() http.Handler {
 		log.Printf("dev mode: serving UI from %s with live reload", dir)
 	}
 	fileServer := http.FileServer(http.FS(static))
+	if devStaticDir() != "" {
+		fileServer = noStore(fileServer)
+	}
 	mux.Handle("/static/", http.StripPrefix("/static/", fileServer))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
