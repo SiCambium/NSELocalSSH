@@ -808,6 +808,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/config/dns", s.handleConfigDNS)
 	mux.HandleFunc("/api/config/threat", s.handleConfigThreat)
 	mux.HandleFunc("/api/config/vpn", s.handleConfigVPN)
+	mux.HandleFunc("/api/config/wireguard", s.handleConfigWireGuard)
 	mux.HandleFunc("/api/config/firewall", s.handleConfigFirewall)
 	mux.HandleFunc("/api/config/nat", s.handleConfigNAT)
 	mux.HandleFunc("/api/config/gateway", s.handleConfigGateway)
