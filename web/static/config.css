@@ -216,3 +216,31 @@
    display:flex, which outranks the browser's own [hidden] rule, so
    without this the search would hide nothing. */
 .modal-body .check-row[hidden] { display: none; }
+
+/* Advanced overrides: free-text CLI in, and previews of what it becomes. */
+#cfg-adv-text {
+  width: 100%;
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  padding: 10px;
+  font-family: var(--mono);
+  font-size: 13px;
+  text-transform: none;
+  letter-spacing: 0;
+  resize: vertical;
+}
+
+#cfg-adv-text:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+
+.cfg-adv-pre {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  margin: 0 0 14px;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre;
+  font-size: 12px;
+}

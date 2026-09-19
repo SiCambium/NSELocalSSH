@@ -12,6 +12,7 @@
     { id: "threat", label: "Threat Protection" },
     { id: "firewall", label: "Firewall" },
     { id: "vpn", label: "VPN" },
+    { id: "advanced", label: "Advanced" },
   ];
   let currentSection = "network";
   let licenseCache = null;

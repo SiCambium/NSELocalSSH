@@ -67,9 +67,25 @@ func isBlockOpener(normalized string) bool {
 	return false
 }
 
-// ParseBlockTree parses raw CLI config text (a `show config` dump, or any
-// equivalent CLI text such as a free-text override block) into a tree of
-// nested config contexts. It never fails: unrecognized lines become
+// ParseBlockTree parses a `show config` dump into a tree of nested config
+// contexts.
+//
+// It reads *device output*, not input. Structure comes primarily from
+// indentation, which `show config` always applies to a block's contents —
+// so this must not be pointed at hand-typed CLI, where nothing is
+// indented:
+//
+//	interface eth 3
+//	no proxy-arp
+//	exit
+//
+// would close the interface at the second line and leave "no proxy-arp" as
+// a top-level command, which is a different command entirely. This comment
+// used to claim the function handled "any equivalent CLI text such as a
+// free-text override block"; that stopped being true when the parser
+// became indentation-driven, and nothing noticed because overrides had not
+// been built yet. They now send their lines verbatim instead — see
+// OverrideLines in overrides.go. It never fails: unrecognized lines become
 // leaves of whatever context is currently open, and any still-open blocks
 // at end of input are implicitly closed.
 //

@@ -725,6 +725,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/config/vpn", s.handleConfigVPN)
 	mux.HandleFunc("/api/config/firewall", s.handleConfigFirewall)
 	mux.HandleFunc("/api/config/groups", s.handleConfigGroups)
+	mux.HandleFunc("/api/config/overrides", s.handleConfigOverrides)
 	mux.HandleFunc("/api/profile/export", s.handleProfileExport)
 	static, err := fs.Sub(s.Static, "static")
 	if err != nil {
