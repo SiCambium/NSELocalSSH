@@ -463,10 +463,14 @@
   color: var(--ink-2);
 }
 .lb-edit-field input {
-  width: 5.5ch;
+  /* Wide enough for "100" beside the spinner arrows. At 5.5ch they
+     overlapped the third digit, so the one value that matters most here
+     was the one you could not read. */
+  width: 4.75rem;
   min-height: 34px;
   padding: 4px 6px;
   text-align: right;
+  padding-right: 22px;
   font-variant-numeric: tabular-nums;
   font-size: 14px;
   font-weight: 700;
