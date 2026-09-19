@@ -30,6 +30,9 @@ let dhcpPoolFilter = null;
 // because the page re-renders on every poll, which would otherwise wipe
 // the filter out from under whoever is typing.
 let deviceSearch = "";
+// Which firewall rule's details are open, by name. Held here because the
+// page re-polls, and an expanded rule should survive the refresh.
+let firewallRuleOpen = null;
 // 0 means "nothing chosen yet", so the first load of the Settings page
 // edits whichever connection is actually live rather than whichever one
 // happens to hold id 1.
@@ -1076,23 +1079,63 @@ function renderTailscale(d) {
   `;
 }
 
+// The counters name a rule but say nothing about what it matches, and
+// their rule_id is not the config's precedence — counter 1 is the rule at
+// precedence 6 on this device — so rules are joined by name, which is
+// unique. cnMaestro opens the same details when you click a rule's name.
+function firewallRuleDetailHTML(rule, counter) {
+  if (!rule) {
+    return `<p class="muted">No rule with this name in the running config, so there are no details to show. The counter still refers to a rule the device is enforcing.</p>`;
+  }
+  const p = rule.parsed;
+  const body = p
+    ? `<div class="grid">
+        ${stat("Precedence", rule.precedence)}
+        ${stat("Action", p.action)}
+        ${stat("Protocol", p.protocol)}
+        ${stat("Source IP", p.source)}
+        ${stat("Source mask", p.source_mask || "-")}
+        ${stat("Source port", p.source_port || "-")}
+        ${stat("Destination IP", p.destination)}
+        ${stat("Destination mask", p.destination_mask || "-")}
+        ${stat("Destination port", p.destination_port || "-")}
+        ${stat("Type", rule.kind === "layer3" ? "layer3-filter" : rule.kind)}
+      </div>`
+    : // A shape the parser does not recognise is shown raw rather than
+      // broken into fields that might not mean what they say.
+      `<div class="grid">${stat("Precedence", rule.precedence)}${stat("Type", rule.kind)}</div>
+       <p class="mono">${esc(rule.rule)}</p>`;
+  const extra = (rule.extra || []).length
+    ? `<p class="muted">Also on this rule: <span class="mono">${esc((rule.extra || []).join(" · "))}</span></p>`
+    : "";
+  return `${body}${extra}<p class="muted">${esc(counter && counter.comment ? counter.comment : "")}</p>`;
+}
+
 function renderFirewallCounters(d) {
   const rows = d.outbound_firewall || [];
+  const byName = Object.fromEntries((d.rules || []).filter((r) => r.name).map((r) => [r.name, r]));
   const table1 = table(
     ["Rule ID", "Name", "Packets", "Bytes", "Comment"],
-    rows.map(
-      (r) => `<tr>
+    rows.flatMap((r) => {
+      const open = firewallRuleOpen === r.name;
+      const row = `<tr>
         <td>${esc(r.rule_id)}</td>
-        <td>${esc(r.name)}</td>
+        <td><button type="button" class="link-cell" data-rule="${esc(r.name)}">${esc(r.name)}</button></td>
         <td class="mono">${esc(r.packets)}</td>
         <td class="mono">${esc(r.bytes)}</td>
         <td class="mono">${esc(r.comment || "-")}</td>
-      </tr>`
-    )
+      </tr>`;
+      if (!open) return [row];
+      return [
+        row,
+        `<tr><td colspan="5" class="rule-detail">${firewallRuleDetailHTML(byName[r.name], r)}</td></tr>`,
+      ];
+    })
   );
   return `
     <h2>Outbound Firewall</h2>
     <p class="muted">Per-rule hit counters from <span class="mono">show counters outbound_firewall</span>.</p>
+    <p class="muted">Select a rule name to see what it matches.</p>
     ${table1 || '<p class="muted">No filter rules found.</p>'}
     <h2>DNAT / Traffic Shaping / Flow Preferences</h2>
     <p class="muted">Not tracked here — this app doesn't yet support configuring NAT, traffic shaping, or flow preference rules, so there's nothing to show counters for.</p>
@@ -1441,6 +1484,14 @@ document.getElementById("settings-clear").addEventListener("click", async () => 
     err.hidden = false;
     err.textContent = e.message;
   }
+});
+
+document.getElementById("panel-firewallcounters").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-rule]");
+  if (!b) return;
+  // Clicking the open rule closes it, so the name toggles its own detail.
+  firewallRuleOpen = firewallRuleOpen === b.dataset.rule ? null : b.dataset.rule;
+  if (cache.firewallcounters) render("firewallcounters", cache.firewallcounters);
 });
 
 document.getElementById("panel-devices").addEventListener("input", (ev) => {

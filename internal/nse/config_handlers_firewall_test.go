@@ -341,3 +341,51 @@ func TestIPMatchesAccessSpecRejectsGarbage(t *testing.T) {
 		}
 	}
 }
+
+// The counters name a rule but not what it matches, so the details come
+// from the config — parsed into the same fields cnMaestro shows.
+func TestParseFilterRuleBody(t *testing.T) {
+	p := ParseFilterRuleBody("permit proto tcp 192.168.40.0/255.255.255.0 any 192.168.20.240/255.255.255.254 53 in")
+	if p == nil {
+		t.Fatal("expected the proto form to parse")
+	}
+	for _, c := range []struct{ got, want, field string }{
+		{p.Action, "permit", "action"},
+		{p.Protocol, "tcp", "protocol"},
+		{p.Source, "192.168.40.0", "source"},
+		{p.SourceMask, "255.255.255.0", "source mask"},
+		{p.SourcePort, "any", "source port"},
+		{p.Destination, "192.168.20.240", "destination"},
+		{p.DestinationMask, "255.255.255.254", "destination mask"},
+		{p.DestinationPort, "53", "destination port"},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s = %q, want %q", c.field, c.got, c.want)
+		}
+	}
+}
+
+// The "ip" form a VLAN rate-limit rule uses, and shapes that must not be
+// guessed at: an unparseable body returns nil so the caller shows the raw
+// line rather than a confidently mislabelled breakdown.
+func TestParseFilterRuleBodyOtherShapes(t *testing.T) {
+	p := ParseFilterRuleBody("permit ip 192.168.40.0/255.255.255.0 any any")
+	if p == nil || p.Source != "192.168.40.0" || p.SourceMask != "255.255.255.0" || p.Action != "permit" {
+		t.Fatalf("ip form = %+v", p)
+	}
+	for _, bad := range []string{"", "permit", "permit proto tcp", "application-group deny instagram"} {
+		if got := ParseFilterRuleBody(bad); got != nil {
+			t.Errorf("%q should not parse, got %+v", bad, got)
+		}
+	}
+}
+
+// An endpoint is "address/mask", or a bare token like "any" or a group.
+func TestSplitFilterEndpoint(t *testing.T) {
+	if a, m := splitFilterEndpoint("192.168.20.0/255.255.255.0"); a != "192.168.20.0" || m != "255.255.255.0" {
+		t.Fatalf("got %q %q", a, m)
+	}
+	if a, m := splitFilterEndpoint("any"); a != "any" || m != "" {
+		t.Fatalf("got %q %q", a, m)
+	}
+}

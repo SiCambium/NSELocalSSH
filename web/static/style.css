@@ -538,3 +538,18 @@ tr[hidden] { display: none; }
   outline: 1px solid var(--accent);
   border-color: var(--accent);
 }
+
+/* A table cell that acts as a link — used for firewall rule names, which
+   open their own details. Styled as a button for keyboard access rather
+   than an anchor with no href. */
+.link-cell {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: left;
+}
+.link-cell:hover { text-decoration: underline; }
+.rule-detail { background: var(--bg-2); }

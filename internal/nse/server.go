@@ -646,8 +646,17 @@ func (s *Server) handleFirewallCounters(w http.ResponseWriter, _ *http.Request) 
 	if !ok {
 		return
 	}
+	// The counters name each rule but say nothing about what it matches,
+	// and their rule_id is not the config's precedence — on the reference
+	// device counter 1 is the rule sitting at precedence 6. So the rules
+	// are read too and joined by name, which is unique per rule.
+	cfgRaw, ok := s.cli(w, "show config", 25*time.Second)
+	if !ok {
+		return
+	}
 	writeJSON(w, map[string]any{
 		"outbound_firewall": ParseOutboundFirewallCounters(countersRaw),
+		"rules":             ParseConfigFilter(cfgRaw),
 	})
 }
 
