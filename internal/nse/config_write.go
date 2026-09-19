@@ -624,14 +624,58 @@ func TimezoneLine(tz string) string {
 	return "timezone " + tz
 }
 
-// NTPServerLine sets the NTP server. CONFIRMED top-level line
-// ("ntp server time.google.com"); only one server has ever been observed
-// configured on this device, and — matching every other confirmed setter
-// here — resending the line is assumed to replace rather than add a
-// second server, not add-only. Unconfirmed whether the device supports
-// more than one simultaneously configured NTP server at all.
+// NTPServerLine adds an NTP server. CONFIRMED top-level line
+// ("ntp server time.google.com").
+//
+// This ADDS; it does not replace, and the device holds at most two.
+// CONFIRMED live on an NSE 4000 carrying two servers already: a third is
+// refused with "Error adding ntp server: Maximum number of entries[2]
+// already configured". An earlier comment here assumed the opposite —
+// that resending replaced — which made the write path unusable on any
+// device with both slots filled, because setting a server could only ever
+// try to add a third. Use NTPServerSetLines rather than this directly.
 func NTPServerLine(address string) string {
 	return "ntp server " + address
+}
+
+// MaxNTPServers is the device's ceiling, from the error it raises on the
+// third.
+const MaxNTPServers = 2
+
+// NTPServerRemoveLine drops one server by address. CONFIRMED live.
+func NTPServerRemoveLine(address string) string {
+	return "no ntp server " + address
+}
+
+// NTPServerSetLines returns the lines that turn current into desired.
+//
+// Because the device adds rather than replaces and caps the list at two,
+// a set operation is a diff: every removal is emitted before any addition,
+// so that swapping both servers cannot transiently need a third slot and
+// fail. Servers already present are left alone — re-adding one is
+// harmless but pointless, and keeping the sequence minimal keeps the
+// rollback pre-image honest.
+func NTPServerSetLines(current, desired []string) []string {
+	keep := map[string]bool{}
+	for _, d := range desired {
+		keep[d] = true
+	}
+	have := map[string]bool{}
+	for _, c := range current {
+		have[c] = true
+	}
+	var lines []string
+	for _, c := range current {
+		if !keep[c] {
+			lines = append(lines, NTPServerRemoveLine(c))
+		}
+	}
+	for _, d := range desired {
+		if !have[d] {
+			lines = append(lines, NTPServerLine(d))
+		}
+	}
+	return lines
 }
 
 // SyslogHostLines sets the remote syslog destination and the minimum

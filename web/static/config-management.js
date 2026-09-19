@@ -23,8 +23,27 @@
     }
   }
 
+  function ntpAt(i) {
+    return ((cache.ntp_server || [])[i] || {}).server_address || "";
+  }
+
   function firstNTP() {
-    return ((cache.ntp_server || [])[0] || {}).server_address || "";
+    return ntpAt(0);
+  }
+
+  // The IANA zone list, straight from the browser — Intl carries the same
+  // tz database the device names its zones from, so there is nothing to
+  // vendor, bundle or keep up to date. Paired with a <datalist> this gives
+  // the type-to-search dropdown cnMaestro shows, and degrades to the plain
+  // text field it replaces on a runtime without supportedValuesOf.
+  function timezoneOptionsHTML() {
+    let zones = [];
+    try {
+      zones = typeof Intl.supportedValuesOf === "function" ? Intl.supportedValuesOf("timeZone") : [];
+    } catch (e) {
+      zones = [];
+    }
+    return zones.map((z) => `<option value="${esc(z)}"></option>`).join("");
   }
 
   function firstSyslog() {
@@ -40,7 +59,8 @@
       <div class="grid">
         ${stat("Hostname", cache.hostname)}
         ${stat("Timezone", cache.tz_name)}
-        ${stat("NTP server", firstNTP() || "-")}
+        ${stat("NTP server 1", firstNTP() || "-")}
+        ${stat("NTP server 2", ntpAt(1) || "-")}
         ${stat("Syslog host", syslog.ip ? `${syslog.ip}:${syslog.port}` : "-")}
         ${stat("Syslog severity", cache.logging_syslog)}
         ${stat("cnMaestro", cache.cambium_remote ? "Linked" : "Delinked")}
@@ -84,12 +104,18 @@
 
   function editManagement() {
     const ntp = firstNTP();
+    const ntp2 = ntpAt(1);
     const syslog = firstSyslog();
     const severity = parseInt(cache.logging_syslog, 10);
     const body = `
       <label>Hostname <input id="cfg-mgmt-hostname" type="text" value="${esc(cache.hostname)}"></label>
-      <label>Timezone (IANA name, e.g. Europe/London) <input id="cfg-mgmt-tz" type="text" value="${esc(cache.tz_name)}"></label>
-      <label>NTP server <input id="cfg-mgmt-ntp" type="text" value="${esc(ntp)}"></label>
+      <label>Timezone
+        <input id="cfg-mgmt-tz" type="text" list="cfg-mgmt-tz-list" value="${esc(cache.tz_name)}" placeholder="start typing, e.g. Europe/London">
+        <datalist id="cfg-mgmt-tz-list">${timezoneOptionsHTML()}</datalist>
+      </label>
+      <label>NTP server 1 <input id="cfg-mgmt-ntp" type="text" value="${esc(ntp)}" placeholder="IP address or domain name"></label>
+      <label>NTP server 2 (optional) <input id="cfg-mgmt-ntp2" type="text" value="${esc(ntp2)}" placeholder="IP address or domain name"></label>
+      <p class="muted">The device holds at most two. Clearing the second removes it.</p>
       <h3>Remote syslog</h3>
       <label>Host <input id="cfg-mgmt-syslog-ip" type="text" value="${esc(syslog.ip)}" placeholder="e.g. 172.22.0.9"></label>
       <label>Port <input id="cfg-mgmt-syslog-port" type="text" value="${esc(syslog.port)}" placeholder="e.g. 514"></label>
@@ -112,9 +138,17 @@
         await renderOutcome(outcomeEl, outcome);
       }
 
+      // Sent together: the device adds rather than replaces and caps the
+      // list at two, so the backend diffs both against what is configured.
+      // Sending them separately could try to add a third and fail.
       const newNTP = el.querySelector("#cfg-mgmt-ntp").value.trim();
-      if (newNTP && newNTP !== ntp) {
-        const outcome = await postJSON("/api/config/management", { action: "ntp_server", ntp_server: newNTP });
+      const newNTP2 = el.querySelector("#cfg-mgmt-ntp2").value.trim();
+      if (newNTP && (newNTP !== ntp || newNTP2 !== ntp2)) {
+        const outcome = await postJSON("/api/config/management", {
+          action: "ntp_server",
+          ntp_server: newNTP,
+          ntp_server_2: newNTP2,
+        });
         await renderOutcome(outcomeEl, outcome);
       }
 
