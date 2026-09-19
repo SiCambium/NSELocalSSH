@@ -357,6 +357,18 @@ func FetchCloudConfig(c *Client, timeout time.Duration) (CloudConfig, error) {
 	if len(cfg.LANInterfaces) == 0 && len(cfg.WANInterfaces) == 0 && cfg.SystemName == "" {
 		return CloudConfig{}, fmt.Errorf("`show config` returned nothing recognizable")
 	}
+	// The device's own store first. It is always populated, including on
+	// a unit that was never cloud-managed, which is the case the cloud
+	// snapshot cannot serve.
+	if raw, err := c.Run("service show config", showTimeout); err == nil {
+		if svc, ok := ParseServiceConfig(raw); ok {
+			enrichFromServiceConfig(&cfg, svc)
+			cfg.Source = CloudSourceEnriched
+		}
+	}
+	// Then the cloud snapshot, for the two things the store does not
+	// carry: a VLAN's label and its rate-limit rule. It only fills what
+	// is still empty, so it cannot undo the step above.
 	if cloud, ok := fetchCloudJSON(c, timeout); ok {
 		enrichFromCloudJSON(&cfg, cloud)
 		cfg.Source = CloudSourceEnriched
