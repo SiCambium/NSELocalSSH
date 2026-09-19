@@ -201,8 +201,34 @@ function stat(label, value) {
 // without touching the device, and a connection entry carries only
 // `active`. The one real signal is whether the last fetch came back, which
 // is the same thing the poll-state text reports.
+// Keeps the menu's dots agreeing with the header's, in place.
+//
+// The menu is drawn by renderConnSwitcher, which runs from loadSettings —
+// and on a switch that happens BEFORE the new device's state is known, so
+// the menu inherited the previous device's. Switching to an unreachable
+// NSE drew its row green while the header beside it went red. Syncing from
+// here means no call site has to remember to render in the right order.
+function syncConnMenuDots() {
+  const menu = document.getElementById("conn-menu");
+  if (!menu) return;
+  menu.querySelectorAll("[data-conn]").forEach((btn) => {
+    const dot = btn.querySelector(".conn-dot");
+    if (!dot) return;
+    const active = btn.classList.contains("active");
+    dot.className = `conn-dot ${active ? connDotState : "unknown"}`;
+    dot.title = active
+      ? connDotState === "on"
+        ? "Connected and answering"
+        : connDotState === "down"
+        ? "Selected, but not answering"
+        : "Selected; not contacted yet"
+      : "Not connected — select it to find out";
+  });
+}
+
 function setConnDot(state) {
   connDotState = state;
+  syncConnMenuDots();
   const dot = document.getElementById("conn-dot");
   if (!dot) return;
   dot.classList.toggle("on", state === "on");
