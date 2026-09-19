@@ -13,6 +13,7 @@ import (
 
 func main() {
 	showVersion := flag.Bool("version", false, "print the version and exit")
+	demoDir := flag.String("demo", "", "serve recorded captures from this directory instead of a device (read-only)")
 	flag.Parse()
 	if *showVersion {
 		fmt.Printf("nse-status %s\n", nse.BuildVersion)
@@ -20,11 +21,18 @@ func main() {
 	}
 
 	cfg := nse.LoadConfig()
-	if cfg.Password == "" {
-		log.Printf("NSE_PASSWORD is not set yet; open Settings to add it")
-	}
 	client := nse.NewClient(cfg)
 	defer client.Close()
+
+	if *demoDir != "" {
+		if err := client.LoadReplay(*demoDir); err != nil {
+			log.Fatalf("demo mode: %v", err)
+		}
+		log.Printf("demo mode: replaying %d recorded commands from %s; no device will be contacted",
+			len(client.ReplayCommands()), *demoDir)
+	} else if cfg.Password == "" {
+		log.Printf("NSE_PASSWORD is not set yet; open Settings to add it")
+	}
 
 	srv := &nse.Server{Client: client, Static: web.Static, SettingsPath: nse.WritableSettingsPath()}
 	log.Printf("NSE status %s on http://%s (device %s)", nse.BuildVersion, cfg.Listen, cfg.Addr())
