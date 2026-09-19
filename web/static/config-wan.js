@@ -284,11 +284,18 @@
     // that could change it. One link carries everything by definition, so
     // the field opens at 100 and saving writes what the device already
     // does.
+    //
+    // With one active link there is nothing to divide, so the editor has
+    // a job only when the device is still holding some other number from
+    // when the link had company. Then it says so and offers the one
+    // correction available. Otherwise it stays away: a lone read-only
+    // field under the word "Split" is a control that does nothing.
     const lone = active.length === 1;
+    const loneStale = lone && shareOf(active[0]) !== 100;
     const editor =
-      active.length
+      active.length > 1 || loneStale
         ? `<div class="lb-edit" id="lb-edit">
-             <span class="legend">Split</span>
+             <span class="legend">${lone ? "Share" : "Split"}</span>
              ${active
                .map(
                  (w) => `<label class="lb-edit-field">
@@ -300,7 +307,12 @@
                    </label>`
                )
                .join("")}
-             <span class="lb-edit-total" id="lb-edit-total"></span>
+             ${
+               lone
+                 ? `<span class="lb-edit-note">${esc(active[0].name)} carries everything, but the device still
+                      holds ${shareOf(active[0])}%. Save to make the two agree.</span>`
+                 : '<span class="lb-edit-total" id="lb-edit-total"></span>'
+             }
              ${lone ? "" : '<button type="button" class="row-edit" id="lb-even">Split evenly</button>'}
              <button type="button" class="row-edit primary" id="lb-save" disabled>Save split</button>
            </div>`
@@ -324,7 +336,8 @@
       ${offRow}
       ${warn}
       ${editor}
-      <p class="muted">Set each link's role on its own card above. A link is declared down after the
+      <p class="muted">Only links set to carry traffic take a share. Give a link that role on its own
+        card above to bring it into the split. A link is declared down after the
         number of failed pings set under Connection check, and traffic moves to the next link in line.</p>`;
   }
 

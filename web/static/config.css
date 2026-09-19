@@ -521,3 +521,7 @@
    line. */
 .lb-edit-outcome { flex: 1 0 100%; margin: 2px 0 0; }
 .lb-edit-outcome .apply-provisional { margin: 0; }
+
+/* Stands in for the running total when there is only one link: there is
+   no sum to show, only a mismatch to explain. */
+.lb-edit-note { font-size: 13px; color: var(--ink-2); max-width: 52ch; }
