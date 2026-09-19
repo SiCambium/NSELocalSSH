@@ -1683,6 +1683,8 @@ function showPage(next, force = false) {
   document.getElementById("page-connections").hidden = next !== "connections";
   const configPage = document.getElementById("page-config");
   if (configPage) configPage.hidden = next !== "config";
+  const easyPage = document.getElementById("page-easyconfig");
+  if (easyPage) easyPage.hidden = next !== "easyconfig";
   document.getElementById("status-tabs").hidden = next !== "status";
   document.getElementById("refresh").hidden = next !== "status";
   if (next === "connections") {
@@ -1695,6 +1697,15 @@ function showPage(next, force = false) {
     document.getElementById("title").textContent = "Settings";
     loadSettings();
     location.hash = "settings";
+    return;
+  }
+  if (next === "easyconfig") {
+    document.getElementById("title").textContent = "Easy Config";
+    location.hash = "easyconfig";
+    // The wizard reads the device on entry rather than caching: a
+    // step is done when the device says so, not when it was last
+    // looked at.
+    if (window.NSEEasyConfig) window.NSEEasyConfig.load();
     return;
   }
   if (next === "config") {

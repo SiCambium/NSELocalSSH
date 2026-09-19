@@ -22,10 +22,17 @@ import (
 
 // ProvisionStep is one thing to settle, and where to settle it.
 type ProvisionStep struct {
-	ID      string `json:"id"`
-	Label   string `json:"label"`
-	Done    bool   `json:"done"`
-	Detail  string `json:"detail"`
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Done  bool   `json:"done"`
+	// Detail is prose for a human: sometimes the setting itself, often a
+	// count or an explanation. It is not safe to put in an input.
+	Detail string `json:"detail"`
+	// Value is the current setting, and only set where the step has one
+	// single editable value. A wizard pre-fills from this; filling from
+	// Detail would put "2 NTP servers configured" into a text field and
+	// send that sentence to the device.
+	Value   string `json:"value,omitempty"`
 	Section string `json:"section,omitempty"` // Configuration section that fixes it
 	Blocker bool   `json:"blocker"`           // must not be left undone
 }
@@ -66,13 +73,18 @@ func (s *Server) handleProvisioning(w http.ResponseWriter, _ *http.Request) {
 	host, hasHost := leaf("hostname ")
 	steps = append(steps, ProvisionStep{
 		ID: "hostname", Label: "Name the device", Done: hasHost && host != "",
-		Section: "management", Detail: detailOr(host, "No hostname set; every alarm and backup from this unit will be hard to place."),
+		Section: "management", Value: strings.TrimSpace(host),
+		Detail: detailOr(host, "No hostname set; every alarm and backup from this unit will be hard to place."),
 	})
 
 	tz, hasTZ := leaf("timezone ")
+	// The device prints this quoted when the name contains a space, and
+	// the quotes belong to the CLI line rather than to the value.
+	tzValue := strings.Trim(strings.TrimSpace(tz), `"`)
 	steps = append(steps, ProvisionStep{
 		ID: "timezone", Label: "Set the timezone", Done: hasTZ && tz != "",
-		Section: "management", Detail: detailOr(tz, "Without this, every event timestamp is in the wrong zone."),
+		Section: "management", Value: tzValue,
+		Detail: detailOr(tzValue, "Without this, every event timestamp is in the wrong zone."),
 	})
 
 	ntp := 0
