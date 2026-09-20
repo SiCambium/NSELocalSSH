@@ -19,6 +19,14 @@ type Server struct {
 	SettingsPath string
 	SkipConnect  bool
 
+	// Local throughput history. Nil is a working state: every call on it
+	// is nil-safe, so a build that never sets it simply has no history
+	// rather than a crash on the first poll.
+	History *HistoryStore
+
+	// Configuration change journal, same contract: nil-safe throughout.
+	Journal *ConfigJournal
+
 	sampleMu     sync.Mutex
 	lastIfaces   []IfconfigIface
 	lastSample   time.Time
@@ -39,6 +47,9 @@ type Server struct {
 
 	applierOnce sync.Once
 	applier     *SafeApplier
+
+	latencyOnce sync.Once
+	latency     *latencyCache
 
 	ipOrgCacheOnce sync.Once
 	ipOrgCache     *ipOrgCache
@@ -165,6 +176,12 @@ func (s *Server) SwitchDevice(cfg Config) error {
 
 func (s *Server) cli(w http.ResponseWriter, cmd string, timeout time.Duration) (string, bool) {
 	out, err := s.Client.Run(cmd, timeout)
+	if err == nil && cmd == "show config" {
+		// Every read of the running configuration passes through here, so
+		// noticing that it moved costs nothing extra: no second poll, no
+		// schedule, and the journal only grows when something changed.
+		s.Journal.Record(s.Client.Cfg.Host, out, time.Now())
+	}
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
@@ -292,6 +309,24 @@ func (s *Server) withRates(ifaces []IfconfigIface) (rates []Throughput, sampled 
 	s.lastSample = now
 	if rates == nil {
 		rates = []Throughput{}
+	}
+	if sampled {
+		// WAN only: a chart of every bridge and tunnel interface answers
+		// no question anyone asks, and each one costs a series on disk.
+		for _, r := range rates {
+			if r.Role != "wan" {
+				continue
+			}
+			// Keyed by the CLI name, not the kernel's. `eth0` in ifconfig
+			// is `eth1` to the CLI and to the label on the box, and a
+			// history file keyed to the kernel's numbering would not
+			// survive a firmware that renumbered its interfaces.
+			key := r.CLIName
+			if key == "" {
+				key = r.Name
+			}
+			s.History.Record(s.Client.Cfg.Host, key, r.RxBps, r.TxBps, now)
+		}
 	}
 	return rates, sampled, intervalMs
 }
@@ -550,6 +585,48 @@ func (s *Server) handleDevices(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
+// handleHistory serves the locally recorded throughput history.
+//
+// The window names are the ones the UI offers. An unknown or missing
+// value is 24h rather than an error: a chart asking for a range this
+// build does not know should still draw something.
+var historyWindows = map[string]time.Duration{
+	"1h":  time.Hour,
+	"24h": 24 * time.Hour,
+	"7d":  7 * 24 * time.Hour,
+	"30d": 30 * 24 * time.Hour,
+}
+
+func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("range")
+	window, ok := historyWindows[name]
+	if !ok {
+		name, window = "24h", 24*time.Hour
+	}
+	now := time.Now()
+	series := s.History.Range(s.Client.Cfg.Host, window, now)
+	if series == nil {
+		series = []HistorySeriesOut{}
+	}
+	// A series that has just started recording is not an error, but the
+	// UI has to be able to say so rather than drawing a flat line and
+	// implying the link was idle. covers_from is when this store's oldest
+	// point for the window actually begins.
+	var from int64
+	for _, s := range series {
+		if len(s.Points) > 0 && (from == 0 || s.Points[0].T < from) {
+			from = s.Points[0].T
+		}
+	}
+	writeJSON(w, map[string]any{
+		"range":       name,
+		"window_s":    int64(window.Seconds()),
+		"now":         now.Unix(),
+		"covers_from": from,
+		"series":      series,
+	})
+}
+
 func (s *Server) handleTraffic(w http.ResponseWriter, _ *http.Request) {
 	apps, ok := s.cli(w, "show application-statistics by-application", 30*time.Second)
 	if !ok {
@@ -700,6 +777,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/overview", s.handleOverview)
 	mux.HandleFunc("/api/details", s.handleDetails)
 	mux.HandleFunc("/api/throughput", s.handleThroughput)
+	mux.HandleFunc("/api/history", s.handleHistory)
+	mux.HandleFunc("/api/journal", s.handleJournal)
+	mux.HandleFunc("/api/latency", s.handleLatency)
 	mux.HandleFunc("/api/memory", s.handleMemory)
 	mux.HandleFunc("/api/conntrack", s.handleConntrack)
 	mux.HandleFunc("/api/interfaces", s.handleInterfaces)
@@ -727,6 +807,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/config/groups", s.handleConfigGroups)
 	mux.HandleFunc("/api/config/overrides", s.handleConfigOverrides)
 	mux.HandleFunc("/api/profile/export", s.handleProfileExport)
+	mux.HandleFunc("/api/backup", s.handleBackup)
+	mux.HandleFunc("/api/restore", s.handleRestore)
+	mux.HandleFunc("/api/provisioning", s.handleProvisioning)
 	static, err := fs.Sub(s.Static, "static")
 	if err != nil {
 		static = s.Static
