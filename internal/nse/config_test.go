@@ -31,19 +31,80 @@ func TestWritableSettingsPathFromApp(t *testing.T) {
 	}
 }
 
-func TestEnvFileCandidatesProjectDotEnvLastWhenNotApp(t *testing.T) {
-	got := EnvFileCandidates("/usr/local/bin/nse-status", "/Users/simon/proj", "/Users/simon")
-	wantLast := filepath.Join("/Users/simon/proj", ".env")
-	if got[len(got)-1] != wantLast {
-		t.Fatalf("last=%v want %q", got, wantLast)
+// TestWritableSettingsPathKeepsAnExistingInstall is the migration
+// guarantee. The default used to be the working directory unconditionally,
+// so moving it without this would strand every existing installation —
+// including a developer's repo checkout, which is the normal way to run
+// from source.
+func TestWritableSettingsPathKeepsAnExistingInstall(t *testing.T) {
+	appDir := t.TempDir()
+	for _, name := range settingsFileNames {
+		wd := t.TempDir()
+		if err := os.WriteFile(filepath.Join(wd, name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got := WritableSettingsPathIn("/usr/local/bin/nse-status", wd, "/Users/simon", appDir)
+		if want := filepath.Join(wd, ".env"); got != want {
+			t.Errorf("with %s present: got %q, want the working directory to be kept (%q)", name, got, want)
+		}
 	}
 }
 
-func TestWritableSettingsPathFromCwd(t *testing.T) {
-	got := WritableSettingsPathFrom("/usr/local/bin/nse-status", "/Users/simon/proj", "/Users/simon")
-	want := filepath.Join("/Users/simon/proj", ".env")
-	if got != want {
-		t.Fatalf("got %q want %q", got, want)
+// TestWritableSettingsPathUsesTheUserDirectoryWhenFresh covers the point
+// of the change: the same binary used to keep different credentials
+// depending on which directory it was started from.
+func TestWritableSettingsPathUsesTheUserDirectoryWhenFresh(t *testing.T) {
+	appDir := t.TempDir()
+	got := WritableSettingsPathIn("/usr/local/bin/nse-status", t.TempDir(), "/Users/simon", appDir)
+	if want := filepath.Join(appDir, ".env"); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestWritableSettingsPathFallsBackWithoutAUserDirectory keeps the old
+// behaviour for a platform that cannot name a config directory.
+func TestWritableSettingsPathFallsBackWithoutAUserDirectory(t *testing.T) {
+	wd := t.TempDir()
+	got := WritableSettingsPathIn("/usr/local/bin/nse-status", wd, "/Users/simon", "")
+	if want := filepath.Join(wd, ".env"); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// TestAppDirNamePerPlatform pins the naming convention: a display-style
+// name where the platform uses one, the XDG form elsewhere.
+func TestAppDirNamePerPlatform(t *testing.T) {
+	for goos, want := range map[string]string{
+		"windows": "NSE Status",
+		"darwin":  "NSE Status",
+		"linux":   "nse-status",
+		"freebsd": "nse-status",
+	} {
+		if got := appDirName(goos); got != want {
+			t.Errorf("appDirName(%q) = %q, want %q", goos, got, want)
+		}
+	}
+}
+
+// TestEnvFileCandidatesStillReadsTheOldLocations makes sure a settings
+// file written by an older build is still found after the default moved.
+func TestEnvFileCandidatesStillReadsTheOldLocations(t *testing.T) {
+	appDir := t.TempDir()
+	wd := t.TempDir()
+	got := strings.Join(EnvFileCandidatesIn("/usr/local/bin/nse-status", wd, "/Users/simon", appDir), "\n")
+	for _, want := range []string{
+		filepath.Join(wd, ".env"),
+		filepath.Join("/Users/simon", ".config", "nse-status", ".env"),
+		filepath.Join("/Users/simon", "Library", "Application Support", "NSE Status", ".env"),
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("candidates should still include %q:\n%s", want, got)
+		}
+	}
+	// And the writable one is still last, so it wins.
+	lines := strings.Split(got, "\n")
+	if want := filepath.Join(appDir, ".env"); lines[len(lines)-1] != want {
+		t.Errorf("last = %q, want %q", lines[len(lines)-1], want)
 	}
 }
 

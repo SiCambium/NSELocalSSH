@@ -255,7 +255,7 @@
         // change for that token". Only the seconds are updated now; the
         // button and its listener are never replaced.
         container.innerHTML = `<div class="apply-provisional" data-settling>
-          <p>Applied — verifying reachability. Confirm within <strong data-role="countdown">${remaining}s</strong> or it will be undone automatically.</p>
+          <p>Applied, and the device still accepts a new SSH login. Confirm within <strong data-role="countdown">${remaining}s</strong> to save it. Otherwise it is undone and nothing is written to the startup config.</p>
           <button type="button" class="modal-save" data-role="confirm-apply">Confirm</button>
         </div>`;
         const countdownEl = container.querySelector('[data-role="countdown"]');
