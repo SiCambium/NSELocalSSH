@@ -14,7 +14,7 @@ This is a personal tool, not an official Cambium product.
 
 **License-aware UI**: reads `show feature-license` and greys out (rather than hides) any control gated behind NSE Security Plus, matching cnMaestro's own convention.
 
-**Multi-site connections**: saved connections for every site you manage, each with its own label, address, username and SSH port. The header always shows which device you are looking at and drops down to switch; **Connections** is a top-level tab for adding, renaming and deleting them. One connection is live at a time — opening a site closes the previous SSH session — and a switch is refused while a configuration change on the current device is still awaiting confirmation, since the snapshot that would undo it belongs to that device and must not be replayed onto another. Connections live in `profiles.json` next to the settings `.env`, **including their passwords in cleartext** (file mode `0600`); treat that file accordingly.
+**Multi-site connections**: saved connections for every site you manage, each with its own label, address, username and SSH port. The header always shows which device you are looking at and drops down to switch; **Connections** is a top-level tab for adding, renaming and deleting them. One connection is live at a time — opening a site closes the previous SSH session — and a switch is refused while a configuration change on the current device is still awaiting confirmation, since the snapshot that would undo it belongs to that device and must not be replayed onto another. See [Where it keeps your data](#where-it-keeps-your-data) for where connections are stored and what that file contains.
 
 **Profile export**: produces a JSON profile in the same schema as cnMaestro's own NSE Group export. A handful of fields exist only in cnMaestro's own view of the device (VLAN labels, rate-limit rules, some display-only WAN values), so an export from a unit that has never been cloud-managed will have those blank.
 
@@ -37,88 +37,66 @@ What covers the lockout case is step 6: a risky change is never saved until you 
 
 Everything else applies directly and reports success or failure immediately. Either way the change is written to the device's startup config with `save` once it is settled — without that, a change lives only in the running config and is lost on reboot.
 
-## Running it
+## Install
 
-### Desktop app (macOS)
+You do not need to clone this repository and you do not need Go. Download one file from the [Releases](https://github.com/SiCambium/NSELocalSSH/releases) page and run it. Building from source is a separate path, further down.
 
-Builds a native window (WKWebView) around the Go backend — no browser tab required. An **Open in Browser** button hands the same running session to your default browser without disrupting the app window.
+Two builds are offered for each platform:
 
-```bash
-cp .env.example .env   # set NSE_PASSWORD
-sh scripts/package-macos.sh
-open "dist/NSE Status.app"
-```
+- **Desktop app** — a normal application window. Start here.
+- **`nse-status`** — the same tool served to your browser at http://127.0.0.1:8080, with a console window alongside.
 
-Use the **Connections** tab in the app to add the device's address, username and password. The desktop app stores those in `~/Library/Application Support/NSE Status/`.
-
-### Browser only
-
-Needs Go 1.25 or newer (see `go.mod`).
+### macOS
 
 ```bash
-cp .env.example .env   # set NSE_PASSWORD
-go run ./cmd/nse-status
+unzip NSE-Status-macOS-universal.zip
+open "NSE Status.app"
 ```
 
-Open http://127.0.0.1:8080
+Universal (Apple silicon and Intel). The build is ad-hoc signed rather than notarized, so Gatekeeper will say the developer is unidentified: **right-click → Open**, then **Open** again.
 
 ### Windows
 
-Both modes run on Windows. The quickest route is a prebuilt binary from the repo's [Releases](https://github.com/SiCambium/NSELocalSSH/releases) page — no toolchain needed:
+Download `NSE-Status-windows-amd64.exe` and double-click it. Windows will say *"Windows protected your PC"*, because the release binaries are not code-signed — choose **More info**, then **Run anyway**.
 
-- `NSE-Status-windows-amd64.exe` — the desktop app (native window via WebView2).
-- `nse-status_<version>_windows_amd64.exe` — browser mode; serves http://127.0.0.1:8080 and prints to a console window.
-
-To build from source instead, browser mode needs nothing but Go:
-
-```powershell
-copy .env.example .env   # then set NSE_PASSWORD
-go build -o nse-status.exe ./cmd/nse-status
-.\nse-status.exe
-```
-
-The desktop app additionally needs CGO and a C++ toolchain (MinGW-w64, e.g. `choco install mingw`), and must be built **on** Windows — it does not cross-compile from macOS or Linux, because the WebView2 binding needs the Windows C headers:
-
-```powershell
-$env:CGO_ENABLED=1
-go build -ldflags "-H windowsgui -s -w" -o NSE-Status-windows-amd64.exe ./cmd/nse-app
-```
-
-Browser mode alone *does* cross-compile from any OS, which is how the release binaries are produced:
-
-```bash
-CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o nse-status.exe ./cmd/nse-status
-```
-
-Device details can be entered through the **Connections** tab in the UI, or put in a `.env` file next to the executable. Create that file from a terminal (`copy .env.example .env`) rather than File Explorer, which will silently save it as `.env.txt`. Note that the app writes saved connections to the *working directory*, so launch it from the folder you want it to keep them in.
-
-Two Windows-specific caveats:
-
-- The desktop app needs the **WebView2 runtime**. It ships with Windows 11 and current Windows 10; on older installs, get Microsoft's Evergreen bootstrapper.
-- The release binaries are unsigned, so SmartScreen shows a "Windows protected your PC" prompt on first run — *More info* → *Run anyway*. (The macOS build is ad-hoc signed only, and gets the equivalent Gatekeeper prompt.)
+The desktop build needs the **WebView2 runtime**. It ships with Windows 11 and current Windows 10; on an older install, get Microsoft's Evergreen bootstrapper. The browser build has no such requirement.
 
 ### Linux
 
-Browser mode is pure Go and needs nothing beyond the toolchain:
-
 ```bash
-cp .env.example .env   # set NSE_PASSWORD
-go build -o nse-status ./cmd/nse-status
-./nse-status
+chmod +x nse-status_<version>_linux_amd64
+./nse-status_<version>_linux_amd64
 ```
 
-Prebuilt `nse-status_<version>_linux_{amd64,arm64}` binaries are on the [Releases](https://github.com/SiCambium/NSELocalSSH/releases) page, along with `linux_armv6` / `linux_armv7` builds for 32-bit Raspberry Pi (Pi Zero/1 and Pi 2/3/4 respectively; 64-bit Pi OS uses the arm64 build).
+`arm64`, and `armv6`/`armv7` for 32-bit Raspberry Pi (Pi Zero/1 and Pi 2/3/4 respectively; 64-bit Pi OS uses `arm64`). The desktop build needs GTK and WebKit2GTK; the browser build needs nothing.
 
-The desktop app uses GTK and WebKit2GTK, so it needs those headers and must be built on Linux:
+### First run
 
-```bash
-sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev pkg-config
-CGO_ENABLED=1 go build -o NSE-Status ./cmd/nse-app
-```
+Open the **Connections** tab, add the device's address, username and password, and the SSH port if it is not 22. That is the whole setup — there is no installer, no service, and no configuration file to write by hand.
 
-CI pins this job to Ubuntu 22.04: 24.04 dropped the `libwebkit2gtk-4.0-dev` package the binding depends on.
+## Where it keeps your data
 
-### Verifying a download
+In a per-user directory, the same set of files on every platform:
+
+| Platform | Location |
+|---|---|
+| Windows | `%APPDATA%\NSE Status\` |
+| macOS | `~/Library/Application Support/NSE Status/` |
+| Linux | `$XDG_CONFIG_HOME/nse-status/`, usually `~/.config/nse-status/` |
+
+| File | What it holds |
+|---|---|
+| `.env` | the connection the app starts on |
+| `profiles.json` | your saved connections, **including their passwords in cleartext** (file mode `0600`) |
+| `overrides.json` | the Advanced CLI text last applied, per connection |
+| `known_hosts.json` | the SSH host keys pinned on first connect |
+| `prefs.json` | your own UI preferences |
+
+Treat that directory the way you would treat a password manager's data.
+
+If the directory you run from already contains any of these files, that directory is used instead and nothing moves — so an existing setup, including a repo checkout you have been running from source, keeps working exactly as it did.
+
+## Verifying a download
 
 Each release carries a `SHA256SUMS` file covering every attached artifact:
 
@@ -129,10 +107,43 @@ sha256sum -c SHA256SUMS --ignore-missing
 Every binary also reports the release it came from, which the filename alone cannot be trusted to tell you once it has been renamed or moved:
 
 ```bash
-./nse-status --version          # e.g. "nse-status v0.3.0"
+./nse-status --version          # e.g. "nse-status v0.5.1"
 ```
 
 A build made straight from a working tree reports `dev`.
+
+## If it will not start
+
+- **The window opens blank.** The desktop build needs its platform's web view — WebView2 on Windows, WebKit2GTK on Linux. The browser build does not.
+- **Nothing happens at all.** Run it from a terminal so you can read the error it prints.
+- **It cannot reach the device.** The tool speaks SSH only. Check that SSH is enabled on the NSE and that the port is reachable: `Test-NetConnection <device-ip> -Port 22` on Windows, `nc -z <device-ip> 22` elsewhere.
+
+## Building from source
+
+Only needed to change the code. Browser mode needs nothing but Go 1.25+ and cross-compiles from any OS to any other:
+
+```bash
+git clone https://github.com/SiCambium/NSELocalSSH.git
+cd NSELocalSSH
+go build -o nse-status ./cmd/nse-status
+./nse-status
+```
+
+For UI work, serve `web/static` from disk so an edit needs no rebuild:
+
+```bash
+NSE_DEV_STATIC="$PWD/web/static" go run ./cmd/nse-status
+```
+
+The desktop app needs CGO and each platform's own toolchain, and **must be built on the platform it targets** — the web view binding needs that platform's C headers:
+
+| Platform | Needs | Build |
+|---|---|---|
+| macOS | Xcode command line tools | `sh scripts/package-macos.sh` |
+| Windows | MinGW-w64 (`choco install mingw`) | `go build -ldflags "-H windowsgui" -o NSE-Status.exe ./cmd/nse-app` |
+| Linux | `libgtk-3-dev libwebkit2gtk-4.0-dev pkg-config` | `go build -o NSE-Status ./cmd/nse-app` |
+
+CI pins the Linux desktop job to Ubuntu 22.04: 24.04 dropped the `libwebkit2gtk-4.0-dev` package the binding depends on.
 
 ### Dev probe utilities
 

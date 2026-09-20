@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -118,7 +119,13 @@ func applyActiveProfile(cfg Config) Config {
 // EnvFileCandidates returns .env paths from lowest to highest priority.
 // Later files override earlier ones. The writable settings file always wins.
 func EnvFileCandidates(exe, wd, home string) []string {
-	writable := WritableSettingsPathFrom(exe, wd, home)
+	return EnvFileCandidatesIn(exe, wd, home, UserAppDir())
+}
+
+// EnvFileCandidatesIn is EnvFileCandidates with the per-user application
+// directory supplied, so tests need not depend on the host's real one.
+func EnvFileCandidatesIn(exe, wd, home, appDir string) []string {
+	writable := WritableSettingsPathIn(exe, wd, home, appDir)
 	seen := map[string]struct{}{}
 	var out []string
 	add := func(p string) {
@@ -151,12 +158,58 @@ func EnvFileCandidates(exe, wd, home string) []string {
 	} else {
 		add(".env")
 	}
+	if appDir != "" {
+		add(filepath.Join(appDir, ".env"))
+	}
 	if home != "" {
+		// Read the historical locations too, so a settings file written by
+		// an older build is still found after the default moved.
 		add(filepath.Join(home, ".config", "nse-status", ".env"))
 		add(filepath.Join(home, "Library", "Application Support", "NSE Status", ".env"))
 	}
 	out = append(out, filepath.Clean(writable))
 	return out
+}
+
+// appDirName is the per-user directory this app keeps its data in. Windows
+// and macOS both conventionally use a display-style name under their own
+// config root; everything else follows the lowercase, hyphenated XDG form.
+func appDirName(goos string) string {
+	if goos == "windows" || goos == "darwin" {
+		return "NSE Status"
+	}
+	return "nse-status"
+}
+
+// UserAppDir is the platform's per-user configuration directory for this
+// app: %APPDATA%\NSE Status on Windows, ~/Library/Application Support/NSE
+// Status on macOS, and $XDG_CONFIG_HOME/nse-status (usually ~/.config)
+// elsewhere. Empty if the platform cannot say, in which case callers fall
+// back to the working directory as before.
+func UserAppDir() string {
+	base, err := os.UserConfigDir()
+	if err != nil || base == "" {
+		return ""
+	}
+	return filepath.Join(base, appDirName(runtime.GOOS))
+}
+
+// settingsFileNames are the files whose presence marks a directory as an
+// existing installation.
+var settingsFileNames = []string{".env", "profiles.json", "prefs.json", "overrides.json", "known_hosts.json"}
+
+// hasExistingSettings reports whether a directory already holds this app's
+// data.
+func hasExistingSettings(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	for _, name := range settingsFileNames {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func WritableSettingsPath() string {
@@ -166,12 +219,41 @@ func WritableSettingsPath() string {
 	}
 	wd, _ := os.Getwd()
 	home, _ := os.UserHomeDir()
-	return WritableSettingsPathFrom(exe, wd, home)
+	return WritableSettingsPathIn(exe, wd, home, UserAppDir())
 }
 
+// WritableSettingsPathFrom is kept for callers that do not supply an
+// application directory; it resolves the platform's own.
 func WritableSettingsPathFrom(exe, wd, home string) string {
+	return WritableSettingsPathIn(exe, wd, home, UserAppDir())
+}
+
+// WritableSettingsPathIn decides where settings, saved connections and
+// host keys are written.
+//
+// The order matters more than any single location:
+//
+//  1. Inside a macOS .app bundle, Application Support — a bundle's own
+//     directory is not writable and the working directory is wherever
+//     Finder happened to launch from.
+//  2. A working directory that already holds this app's data keeps it.
+//     The default used to be the working directory unconditionally, so
+//     moving it without this would strand every existing installation —
+//     including a developer's repo checkout, which is the normal way to
+//     run from source.
+//  3. Otherwise the platform's per-user directory. The old default meant
+//     the same binary kept different credentials depending on which
+//     directory it was started from, silently.
+//  4. Failing all that, the working directory, as before.
+func WritableSettingsPathIn(exe, wd, home, appDir string) string {
 	if exe != "" && filepath.Base(filepath.Dir(exe)) == "MacOS" && home != "" {
 		return filepath.Join(home, "Library", "Application Support", "NSE Status", ".env")
+	}
+	if hasExistingSettings(wd) {
+		return filepath.Join(wd, ".env")
+	}
+	if appDir != "" {
+		return filepath.Join(appDir, ".env")
 	}
 	if wd != "" {
 		return filepath.Join(wd, ".env")

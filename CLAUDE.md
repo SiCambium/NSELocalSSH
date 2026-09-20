@@ -70,6 +70,14 @@ Every write follows the same shape:
 
 `ClassifyRisk` is the lockout list: `wan`, `lan-port`, `vlan-management-access`, `management-service`, `high-availability`, `admin-password`, `outbound-filter`, `geo-ip`, `overrides`. Anything that could plausibly cut the session doing the editing belongs here; free-text CLI overrides are always risky because they can't be judged by inspection.
 
+### Where data is written
+
+`WritableSettingsPathIn` (`config.go`) decides, and the order matters more than any single location: a macOS `.app` bundle uses Application Support; **a working directory that already holds any of `settingsFileNames` keeps it** — that clause is the only thing stopping a default change from stranding every existing install, including a repo checkout run from source; otherwise the platform's per-user directory (`UserAppDir`), `%APPDATA%\NSE Status` / `~/Library/Application Support/NSE Status` / `~/.config/nse-status`. `EnvFileCandidatesIn` still *reads* the historical locations so an older build's file is found.
+
+Everything else (`profiles.json`, `prefs.json`, `overrides.json`, `known_hosts.json`) derives from that file's directory, so it follows automatically.
+
+**Tests run on macOS only** (see `.github/workflows/release.yml` — the webview binding needs the platform's GUI headers). A defect that only shows on Windows or Linux will not be caught by CI; PR #33 was exactly that, a non-portable path assertion and a TTL boundary that only failed on a coarse clock.
+
 ### Connections (multi-site)
 
 `profiles.json` (next to the writable `.env`, see `ProfilesPath`) holds the saved connections — one per site, with a stable auto-incrementing ID, a free-text `Name`, and the credentials. `Profile.Label()` falls back to the host when there's no name. `ProfileStore.NextIDSeq` is a persisted high-water mark so a delete can never make the next connection reuse an ID a UI element still refers to.
