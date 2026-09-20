@@ -62,3 +62,34 @@ func TestDebugRunBlocksCrossOrigin(t *testing.T) {
 		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
 	}
 }
+
+// /api/backup is a GET, but it hands out every credential on the device
+// in cleartext. That is not something another site's page gets to trigger
+// in a tab the operator happens to have open, so it carries the same
+// origin check as the state-changing endpoints.
+func TestBackupBlocksCrossOrigin(t *testing.T) {
+	s := &Server{Client: NewClient(Config{}), SkipConnect: true}
+	req := httptest.NewRequest(http.MethodGet, "/api/backup", nil)
+	req.Host = "127.0.0.1:8080"
+	req.Header.Set("Origin", "http://evil.example")
+	rec := httptest.NewRecorder()
+	s.handleBackup(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "NSE site backup") {
+		t.Fatal("a cross-origin request received backup content")
+	}
+}
+
+func TestBackupBlocksSecFetchSiteCrossSite(t *testing.T) {
+	s := &Server{Client: NewClient(Config{}), SkipConnect: true}
+	req := httptest.NewRequest(http.MethodGet, "/api/backup", nil)
+	req.Host = "127.0.0.1:8080"
+	req.Header.Set("Sec-Fetch-Site", "cross-site")
+	rec := httptest.NewRecorder()
+	s.handleBackup(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+}

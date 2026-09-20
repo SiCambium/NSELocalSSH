@@ -22,3 +22,14 @@ known_hosts
 gui/
 tests/
 .pytest_cache/
+
+# Runtime state written next to the settings file. history.json and
+# journal.json hold a site's measurements and its (redacted) running
+# configuration; neither belongs in the repository.
+history.json
+journal.json
+history.json.tmp
+journal.json.tmp
+
+# Design-tooling state, local to whoever is working on the UI.
+.impeccable/
