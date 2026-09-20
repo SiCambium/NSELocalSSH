@@ -340,47 +340,6 @@
   font-size: 12px;
 }
 
-/* --- WAN: roles and the traffic split -----------------------------------
-   Load balancing is the reason most people open the WAN page, and it is
-   a property of the set of links rather than of any one of them. The bar
-   is the split drawn to scale, in the two chart-series colours, because
-   this is a quantity and not a state: teal and red would claim something
-   is healthy or broken, which a traffic share does not say. */
-.lb-sentence { margin: 0 0 12px; font-size: 14px; color: var(--text); }
-.lb-bar {
-  display: flex;
-  gap: 2px;
-  height: 46px;
-  margin: 0 0 12px;
-  border-radius: var(--radius-chip);
-  overflow: hidden;
-}
-.lb-seg {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  min-width: 0;
-  padding: 0 12px;
-  color: #ffffff;
-  background: var(--series-1);
-  overflow: hidden;
-}
-/* Cornflower is a chart-series colour and never carries text, so the
-   second band's own label is set on the ink instead. */
-.lb-seg-2 { background: var(--series-2); color: var(--ink); }
-.lb-seg-3 { background: #2f6fb0; }
-.lb-seg-4 { background: #9dc4f5; color: var(--ink); }
-.lb-seg-name {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.lb-seg-pct { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
 .lb-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
 
