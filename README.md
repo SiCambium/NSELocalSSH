@@ -6,15 +6,17 @@ This is a personal tool, not an official Cambium product.
 
 ## What it does
 
-**Status dashboard** (read-only, polls `show` / `service show` commands): Overview, Throughput, Details, Memory, Connection tracking, Interfaces, VLANs, Routing, DHCP (pools + MAC bindings), Neighbors, Devices, VPN tunnels (Starlink, client VPN), Tailscale, Firewall counters, Traffic, Events, and a raw Config viewer with secret-bearing lines redacted.
+**Status dashboard** (read-only, polls `show` / `service show` commands): Overview, Throughput, Details, Memory, Connection tracking, Interfaces, VLANs, Routing, DHCP (pools + MAC bindings), Neighbors, Devices, VPN tunnels (Starlink, client VPN), Tailscale, Firewall counters, Traffic, Events, a raw Config viewer with secret-bearing lines redacted, and Diagnostics.
 
 **Configuration** (read/write, applied over the same SSH session): Network (VLANs, DHCP scopes, physical LAN port switchport config), WAN (DHCP/static/PPPoE, load balancing, bandwidth, connection health, enabling a LAN port as a new WAN, moving a WAN to a different physical port), Management, Groups (User/IP/Application), DNS, Threat Protection, Firewall, VPN, and Advanced.
 
 **Advanced overrides**: a free-text CLI box for settings that have no control of their own — the equivalent of cnMaestro's user-defined overrides. The text is sent to the device verbatim, line by line, because the device tracks command context itself exactly as it does when you paste into the CLI; nothing here tries to interpret it. A preview shows the precise lines that will be sent, the config stanzas that will be snapshotted for the undo, and any entries that are new and therefore cannot be undone automatically. The text is stored per connection as a record of what was last sent — not of what is currently on the device. `no management ssh` is refused: everything else an override can do is recoverable by power-cycling, since a lockout-risk change is not saved until confirmed, but disabling SSH takes away the channel the undo itself travels over.
 
+**Diagnostics**: a front for the read-only command set the backend has carried at `/api/debug` since early on and nothing called. 46 commands in eight groups (Device, Neighbors, Routing, VPN / tunnels, Firewall, DHCP, Interfaces, Diagnostics): `ping`, `nslookup`, `speedtest`, per-daemon logs, and the `show` commands that have no home on another tab. Two rules shape the screen. A command that costs something says so before it runs, because `speedtest` spends a customer's bandwidth and `show conntrack` can load the device's CPU. And an argument is a real input with its own validation message, not a free-text box that fails on the device a round trip later. `show config` run from here goes through the same redaction as the Config tab, so passwords and keys stay off the screen.
+
 **License-aware UI**: reads `show feature-license` and greys out (rather than hides) any control gated behind NSE Security Plus, matching cnMaestro's own convention.
 
-**Multi-site connections**: saved connections for every site you manage, each with its own label, address, username and SSH port. The header always shows which device you are looking at and drops down to switch; **Connections** is a top-level tab for adding, renaming and deleting them. One connection is live at a time — opening a site closes the previous SSH session — and a switch is refused while a configuration change on the current device is still awaiting confirmation, since the snapshot that would undo it belongs to that device and must not be replayed onto another. See [Where it keeps your data](#where-it-keeps-your-data) for where connections are stored and what that file contains.
+**Multi-site connections**: saved connections for every site you manage, each with its own label, address, username and SSH port. The header always shows which device you are looking at and drops down to switch; **Connections** is a top-level item in the left rail for adding, renaming and deleting them. One connection is live at a time — opening a site closes the previous SSH session — and a switch is refused while a configuration change on the current device is still awaiting confirmation, since the snapshot that would undo it belongs to that device and must not be replayed onto another. See [Where it keeps your data](#where-it-keeps-your-data) for where connections are stored and what that file contains.
 
 **Profile export**: produces a JSON profile in the same schema as cnMaestro's own NSE Group export. A handful of fields exist only in cnMaestro's own view of the device (VLAN labels, rate-limit rules, some display-only WAN values), so an export from a unit that has never been cloud-managed will have those blank.
 
@@ -72,7 +74,7 @@ chmod +x nse-status_<version>_linux_amd64
 
 ### First run
 
-Open the **Connections** tab, add the device's address, username and password, and the SSH port if it is not 22. That is the whole setup — there is no installer, no service, and no configuration file to write by hand.
+Open **Connections** in the left rail, add the device's address, username and password, and the SSH port if it is not 22. That is the whole setup — there is no installer, no service, and no configuration file to write by hand.
 
 ## Where it keeps your data
 

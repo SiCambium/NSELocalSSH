@@ -41,6 +41,17 @@
     return live ? `${esc(live)} <span class="muted">negotiated</span>` : "-";
   }
 
+  // Designation, role, reading: the same label block the Status tables
+  // use, so one physical jack reads the same way on every screen.
+  function linkCell(p) {
+    const st = String(linkFor(p.interface).status || "").toUpperCase();
+    if (st !== "UP" && st !== "DOWN") return '<span class="muted">&mdash;</span>';
+    const up = st === "UP";
+    return `<span class="${up ? "up" : "down"}"><span class="state-mark" aria-hidden="true">${
+      up ? "●" : "✕"
+    }</span>${up ? "Up" : "Down"}</span>`;
+  }
+
   function duplexCell(p) {
     if (p.duplex) return `${esc(p.duplex)} <span class="muted">forced</span>`;
     const live = liveValue(linkFor(p.interface).duplex);
@@ -102,7 +113,8 @@
     const portRows = lanPorts
       .map(
         (p) => `<tr>
-          <td>${esc(p.interface)}</td>
+          <td class="mono">${esc(p.interface)}</td>
+          <td>${linkCell(p)}</td>
           <td>${esc(p.mode || "-")}</td>
           <td>${esc(p.mode === "trunk" ? p.native_vlan || "-" : p.access_vlan || "-")}</td>
           <td>${esc(p.allowed_vlans || "-")}</td>
@@ -125,8 +137,8 @@
       <h2>LAN Ports</h2>
       <p class="muted">WAN ports aren't shown here — manage them from the WAN tab instead.</p>
       <div class="table-wrap"><table>
-        <thead><tr><th>Port</th><th>Mode</th><th>VLAN</th><th>Allowed VLANs</th><th>Auto VLAN</th><th>Speed</th><th>Duplex</th><th></th></tr></thead>
-        <tbody>${portRows || '<tr><td colspan="8" class="muted">No LAN ports found.</td></tr>'}</tbody>
+        <thead><tr><th>Port</th><th>Link</th><th>Mode</th><th>VLAN</th><th>Allowed VLANs</th><th>Auto VLAN</th><th>Speed</th><th>Duplex</th><th></th></tr></thead>
+        <tbody>${portRows || '<tr><td colspan="9" class="muted">No LAN ports found.</td></tr>'}</tbody>
       </table></div>
     `;
 
@@ -282,7 +294,7 @@
         </span>
       </div>
       <label>Custom DHCP options (one per line, "&lt;code&gt; &lt;value&gt;" or "&lt;code&gt; IP|text &lt;value&gt;", e.g. "15 example.local" or "43 IP 192.168.200.1")
-        <textarea id="${prefix}-options" rows="3" style="background:var(--bg-2);color:var(--text);border:1px solid var(--line);padding:8px 10px;font:inherit;text-transform:none">${esc(d.optionsText || "")}</textarea>
+        <textarea id="${prefix}-options" rows="3">${esc(d.optionsText || "")}</textarea>
       </label>`;
   }
 

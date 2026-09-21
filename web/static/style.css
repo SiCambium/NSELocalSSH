@@ -1,15 +1,155 @@
+/* --- The cabinet legend -------------------------------------------------
+   The console is the label system a technician would have printed for
+   this cabinet. Every reading is a label stuck to the thing it describes,
+   with an anatomy that never varies: legend, reading, role chip, in that
+   order. A wall of them is meant to be scanned, not read.
+
+   The previous palette was near-black charcoal with a teal accent, set in
+   a mono face that ran through the interface chrome as well as the data.
+   That combination reads as a code editor, which is wrong for a tool
+   opened in front of a paying customer. Mono is now for data only:
+   addresses, MACs, serials, CLI output. In chrome it is a costume.
+
+   Colour values are the Cambium corporate ones, so an operator arriving
+   from cnMaestro reads the same states in the same hues. Identity assets
+   are not used and no endorsement is claimed. */
 :root {
-  --bg: #12161c;
-  --bg-2: #1a2028;
-  --line: #2b3440;
-  --text: #e7edf4;
-  --muted: #8b98a8;
-  --accent: #2aa3a3;
-  --up: #3dba7a;
-  --down: #d15b5b;
-  --warn: #d4a017;
-  --font: "IBM Plex Sans", "Segoe UI", sans-serif;
-  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  color-scheme: light;
+
+  /* One job per colour. The corporate system assigns magenta to both
+     alerts and primary buttons, and cornflower to both links and chart
+     series; neither double assignment is carried over, because a colour
+     that means "failed" cannot also mean "press me" on a screen someone
+     reads to find out whether a port went down.
+
+     Cornflower measures 2.6:1 on white. It draws chart lines and nothing
+     else: never text, never a label, never a border that carries meaning. */
+  --ground: #f8f9fa;
+  --label: #ffffff;
+  --label-2: #f1f3f5;
+  --ink: #003a70;
+  --ink-2: #404040;
+  --rule: #e7e7e7;
+  --in-service: #008a96;
+  --fault: #d9027d;
+  --series-1: #003a70;
+  --series-2: #65a4ef;
+  --state-up: #17703e;
+  --state-up-mark: #1e8e4e;
+  --state-down: #c8322b;
+
+  --bg: var(--ground);
+  --bg-2: var(--label);
+  --surface-2: var(--label-2);
+  --chassis: var(--ink);
+  --line: var(--rule);
+  --text: #1a1d21;
+  --muted: var(--ink-2);
+  --accent: var(--ink);
+  --accent-soft: #e8eff6;
+  /* Up and down are the green and red every operator already reads that
+     way, not the corporate teal and magenta. Those two are the identity
+     hues and keep their own jobs: teal marks a port in service on the
+     faceplate, magenta is the fault accent. A connection indicator has to
+     be readable as live-or-dead by someone who has never seen this
+     palette, which is the owner's call and the safer one. */
+  --up: var(--state-up);
+  --down: var(--state-down);
+  --warn: #8a5d03;
+
+  --console: #10151a;
+  --console-text: #dbe3ea;
+  --fault-bg: #fdeef6;
+  --fault-text: #9c0159;
+
+  /* Offset plus soft blur, tinted with the ink rather than neutral black:
+     a printed label lifting off the stock it is stuck to. */
+  --shadow: 0 1px 2px rgb(0 58 112 / 8%), 0 1px 3px rgb(0 58 112 / 6%);
+  --shadow-pop: 0 6px 16px -4px rgb(0 58 112 / 26%);
+
+  --radius-chip: 8px;
+  --radius: 12px;
+  --radius-panel: 16px;
+
+  /* The corporate face is Proxima Nova with Open Sans as its web
+     fallback, both CDN-delivered. This binary has to run at a site with
+     no internet, so it ships a humanist system stack and the gap is
+     recorded in the surface brief; vendoring an Open Sans woff2 subset
+     is the fix, not a link to fonts.googleapis.com. */
+  --font: "Segoe UI Variable Text", "Segoe UI", -apple-system, "Helvetica Neue", system-ui, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", "Segoe UI Mono", Consolas, Menlo, monospace;
+}
+
+/* The legend printed on the label: where the corporate micro-label spec
+   and the cabling label are the same object under two names. */
+.legend,
+.stat label,
+.profile-slot .slot-num,
+th {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ink-2);
+}
+
+/* Browser surfaces ship with defaults that belong to no design system. */
+::selection { background: rgb(0 58 112 / 14%); color: var(--text); }
+:root { accent-color: var(--ink); caret-color: var(--ink); scrollbar-color: #c3ccd4 transparent; }
+::-webkit-scrollbar { width: 11px; height: 11px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #c3ccd4; border: 3px solid var(--ground); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: #a7b3bd; }
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+a { color: var(--ink); text-underline-offset: 3px; }
+table, .stat strong, #clock { font-variant-numeric: tabular-nums; }
+
+/* Dark stays available for anyone who wants it; it is no longer the
+   default, and the use scene is why. A technician reads this in a comms
+   room or a customer's office, usually under bright overhead light, and
+   often with the customer looking at the same screen. Light wins there.
+
+   --chassis is set explicitly here rather than inheriting --ink, because
+   in dark mode the ink has to become light to stay readable while the
+   header must stay dark to remain the header. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --ground: #0d131b;
+    --label: #161f2a;
+    --label-2: #1e2937;
+    --chassis: #00264a;
+    --ink: #8fbbf0;
+    --ink-2: #9dabb8;
+    --rule: #26313d;
+    --in-service: #2ab3bf;
+    --fault: #ff5bb0;
+    --series-1: #65a4ef;
+    --series-2: #2ab3bf;
+    --state-up: #56d08a;
+    --state-up-mark: #56d08a;
+    --state-down: #ff6f66;
+
+    --text: #e7edf4;
+    --accent-soft: #14283f;
+    --warn: #d9a33a;
+
+    --console: #0a0f15;
+    --console-text: #d7e0e6;
+    --fault-bg: #2e0f22;
+    --fault-text: #ff97cb;
+
+    --shadow: 0 1px 2px rgb(0 0 0 / 45%);
+    --shadow-pop: 0 6px 16px -4px rgb(0 0 0 / 60%);
+  }
+  :root:not([data-theme="light"]) ::selection { background: rgb(143 187 240 / 26%); }
+  :root:not([data-theme="light"]) ::-webkit-scrollbar-thumb { background: #33414f; border-color: var(--ground); }
+  :root:not([data-theme="light"]) .port.up .role { background: rgb(42 179 191 / 18%); color: #6fdbe4; }
 }
 
 * { box-sizing: border-box; }
@@ -32,14 +172,504 @@ button {
 button:hover { border-color: var(--accent); }
 button:disabled { opacity: 0.6; cursor: default; }
 
-.top {
+
+
+/* --- Shell --------------------------------------------------------------
+   A rail rather than a top bar, because this device has 17 status views
+   and 8 configuration sections. As two rows of tabs that read as an
+   editor, and the second row was never scannable. Vertically they are a
+   list, which is what they always were. The rail collapses to its icons
+   for anyone who wants the width back. */
+.app {
   display: grid;
-  grid-template-columns: minmax(340px, 1fr) auto minmax(280px, 1fr);
-  align-items: center;
-  gap: 16px;
-  padding: 14px 24px;
-  border-bottom: 1px solid var(--line);
+  grid-template-columns: 248px 1fr;
+  min-height: 100vh;
 }
+.app.rail-collapsed { grid-template-columns: 64px 1fr; }
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 10px 18px;
+  background: var(--chassis);
+  color: var(--on-ink);
+  --on-ink: #f8f9fa;
+  --on-ink-2: #a8c8f0;
+}
+.rail .muted, .rail .legend { color: var(--on-ink-2); }
+.rail :focus-visible { outline-color: #ffffff; }
+
+.rail-head { display: flex; align-items: center; gap: 10px; padding: 2px 4px 12px; }
+.rail-id { flex: 1 1 auto; min-width: 0; }
+.rail-id h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.brand-model { margin: 1px 0 0; font-size: 11px; font-weight: 600; color: var(--on-ink-2); }
+.brand-icon { width: 32px; height: 32px; object-fit: contain; flex: 0 0 auto; }
+
+.rail-toggle {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--on-ink-2);
+  cursor: pointer;
+}
+.rail-toggle:hover { background: rgb(255 255 255 / 12%); color: var(--on-ink); }
+.rail-collapsed .rail-caret { transform: rotate(180deg); }
+
+.rail .menu, .rail .tabs, .rail .config-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0;
+  margin: 0;
+  background: none;
+  border: 0;
+  overflow: visible;
+}
+.rail .menu { margin-bottom: 10px; }
+.rail .menu button,
+.rail .tabs button,
+.rail .config-nav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--on-ink-2);
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.rail .menu button:hover,
+.rail .tabs button:hover,
+.rail .config-nav button:hover { background: rgb(255 255 255 / 10%); color: var(--on-ink); }
+.rail .menu button.active,
+.rail .tabs button.active,
+.rail .config-nav button.active { background: rgb(255 255 255 / 16%); color: #ffffff; font-weight: 600; }
+.rail .menu button .icon { flex: 0 0 auto; }
+
+/* Sub-lists are the active page's own sections. They sit in a recessed
+   well, darker than the rail itself, so the nesting is visible rather
+   than merely implied by an indent nobody notices. */
+.rail .tabs, .rail .config-nav {
+  margin: 2px 0 0;
+  padding: 5px;
+  border-radius: var(--radius);
+  background: rgb(0 0 0 / 22%);
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 22%);
+  /* The well runs to the bottom of the rail whatever it holds. Status
+     has seventeen sections and Configuration has nine, and sizing the
+     well to its contents made the same chrome end halfway down the rail
+     on one page and near the floor on the other. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.rail .tabs button, .rail .config-nav button { padding-left: 14px; font-size: 12.5px; }
+body:not([data-page="config"]) .config-nav { display: none; }
+
+/* Collapsed: icons only for the pages. The sub-lists step aside entirely
+   rather than becoming a column of unlabelled text. */
+.rail-collapsed .rail-id,
+.rail-collapsed .menu-text,
+.rail-collapsed .conn-current-text,
+.rail-collapsed .conn-caret,
+.rail-collapsed .tabs,
+.rail-collapsed .config-nav { display: none; }
+.rail-collapsed .rail-head { flex-direction: column; gap: 8px; }
+.rail-collapsed .menu button { justify-content: center; padding-left: 10px; padding-right: 10px; }
+.rail-collapsed #conn-current { justify-content: center; padding: 8px; }
+.rail-collapsed .conn-row { flex-direction: column; }
+.rail-collapsed .conn-row #refresh { width: 100%; min-height: 36px; }
+.rail-collapsed .conn-switcher #poll-state { display: none; }
+
+.workspace { display: flex; flex-direction: column; min-width: 0; background: var(--ground); }
+
+/* Below 900px there is no room for a 248px rail beside content. It
+   collapses to its icons on its own, without waiting for the toggle —
+   a laptop tiled beside a terminal, or a tablet on a cabinet shelf, is
+   the real usage scene and it was landing on a layout with nothing
+   below 1100px to meet it. */
+@media (max-width: 900px) {
+  .app { grid-template-columns: 64px 1fr; }
+  .rail-id,
+  .menu-text,
+  .conn-current-text,
+  .conn-caret,
+  .rail .tabs,
+  .rail .config-nav,
+  .rail-toggle,
+  .rail-head { flex-direction: column; gap: 8px; }
+  .rail .menu button { justify-content: center; padding-left: 10px; padding-right: 10px; }
+  #conn-current { justify-content: center; padding: 8px; }
+  .rail-foot { align-items: stretch; }
+  .rail-foot button { width: 100%; padding: 7px 2px; font-size: 11px; text-align: center; }
+  .rail .menu button { min-height: 32px; }
+  .conn-row { flex-direction: column; }
+  .conn-row #refresh { width: 100%; min-height: 36px; }
+  .conn-switcher #poll-state { display: none; }
+  main { padding-left: 16px; padding-right: 16px; }
+}
+
+/* A reading that wraps mid-unit is worse than one that wraps: "6.3 Mbp"
+   could be Mbps or Mbits and the technician cannot tell which. */
+.box.hero strong, .stat strong { overflow-wrap: anywhere; }
+
+/* State carried by a shape as well as a hue. Six identical jack glyphs
+   in two colours tell a colour-blind technician nothing. */
+.state-mark { margin-right: 6px; font-size: 0.85em; line-height: 1; }
+
+/* --- Rail footer --------------------------------------------------------
+   Whole-device actions, kept apart from the navigation above them. */
+.rail-foot {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 0 4px;
+}
+.rail-foot button {
+  border: 1px solid rgb(255 255 255 / 28%);
+  border-radius: var(--radius-chip);
+  background: transparent;
+  color: var(--on-ink);
+  padding: 7px 14px;
+  min-height: 32px;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+}
+.rail-foot button:hover { background: rgb(255 255 255 / 12%); border-color: rgb(255 255 255 / 55%); }
+
+/* Export Profile reads the whole device, so it sits with the other
+   device-level controls. It only means anything on the Configuration
+   page, so that is the only place it shows. */
+#export-profile-btn { display: none; }
+body[data-page="config"] #export-profile-btn { display: inline-flex; }
+
+.rail-collapsed .rail-foot { display: none; }
+
+/* --- Icons --------------------------------------------------------------
+   One weight, one cap, one grid. Sized in ems so an icon tracks the text
+   beside it instead of needing a size per context. */
+.icon { width: 1.15em; height: 1.15em; flex: 0 0 auto; }
+h2 .icon { color: var(--ink-2); }
+
+/* --- Dashboard ----------------------------------------------------------
+   Boxes, sized so the whole device fits one screen on a laptop. Below
+   that height it scrolls: hiding a reading to avoid a scrollbar is the
+   wrong trade on a page whose job is to show state. */
+.dash {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  align-content: start;
+}
+.box {
+  background: var(--label);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow);
+  padding: 14px 16px 16px;
+  min-width: 0;
+}
+.box h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.box h2 + h2 { margin-top: 18px; }
+.box-empty { margin: 0; color: var(--ink-2); font-size: 13px; }
+.box.hero { grid-column: span 1; }
+.box-alarms { grid-column: span 2; }
+.box-ports { grid-column: span 2; }
+.box-meter { display: grid; place-items: center; padding: 10px 12px 14px; }
+.box-wan { grid-column: span 2; }
+@media (max-width: 1100px) {
+  .dash { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .box-ports, .box-wan { grid-column: span 2; }
+  .box-ports { grid-row: auto; }
+}
+
+
+/* --- Dashboard boxes ----------------------------------------------------*/
+.box.hero { display: flex; flex-direction: column; gap: 2px; }
+
+/* The top row is inverted: white on the corporate ink. Those four
+   readings answer "is this device up and carrying traffic", and giving
+   them the device's own plate colour separates them from the detail
+   boxes underneath, which stay white labels stuck to it. White on
+   #003A70 measures 11.4:1; the cornflower used for their legends
+   measures 6.6:1 on the same ground, which is the pairing the rail
+   already uses. */
+.box.hero {
+  --on-ink: #ffffff;
+  --on-ink-2: #a8c8f0;
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--on-ink);
+}
+.box.hero h2,
+.box.hero .hero-figure,
+.box.hero strong,
+.box.hero .box-go { color: var(--on-ink); }
+.box.hero h2 .icon,
+.box.hero .legend,
+.box.hero .muted { color: var(--on-ink-2); }
+.box.hero .hero-badge { background: rgb(255 255 255 / 14%); color: var(--on-ink); }
+.box.hero .state-dot { box-shadow: 0 0 0 1px rgb(255 255 255 / 30%); }
+.box.hero :focus-visible { outline-color: #ffffff; }
+.hero-figure {
+  margin: 4px 0 0;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.hero-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+/* A paired figure has half the width of a lone one, which was enough for
+   "491.1 kbps" to break between the number and its unit and leave the two
+   columns' labels on different lines. A reading and its unit are one
+   value, so they do not come apart; the smaller size is what buys the
+   room to keep them together. */
+.hero-pair .hero-figure { font-size: 20px; white-space: nowrap; }
+.hero-pair p { margin: 0; }
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  align-self: flex-start;
+  margin: 0;
+  padding: 3px 10px 3px 8px;
+  border-radius: 999px;
+  background: var(--label-2);
+  font-size: 12px;
+  font-weight: 600;
+}
+.state-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; background: var(--ink-2); }
+.state-dot.is-on { background: var(--state-up-mark); }
+.state-dot.is-off { background: var(--state-down); }
+
+/* The affordance that says a box leads somewhere. */
+.box-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: auto;
+  padding: 9px 0 3px;
+  min-height: 32px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.box-go .icon { transition: transform 160ms cubic-bezier(0.2, 0.8, 0.3, 1); }
+.box-go:hover { text-decoration: underline; }
+.box-go:hover .icon { transform: translateX(3px); }
+@media (prefers-reduced-motion: reduce) {
+  .box-go .icon { transition: none; }
+}
+
+/* --- Alarms -------------------------------------------------------------
+   Counted from the severity digit the device already puts in every event
+   code ("WANLB-3-LINK-DOWN" is an error). The period is not claimed to be
+   24 hours: `show events` returns a bounded recent list with no year on
+   its timestamps, so the label says what is actually known. */
+.alarm-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+.alarm { display: grid; justify-items: center; gap: 3px; }
+.alarm b {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.alarm.critical b { background: #fdeceb; color: #a5271f; }
+.alarm.major b { background: #fdf1e3; color: #8a5208; }
+.alarm.minor b { background: #fbf7e0; color: #6f5b07; }
+
+/* --- Flat table (inside a box) ------------------------------------------*/
+table.flat { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.flat th, table.flat td { padding: 7px 0; border-bottom: 1px solid var(--rule); text-align: left; }
+table.flat tr:last-child td { border-bottom: 0; }
+table.flat .num { text-align: right; font-variant-numeric: tabular-nums; }
+table.flat td .state-dot { margin-right: 7px; display: inline-block; vertical-align: middle; }
+
+
+/* --- Readout ------------------------------------------------------------
+   Detail views were built out of the dashboard's stat tile, which sets
+   its value at 18px in a 220px box. Forty of those is a wall of large
+   numbers with no hierarchy, and a field holding two values (two DNS
+   servers, say) ran them together on one line as though they were one.
+
+   A readout is the dense form: the legend on the left, the value on the
+   right, one hairline per row, and multi-value fields broken onto their
+   own lines so two things look like two things. */
+.readout-list {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: 0 20px;
+  margin: 0 0 22px;
+  max-width: 720px;
+}
+.readout-list > dt {
+  padding: 8px 0;
+  border-top: 1px solid var(--rule);
+  align-self: start;
+}
+.readout-list > dd {
+  margin: 0;
+  padding: 8px 0;
+  border-top: 1px solid var(--rule);
+  font-size: 13px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.readout-list > dt:first-of-type, .readout-list > dd:first-of-type { border-top: 0; }
+.readout-list .multi { display: flex; flex-direction: column; gap: 3px; }
+.readout-list .multi span { font-family: var(--mono); font-size: 12.5px; }
+
+/* Groups of readouts sit side by side when there is room, so a detail
+   page is a set of panels rather than one long column. */
+.readout-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 0 32px;
+  align-items: start;
+}
+
+
+/* --- Filter chips -------------------------------------------------------
+   One row of controls above the table they act on. Each carries its own
+   count, so choosing a band is an informed choice rather than a guess
+   that might land on an empty table. */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 14px; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--label);
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.chip:hover { border-color: var(--ink); color: var(--ink); }
+.chip.active { background: var(--ink); border-color: var(--ink); color: #ffffff; }
+.chip-count {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--label-2);
+  color: var(--ink-2);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.chip.active .chip-count { background: rgb(255 255 255 / 22%); color: #ffffff; }
+
+.more-row { display: flex; align-items: baseline; gap: 12px; margin: 10px 0 22px; font-size: 12px; }
+.more-row .box-go { margin-top: 0; padding-top: 0; }
+
+/* --- Severity tag -------------------------------------------------------
+   The band in words. Colour is the second signal, never the only one. */
+.sev {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-chip);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.sev-critical { background: #fdeceb; color: #a5271f; }
+.sev-major { background: #fdf1e3; color: #8a5208; }
+.sev-minor { background: #fbf7e0; color: #6f5b07; }
+.sev-info { background: var(--label-2); color: var(--ink-2); }
+.sev-none { color: var(--ink-2); }
+
+/* --- Meter --------------------------------------------------------------
+   A ratio against a limit. The ticks are ten points each, so the dial is
+   read as a number rather than as a mood. */
+.meter { width: 100%; max-width: 190px; text-align: center; }
+/* Scoped to the dial. As `.meter svg` this also matched the icon inside
+   .meter-label and beat .icon on specificity, so the label icon rendered
+   at the full width of the box. */
+.meter-dial { width: 100%; height: auto; display: block; }
+.meter-track { fill: none; stroke: var(--label-2); stroke-width: 9; stroke-linecap: round; }
+.meter-value { fill: none; stroke: var(--ink); stroke-width: 9; stroke-linecap: round; }
+.meter-tick { stroke: var(--rule); stroke-width: 1.5; }
+.meter-tick.major { stroke: var(--ink-2); stroke-width: 2; }
+.meter-figure { fill: var(--text); font-size: 25px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.meter-unit { font-size: 13px; fill: var(--ink-2); }
+.meter-min, .meter-max { fill: var(--ink-2); font-size: 9px; font-weight: 700; letter-spacing: 0.08em; }
+.meter-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 2px 0 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+.meter-sub { margin: 3px 0 0; font-size: 11px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+/* --- WAN rows ----------------------------------------------------------*/
+.wan-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 18px;
+  align-items: baseline;
+  padding: 8px 0;
+  border-top: 1px solid var(--rule);
+}
+.wan-row:first-child { border-top: 0; }
+.wan-name { font-weight: 700; color: var(--ink); }
+.wan-rate { display: flex; align-items: baseline; gap: 7px; font-variant-numeric: tabular-nums; }
+
+/* --- Readouts and states -----------------------------------------------*/
+.readout { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; align-items: baseline; }
+.readout dd { margin: 0; font-weight: 600; color: var(--text); }
+.state-line { display: flex; align-items: center; gap: 8px; margin: 0; }
+.state-line .state-icon { width: 1.3em; height: 1.3em; }
+.state-line.is-on .state-icon { color: var(--state-up); }
+.state-line.is-off .state-icon { color: var(--state-down); }
+
 .brand { display: flex; align-items: center; gap: 12px; min-width: 220px; }
 .brand-icon {
   width: 44px;
@@ -48,8 +678,7 @@ button:disabled { opacity: 0.6; cursor: default; }
   object-fit: cover;
   box-shadow: 0 0 0 1px var(--line);
 }
-.kicker { margin: 0; color: var(--accent); letter-spacing: 0.08em; text-transform: uppercase; font-size: 11px; }
-h1 { margin: 2px 0 0; font-size: 22px; font-weight: 600; }
+h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.015em; }
 .menu {
   display: flex;
   gap: 4px;
@@ -67,7 +696,7 @@ h1 { margin: 2px 0 0; font-size: 22px; font-weight: 600; }
   cursor: pointer;
   border-radius: 7px;
 }
-.menu button.active { background: #24303c; color: var(--text); }
+.menu button.active { background: var(--surface-2); color: var(--text); }
 .top-meta {
   display: flex;
   flex-wrap: wrap;
@@ -77,18 +706,19 @@ h1 { margin: 2px 0 0; font-size: 22px; font-weight: 600; }
   color: var(--muted);
   justify-self: end;
 }
+/* Both of these used to be set in mono at a fixed character width, which
+   is what made the header read as a terminal. The clock keeps tabular
+   figures so it stops jittering, which was the only thing mono was
+   actually buying here. */
 #clock {
-  font-family: var(--mono);
   font-size: 12px;
   white-space: nowrap;
-  min-width: 28ch;
   font-variant-numeric: tabular-nums;
 }
 #poll-state {
-  font-family: var(--mono);
   font-size: 12px;
   white-space: nowrap;
-  min-width: 14ch;
+  min-width: 9ch;
 }
 .auto-refresh {
   display: flex;
@@ -120,7 +750,7 @@ button#refresh, button#settings-save {
   cursor: pointer;
 }
 button#refresh:hover, button#settings-save:hover { border-color: var(--accent); }
-button#settings-save { background: #1b3d3d; border-color: var(--accent); padding: 8px 16px; }
+button#settings-save { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); font-weight: 700; padding: 8px 16px; }
 button#settings-clear {
   background: var(--bg-2);
   color: var(--text);
@@ -150,7 +780,7 @@ button#settings-clear:hover { border-color: var(--down); }
   text-align: left;
 }
 .profile-slot .slot-num { color: var(--muted); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
-.profile-slot .slot-name { font-family: var(--mono); font-size: 13px; }
+.profile-slot .slot-name { font-size: 13px; font-weight: 600; }
 .profile-slot.selected { border-color: var(--accent); }
 .profile-slot.active { box-shadow: inset 3px 0 0 var(--up); }
 .profile-slot.empty .slot-name { color: var(--muted); font-family: var(--font); }
@@ -163,10 +793,22 @@ button#settings-clear:hover { border-color: var(--down); }
   cursor: pointer;
   max-width: 720px;
 }
-.check-row input { accent-color: var(--accent); }
+.check-row input { accent-color: var(--accent); width: 18px; height: 18px; flex: 0 0 auto; }
+.check-row select {
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-chip);
+  background: var(--label);
+  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+.check-row select:hover { border-color: var(--ink); }
+#page-settings > .muted { max-width: 720px; margin: 0 0 24px; }
 .warn {
   color: var(--warn);
-  max-width: 720px;
+  max-width: 78ch;
   margin: 0 0 20px;
 }
 
@@ -210,7 +852,7 @@ button#settings-clear:hover { border-color: var(--down); }
   font-size: 13px;
 }
 #debug-run {
-  background: #1b3d3d;
+  background: var(--accent-soft);
   color: var(--text);
   border: 1px solid var(--accent);
   padding: 8px 16px;
@@ -219,8 +861,10 @@ button#settings-clear:hover { border-color: var(--down); }
 #debug-run:hover { border-color: var(--text); }
 #debug-run:disabled { opacity: 0.6; cursor: default; }
 .debug-out {
-  background: #0d1117;
+  background: var(--console);
+  color: var(--console-text);
   border: 1px solid var(--line);
+  border-radius: var(--radius);
   padding: 14px;
   margin: 8px 0 0;
   min-height: 280px;
@@ -257,6 +901,7 @@ button#settings-clear:hover { border-color: var(--down); }
   display: flex;
   gap: 0;
   padding: 0 16px;
+  background: var(--bg-2);
   border-bottom: 1px solid var(--line);
   overflow-x: auto;
 }
@@ -272,51 +917,276 @@ button#settings-clear:hover { border-color: var(--down); }
   padding: 12px 14px;
   cursor: pointer;
 }
-.tabs button.active { color: var(--text); border-bottom-color: var(--accent); }
+.tabs button.active { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
+.tabs button:hover { color: var(--text); }
+.tabs button:focus-visible, .menu button:focus-visible, .subtabs button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 
 main { padding: 20px 24px 40px; }
 .panel { display: none; }
 .panel.active { display: block; }
 #error {
-  background: #3a1f22;
-  color: #f3c4c4;
+  background: var(--fault-bg);
+  color: var(--fault-text);
   padding: 10px 12px;
   margin-bottom: 16px;
 }
 
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 20px; }
-.stat { background: var(--bg-2); border: 1px solid var(--line); padding: 12px 14px; }
-.stat label { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
-.stat strong { display: block; margin-top: 4px; font-size: 16px; font-weight: 600; }
-.ports { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 20px; }
-.port {
-  min-width: 92px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  background: var(--bg-2);
-  font-family: var(--mono);
+/* --- The label block ----------------------------------------------------
+   One component carries this interface. Every reading in the app is a
+   label stuck to the thing it describes, and its anatomy never varies:
+   legend, then reading, then an optional role chip. Same order, same
+   places, every time — so a wall of them can be scanned without being
+   read, which is the whole point of labelling a cabinet. */
+/* The stat tile used to be a bordered card with its value at 18px. Two
+   dozen of those is a wall of large numbers with no hierarchy, and it
+   read as a different product from the pages built out of `.readout-list`
+   (Interfaces, Details). It is now that same label/value line: legend
+   left, reading right, a rule between each, columns side by side where
+   there is room. One anatomy across Status and Configuration.
+
+   Anything still saying `stat()` in JS keeps working — this is the same
+   markup, restyled — so Status, Configuration and anything added later
+   move together. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 0 32px;
+  margin: 0 0 22px;
+  align-items: start;
+}
+.stat {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: 0 20px;
+  align-items: baseline;
+  padding: 8px 0;
+  border-top: 1px solid var(--rule);
+  background: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+.stat label { display: block; }
+.stat strong {
+  display: block;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text);
+}
+/* A stat that carries a bar is a summary rather than a row; the bar runs
+   the full width under both columns. */
+.stat .bar { grid-column: 1 / -1; }
+.grid + .stat, h2 + .stat { margin-bottom: 22px; }
+
+/* --- Faceplate ----------------------------------------------------------
+   The ports as connectors rather than as rows of text, laid out the way
+   they sit on the metal. Green is in service, red is no link, and neither
+   is the only carrier of that fact: the tooltip says it in words and the
+   tally underneath counts both.
+
+   Green and red are the two hues the corporate palette does not contain.
+   On a port panel the universal convention outranks the brand, because a
+   technician reads green as up before reading anything next to it. */
+.faceplate {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  align-items: end;
+}
+.pport {
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-areas: "jack jack" "num role";
+  justify-items: center;
+  gap: 3px 5px;
+  cursor: default;
+}
+.pport-jack { grid-area: jack; width: 40px; height: auto; }
+.pport-num {
+  grid-area: num;
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.pport-role {
+  grid-area: role;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.pport.up .pport-jack { color: var(--state-up-mark); }
+.pport.down .pport-jack { color: var(--state-down); }
+.pport.down .pport-num { color: var(--ink-2); }
+
+/* The physical NSE3000 arrangement: two ports, then a two-by-two block.
+   Only applied when the device reported exactly six, since the layout of
+   a chassis this code has not seen is not worth guessing. */
+.faceplate[data-count="6"] {
+  display: grid;
+  grid-template-columns: repeat(4, max-content);
+  grid-template-rows: auto auto;
+  gap: 8px 12px;
+}
+.faceplate[data-count="6"] .pport { grid-row: 2; }
+.faceplate[data-count="6"] .pport[style*="--slot:4"],
+.faceplate[data-count="6"] .pport[style*="--slot:6"] { grid-row: 1; }
+.faceplate[data-count="6"] .pport[style*="--slot:1"] { grid-column: 1; }
+.faceplate[data-count="6"] .pport[style*="--slot:2"] { grid-column: 2; }
+.faceplate[data-count="6"] .pport[style*="--slot:3"] { grid-column: 3; }
+.faceplate[data-count="6"] .pport[style*="--slot:4"] { grid-column: 3; }
+.faceplate[data-count="6"] .pport[style*="--slot:5"] { grid-column: 4; }
+.faceplate[data-count="6"] .pport[style*="--slot:6"] { grid-column: 4; }
+
+.faceplate-sum {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
   font-size: 12px;
 }
-.port .name { color: var(--muted); }
-.port.up { border-color: var(--up); }
-.port.down { opacity: 0.7; }
+.tally { font-weight: 700; font-variant-numeric: tabular-nums; }
+.tally.up { color: var(--state-up); }
+.tally.down { color: var(--state-down); }
+
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--down); margin-right: 6px; }
 .port.up .dot { background: var(--up); }
 
 h2 .muted { font-weight: 400; font-size: 12px; text-transform: none; letter-spacing: 0; }
+
+/* --- Section plates -----------------------------------------------------
+   One subject, one plate. A detail page used to be a single white field
+   with headings floating in it, so "User Groups" and "IP Groups" read as
+   one continuous list with a bigger line in the middle. Each heading now
+   sits on its own card over the page's ground, with its content, and the
+   gap between cards is what says these are two different things.
+
+   Same anatomy as the dashboard box, because they are the same object:
+   designation on top, a rule under it, then the reading. */
+.plate {
+  background: var(--label);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow);
+  padding: 16px 20px 18px;
+  margin: 0 0 16px;
+}
+.plate > h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--rule);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+/* The control that opens a table's filter row, at the right end of the
+   heading that names the table. Quiet until pressed: a long table is the
+   normal case, and eight empty fields on every one of them is chrome
+   carried permanently for something reached occasionally. */
+/* The mark alone, at the far end of the heading it belongs to. A word
+   beside it said nothing the funnel does not, and the pair pulled the
+   eye away from the heading itself. 32px square so it is a real target
+   for a finger as well as a cursor. */
+.filter-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-chip);
+  background: var(--label);
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.filter-toggle:hover { border-color: var(--ink); color: var(--ink); }
+.filter-toggle.active { background: var(--ink); border-color: var(--ink); color: #ffffff; }
+.filter-toggle .icon { width: 17px; height: 17px; }
+
+/* Inside a plate the trailing margins of the last element are the
+   plate's own padding twice over. */
+/* Reading a 190-character line means losing the start of it on the way
+   back. Explanatory prose is capped; a table or a readout is not. */
+.plate > p.muted, .plate > p, .config-section > p.muted { max-width: 78ch; }
+.plate > *:last-child { margin-bottom: 0; }
+.plate .table-wrap:last-child { margin-bottom: 0; }
+.plate > h3 { margin: 18px 0 8px; font-size: 13px; }
+.plate .readout-list:last-child, .plate .grid:last-child { margin-bottom: 0; }
 .table-wrap { overflow-x: auto; margin-bottom: 24px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
-thead th { cursor: pointer; user-select: none; white-space: nowrap; }
+th { color: var(--muted); font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.09em; }
+/* A header that sorts is a control, so it is a real target and says
+   which way it is ordered. */
+thead th { cursor: pointer; user-select: none; white-space: nowrap; height: 32px; }
 thead th:hover { color: var(--text); }
 thead th.sort-asc::after { content: " \25B2"; font-size: 9px; }
 thead th.sort-desc::after { content: " \25BC"; font-size: 9px; }
+
+/* --- Filter row ---------------------------------------------------------
+   A long table carries its own controls in its first two rows: the
+   headings sort it, the row under them narrows it a column at a time.
+   The inputs are deliberately quiet, a hairline box on the ground
+   colour, because eight bordered fields above the data compete with the
+   data. They appear only on a table long enough to need them. */
+.col-filter th {
+  padding: 0 8px 8px;
+  border-bottom: 1px solid var(--line);
+  cursor: auto;
+}
+.col-filter th:hover { color: var(--muted); }
+.col-filter input {
+  width: 100%;
+  min-width: 60px;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-chip);
+  background: var(--ground);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.col-filter input:focus { border-color: var(--ink); background: var(--label); }
+.col-filter input::placeholder { color: var(--muted); opacity: 0.7; }
+
+/* The row that opens the rest of the table. It is the last row rather
+   than a control beside the table, so the count it reports sits where
+   the rows it counts stop. */
+.more-cell {
+  padding: 10px 8px;
+  border-bottom: 0;
+  text-align: left;
+}
+.more-cell button { margin: 0 12px 0 0; padding: 0; }
+.more-cell .muted { font-size: 12px; }
+
 td.mono, .mono { font-family: var(--mono); }
-.up { color: var(--up); }
-.down { color: var(--down); }
+/* Up and down are states, so they wear the state colours, not the
+   corporate accents. Teal and magenta read as brand chrome here, and on
+   a status column that is exactly the wrong signal. */
+.up { color: var(--state-up); font-weight: 600; }
+.down { color: var(--state-down); font-weight: 600; }
 .muted { color: var(--muted); }
-.bar { height: 6px; background: var(--line); margin-top: 8px; }
+.bar { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; margin-top: 8px; }
 .bar > span { display: block; height: 100%; background: var(--accent); }
 
 /* --- Connection manager ------------------------------------------------
@@ -329,15 +1199,48 @@ td.mono, .mono { font-family: var(--mono); }
    so it stays consistent with the rest of the app and inherits any future
    change to them. */
 
-.conn-switcher { position: relative; flex: 0 1 auto; min-width: 0; }
+/* The switcher is the rail's own header row, so it spans the rail like
+   every menu item under it and centres its contents, rather than sitting
+   at one edge of a column it does not fill. */
+.conn-switcher { position: relative; flex: 0 0 auto; width: 100%; min-width: 0; }
+
+/* Reading the device again sits against the device it reads, and the
+   time of the last read sits under the button that causes it. Alone at
+   the foot of the rail it was a control with nothing to belong to. */
+.conn-row { display: flex; align-items: stretch; gap: 6px; min-width: 0; }
+.conn-row #conn-current { flex: 1 1 auto; min-width: 0; }
+.conn-row #refresh {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-2);
+  color: var(--text);
+  cursor: pointer;
+}
+.conn-row #refresh:hover { border-color: var(--accent); }
+.conn-row #refresh .icon { width: 17px; height: 17px; }
+.conn-switcher #poll-state {
+  margin: 6px 0 0;
+  padding-left: 2px;
+  font-size: 11px;
+  color: var(--on-ink-2);
+  font-variant-numeric: tabular-nums;
+}
 
 #conn-current {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
   padding: 7px 12px;
   min-height: 44px;
-  max-width: 260px;
+  width: 100%;
+  max-width: 100%;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--bg-2);
@@ -353,23 +1256,20 @@ td.mono, .mono { font-family: var(--mono); }
   align-items: flex-start;
   line-height: 1.2;
   overflow: hidden;
-}
-
-.conn-current-kicker {
-  font-size: 10px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 #conn-current-label {
+  /* Fills what the rail leaves instead of a fixed width that matched
+     neither rail state. */
   font-size: 14px;
   font-weight: 600;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 170px;
+  max-width: 100%;
 }
 
 .conn-caret { color: var(--muted); font-size: 11px; }
@@ -382,21 +1282,29 @@ td.mono, .mono { font-family: var(--mono); }
   flex: 0 0 auto;
 }
 
-.conn-dot.on { background: var(--up); }
+/* The mark green rather than the text green: this is an 8px dot, not a
+   word, and it sits on the rail's ink ground as often as on white. The
+   ring keeps it legible on both. */
+.conn-dot.on { background: var(--state-up-mark); }
+.conn-dot.on, .conn-dot.down { box-shadow: 0 0 0 1px rgb(255 255 255 / 35%); }
 
 .conn-menu {
   position: absolute;
   top: calc(100% + 6px);
   left: 0;
   z-index: 40;
-  min-width: 300px;
+  width: 100%;
+  min-width: 0;
   max-height: 60vh;
   overflow-y: auto;
   padding: 4px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg-2);
-  box-shadow: 0 10px 30px rgb(0 0 0 / 45%);
+  /* Elevation alone separates this from the page. A hairline under a soft
+     shadow is two weak separations doing one job badly; the shadow is
+     decisive enough on its own. */
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--label);
+  box-shadow: var(--shadow-pop);
 }
 
 .conn-menu-item {
@@ -578,3 +1486,62 @@ tr[hidden] { display: none; }
   box-sizing: border-box;
 }
 .conn-row-tag.is-down { color: var(--down); }
+
+
+/* --- Diagnostics --------------------------------------------------------
+   A command is a card carrying what it runs, what it costs and how to run
+   it. Cost is stated on the card rather than discovered afterwards: the
+   speed test spends a customer's bandwidth and the conntrack dump can
+   load the device's CPU, and both are one click away from each other. */
+.diag-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin: 0 0 24px;
+}
+.diag-cmd {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  background: var(--label);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow);
+}
+.diag-cmd-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.diag-name { font-family: var(--mono); font-size: 13px; color: var(--ink); overflow-wrap: anywhere; }
+.diag-cost {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: var(--radius-chip);
+  background: #fdf1e3;
+  color: #8a5208;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.diag-note { margin: 0; font-size: 12px; color: var(--ink-2); }
+.diag-cmd-run { display: flex; align-items: center; gap: 8px; margin-top: auto; }
+.diag-arg {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-chip);
+  background: var(--label);
+  color: var(--text);
+  font-size: 13px;
+}
+.diag-arg:focus { outline: 2px solid var(--ink); outline-offset: 1px; border-color: var(--ink); }
+
+.diag-result { margin-bottom: 24px; }
+.diag-result-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 8px;
+}
+.diag-result-head code { font-family: var(--mono); font-size: 13px; color: var(--ink); }

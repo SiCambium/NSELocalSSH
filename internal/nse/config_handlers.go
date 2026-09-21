@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -827,21 +828,39 @@ func pppoeStatusByPort(cfgRaw string) map[int]PPPoEStatus {
 	return out
 }
 
+// wanLink is one link's whole part in load balancing, as sent by the
+// Load balancing editor: the role it plays and the one number that role
+// takes. Role and share are the same decision, since a share means
+// nothing until the link is carrying traffic at all, so they are sent
+// and written together.
+type wanLink struct {
+	Port     int    `json:"port"`
+	Mode     string `json:"mode"` // "shared" | "backup" | "disabled"
+	Percent  int    `json:"percent"`
+	Priority int    `json:"priority"`
+}
+
 type wanRequest struct {
-	Action       string   `json:"action"`
-	Port         int      `json:"port"`
-	Mode         string   `json:"mode"` // "static" | "dhcp"
-	IP           string   `json:"ip"`
-	Mask         string   `json:"mask"`
-	Gateway      string   `json:"gateway"`
-	Hosts        []string `json:"hosts"`
-	Percent      int      `json:"percent"`
-	UplinkMbps   int      `json:"uplink_mbps"`
-	DownlinkMbps int      `json:"downlink_mbps"`
-	Name         string   `json:"name"`     // for "enable" and "change_port"
-	LBMode       string   `json:"lb_mode"`  // "shared" | "backup" | "disabled"
-	Priority     *int     `json:"priority"` // backup-link-priority, only meaningful with lb_mode=backup
-	NewPort      int      `json:"new_port"` // for "change_port": the eth port to move this WAN to
+	Action  string   `json:"action"`
+	Port    int      `json:"port"`
+	Mode    string   `json:"mode"` // "static" | "dhcp"
+	IP      string   `json:"ip"`
+	Mask    string   `json:"mask"`
+	Gateway string   `json:"gateway"`
+	Hosts   []string `json:"hosts"`
+	Percent int      `json:"percent"`
+
+	// Links carries every WAN's role and number for action
+	// "load_balance". The device divides outbound traffic by the ratio
+	// between the shared links' percentages, so no single entry can be
+	// judged on its own; the set is written in one block.
+	Links        []wanLink `json:"links"`
+	UplinkMbps   int       `json:"uplink_mbps"`
+	DownlinkMbps int       `json:"downlink_mbps"`
+	Name         string    `json:"name"`     // for "enable" and "change_port"
+	LBMode       string    `json:"lb_mode"`  // "shared" | "backup" | "disabled"
+	Priority     *int      `json:"priority"` // backup-link-priority, only meaningful with lb_mode=backup
+	NewPort      int       `json:"new_port"` // for "change_port": the eth port to move this WAN to
 
 	// PPPoE fields, only used when Mode == "pppoe".
 	PPPoEUser        string `json:"pppoe_user"`
@@ -913,6 +932,15 @@ func (s *Server) handlePostConfigWAN(w http.ResponseWriter, r *http.Request) {
 	var req wanRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeSettingsError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	// The traffic split is a property of the set of links, not of any one
+	// of them: a share of 50 means nothing until you know what the others
+	// are. Editing it one port at a time is how a device ends up with
+	// shares that add to 150, so the whole set is written in one block and
+	// confirmed once.
+	if req.Action == "load_balance" {
+		s.applyWANLoadBalance(w, req.Links)
 		return
 	}
 	if req.Port < 1 {
@@ -1063,6 +1091,102 @@ func (s *Server) handlePostConfigWAN(w http.ResponseWriter, r *http.Request) {
 		Keys:  []string{key},
 	}
 	outcome, err := s.safeApplier().Apply(block)
+	if err != nil {
+		writeDeviceError(w, err)
+		return
+	}
+	writeJSON(w, outcome)
+}
+
+// applyWANLoadBalance writes every WAN's role and its accompanying number
+// in a single ConfigBlock, so the whole arrangement either lands or does
+// not.
+//
+// It has to be one block. Applying link by link would leave the device
+// holding a half-changed arrangement between requests -- briefly with no
+// link carrying traffic, or with two links each believing they carry all
+// of it -- and would ask the operator to confirm a lockout-risk change
+// once per link, on a page where the whole point is that the links are
+// judged against each other.
+func (s *Server) applyWANLoadBalance(w http.ResponseWriter, links []wanLink) {
+	if len(links) == 0 {
+		writeSettingsError(w, http.StatusBadRequest, "links is required")
+		return
+	}
+
+	shared := 0
+	total := 0
+	seen := make(map[int]bool, len(links))
+	for _, l := range links {
+		if l.Port < 1 {
+			writeSettingsError(w, http.StatusBadRequest, "each link needs a port")
+			return
+		}
+		if seen[l.Port] {
+			writeSettingsError(w, http.StatusBadRequest, fmt.Sprintf("port %d listed twice", l.Port))
+			return
+		}
+		seen[l.Port] = true
+		switch l.Mode {
+		case "shared":
+			if l.Percent < 0 || l.Percent > 100 {
+				writeSettingsError(w, http.StatusBadRequest, "percent must be between 0 and 100")
+				return
+			}
+			shared++
+			total += l.Percent
+		case "backup":
+			if l.Priority < 0 || l.Priority > 10 {
+				writeSettingsError(w, http.StatusBadRequest, "priority must be between 0 and 10")
+				return
+			}
+		case "disabled":
+		default:
+			writeSettingsError(w, http.StatusBadRequest, "mode must be 'shared', 'backup', or 'disabled'")
+			return
+		}
+	}
+
+	// Over 100 is the state worth refusing: the device treats the numbers
+	// as a ratio, so a link marked 50% out of 150% is really getting a
+	// third, and the page can no longer be read as percentages at all.
+	// Under 100 is allowed, because the shares are a ratio and a set that
+	// leaves headroom still divides the traffic exactly as written.
+	if total > 100 {
+		writeSettingsError(w, http.StatusBadRequest, fmt.Sprintf("the shares add up to %d%%, which is more than 100%%", total))
+		return
+	}
+	// Every link standing by leaves nothing carrying traffic, which is an
+	// outage rather than a configuration.
+	if shared == 0 {
+		writeSettingsError(w, http.StatusBadRequest, "at least one link has to carry traffic")
+		return
+	}
+
+	// Sorted so the same arrangement always produces the same command
+	// sequence, which keeps the rollback stanza stable.
+	ordered := append([]wanLink(nil), links...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Port < ordered[j].Port })
+
+	var lines, keys []string
+	for _, l := range ordered {
+		leaves := []string{WANLoadBalanceModeLine(l.Mode)}
+		switch l.Mode {
+		case "shared":
+			leaves = append(leaves, WANTrafficSharePercentageLine(l.Percent))
+		case "backup":
+			leaves = append(leaves, WANBackupLinkPriorityLine(l.Priority))
+		}
+		lines = append(lines, BuildInterfaceEthLines(l.Port, leaves)...)
+		keys = append(keys, fmt.Sprintf("interface eth %d", l.Port))
+	}
+
+	outcome, err := s.safeApplier().Apply(ConfigBlock{
+		Name:  "wan-load_balance",
+		Lines: lines,
+		Risk:  ClassifyRisk("wan"),
+		Keys:  keys,
+	})
 	if err != nil {
 		writeDeviceError(w, err)
 		return
