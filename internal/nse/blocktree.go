@@ -30,6 +30,16 @@ type Block struct {
 var blockOpeners = []*regexp.Regexp{
 	regexp.MustCompile(`^interface (eth|vlan) \d+$`),
 	regexp.MustCompile(`^ip dhcp pool \d+$`),
+	// The four per-WAN NAT rule contexts, all nested inside
+	// "interface eth N" and all numbered {1-64}. CONFIRMED from the
+	// device's own context help: entering "nat-one-one 1" moves the
+	// prompt to (config-eth-1-nat-one-one-1). Without these they are
+	// recognized by indentation alone, which cannot see a rule that
+	// exists but has no leaves set.
+	regexp.MustCompile(`^port-forward-rule \d+$`),
+	regexp.MustCompile(`^source-nat-rule \d+$`),
+	regexp.MustCompile(`^nat-one-one \d+$`),
+	regexp.MustCompile(`^nat-one-many \d+$`),
 	regexp.MustCompile(`^ip dns dynamic services-list \d+$`),
 	regexp.MustCompile(`^dns-server$`),
 	regexp.MustCompile(`^dns-filter policy \d+$`),

@@ -297,3 +297,57 @@ NSE-Caravan(config)# `
 		}
 	}
 }
+
+// TestNATRuleContextsOpenBlocks covers the four per-WAN NAT rule
+// contexts. An unrecognized sub-context does two damaging things at once
+// — it flattens its children into the parent, and its stray "exit" pops
+// the nearest recognized ancestor, truncating that ancestor's stanza —
+// and ExtractStanza builds the rollback pre-image out of this tree.
+//
+// The empty-rule case is the reason these need an explicit opener:
+// indentation alone cannot see a block with no leaves under it.
+func TestNATRuleContextsOpenBlocks(t *testing.T) {
+	raw := `interface eth 1
+ type wan
+ nat-one-one 1
+   lan-IP 10.1.3.50
+   public-IP 203.0.113.7
+   protocol any
+ nat-one-many 1
+   lan-IP 10.1.3.51
+   lan-port 443
+   port 9443
+   protocol tcp
+   public-IP 203.0.113.8
+ port-forward-rule 3
+ source-nat-rule 1
+   lan-IP address 192.168.120.0/24
+   public-IP 192.168.220.211-192.168.220.220
+!`
+	eth := ParseBlockTree(raw).Find("interface eth 1")
+	if eth == nil {
+		t.Fatal("interface eth 1 not found")
+	}
+	for _, header := range []string{"nat-one-one 1", "nat-one-many 1", "port-forward-rule 3", "source-nat-rule 1"} {
+		if eth.Find(header) == nil {
+			t.Errorf("%q did not open a block — its leaves flatten into the parent and its exit truncates the stanza", header)
+		}
+	}
+
+	// port-forward-rule 3 has no leaves at all. Indentation cannot detect
+	// it; only the explicit opener can.
+	if blk := eth.Find("port-forward-rule 3"); blk != nil && len(blk.ToLines()) != 0 {
+		t.Errorf("empty rule should have no leaves, got %q", blk.ToLines())
+	}
+
+	// The sibling blocks must not absorb each other's leaves.
+	oneOne := eth.Find("nat-one-one 1")
+	if oneOne == nil {
+		t.Fatal("nat-one-one 1 missing")
+	}
+	for _, leaf := range oneOne.ToLines() {
+		if strings.Contains(leaf, "lan-port") || strings.Contains(leaf, "10.1.3.51") {
+			t.Errorf("nat-one-one 1 absorbed a sibling's leaf: %q", leaf)
+		}
+	}
+}
