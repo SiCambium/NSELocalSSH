@@ -717,6 +717,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/debug", s.handleDebug)
 	mux.HandleFunc("/api/license", s.handleLicense)
 	mux.HandleFunc("/api/config/confirm", s.handleConfigConfirm)
+	mux.HandleFunc("/api/config/failed-undos", s.handleFailedUndos)
 	mux.HandleFunc("/api/config/network", s.handleConfigNetwork)
 	mux.HandleFunc("/api/config/wan", s.handleConfigWAN)
 	mux.HandleFunc("/api/config/management", s.handleConfigManagement)

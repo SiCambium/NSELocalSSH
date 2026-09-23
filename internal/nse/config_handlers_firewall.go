@@ -87,7 +87,7 @@ func (s *Server) handleGetConfigFirewall(w http.ResponseWriter, _ *http.Request)
 		return
 	}
 	geoInbound, geoOutbound := ParseGeoIP(cfgRaw)
-	portForwards, sourceNATs := ParseNATRules(cfgRaw)
+	nat := ParseNATRules(cfgRaw)
 	writeJSON(w, map[string]any{
 		"dos_protection_ip_spoof":     cloud.DOSProtectionSpoof,
 		"dos_protection_ip_spoof_log": cloud.DOSProtectionLog,
@@ -99,8 +99,9 @@ func (s *Server) handleGetConfigFirewall(w http.ResponseWriter, _ *http.Request)
 		"device_access_sources":       parseDeviceAccessSources(cfgRaw),
 		"geo_ip_inbound":              geoInbound,
 		"geo_ip_outbound":             geoOutbound,
-		"port_forward_rules":          portForwards,
-		"source_nat_rules":            sourceNATs,
+		"port_forward_rules":          nat.PortForwards,
+		"source_nat_rules":            nat.SourceNATs,
+		"nat_one_one_rules":           nat.OneOne,
 		"wan_ports":                   wanPortNames(cfgRaw),
 	})
 }
@@ -202,6 +203,12 @@ type firewallRequest struct {
 	PublicIP  string `json:"public_ip"`
 	Overload  string `json:"overload"`
 
+	// nat-one-one fields. RuleName names a traffic counter; an empty
+	// AllowedSourceType means the rule accepts any source.
+	RuleName          string `json:"rule_name"`
+	AllowedSourceType string `json:"allowed_source_type"`
+	AllowedSource     string `json:"allowed_source"`
+
 	// Device Access source restriction. Empty clears it.
 	DeviceAccessIPAddress string `json:"device_access_ip_address"`
 	Precedence            int    `json:"precedence"`
@@ -275,7 +282,8 @@ func (s *Server) handlePostConfigFirewall(w http.ResponseWriter, r *http.Request
 		s.handlePostGeoIP(w, req)
 	case "device_access_ip_address":
 		s.handlePostDeviceAccessSource(w, req)
-	case "port_forward_add", "port_forward_delete", "source_nat_add", "source_nat_delete":
+	case "port_forward_add", "port_forward_delete", "source_nat_add", "source_nat_delete",
+		"nat_one_one_add", "nat_one_one_delete":
 		s.handlePostNATRule(w, req)
 	default:
 		writeSettingsError(w, http.StatusBadRequest, "unknown action")
@@ -304,7 +312,7 @@ func (s *Server) handlePostNATRule(w http.ResponseWriter, req firewallRequest) {
 			fmt.Sprintf("%s is not a WAN port; these rules apply to a WAN interface", req.Interface))
 		return
 	}
-	forwards, snats := ParseNATRules(cfgRaw)
+	nat := ParseNATRules(cfgRaw)
 
 	var leaves []string
 	var name string
@@ -328,7 +336,7 @@ func (s *Server) handlePostNATRule(w http.ResponseWriter, req firewallRequest) {
 			return
 		}
 		var used []int
-		for _, r := range forwards {
+		for _, r := range nat.PortForwards {
 			if r.Interface == req.Interface {
 				used = append(used, r.Index)
 			}
@@ -354,7 +362,7 @@ func (s *Server) handlePostNATRule(w http.ResponseWriter, req firewallRequest) {
 			return
 		}
 		var used []int
-		for _, r := range snats {
+		for _, r := range nat.SourceNATs {
 			if r.Interface == req.Interface {
 				used = append(used, r.Index)
 			}
@@ -371,6 +379,43 @@ func (s *Server) handlePostNATRule(w http.ResponseWriter, req firewallRequest) {
 		}
 		name = "source-nat-delete"
 		leaves = []string{RuleDeleteLine("source-nat-rule", req.Index)}
+
+	case "nat_one_one_add":
+		rule := NATOneOneRule{
+			LANIP:             strings.TrimSpace(req.LANIP),
+			PublicIP:          strings.TrimSpace(req.PublicIP),
+			Protocol:          strings.TrimSpace(req.Protocol),
+			RuleName:          strings.TrimSpace(req.RuleName),
+			AllowedSourceType: strings.TrimSpace(req.AllowedSourceType),
+			AllowedSource:     strings.TrimSpace(req.AllowedSource),
+		}
+		if err := ValidateNATOneOne(rule); err != nil {
+			writeSettingsError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		var used []int
+		for _, r := range nat.OneOne {
+			if r.Interface == req.Interface {
+				used = append(used, r.Index)
+			}
+		}
+		idx := NextRuleIndex(used)
+		if idx > maxNATRuleIndex {
+			writeSettingsError(w, http.StatusBadRequest,
+				fmt.Sprintf("%s already has the maximum of %d 1:1 NAT rules", req.Interface, maxNATRuleIndex))
+			return
+		}
+		name = "nat-one-one-add"
+		leaves = BuildRuleLines(fmt.Sprintf("nat-one-one %d", idx), NATOneOneLeaves(rule))
+		undo = []string{RuleDeleteLine("nat-one-one", idx)}
+
+	case "nat_one_one_delete":
+		if req.Index < 1 {
+			writeSettingsError(w, http.StatusBadRequest, "index is required")
+			return
+		}
+		name = "nat-one-one-delete"
+		leaves = []string{RuleDeleteLine("nat-one-one", req.Index)}
 	}
 
 	outcome, err := s.safeApplier().Apply(natRuleBlock(port, name, leaves, undo))

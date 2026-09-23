@@ -3,8 +3,11 @@ package nse
 import (
 	"fmt"
 	"net"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // isIPv4 reports whether s is a dotted-quad address.
@@ -66,6 +69,58 @@ const (
 	OverloadDisabled = "disable"
 )
 
+// NATOneOneRule maps one public address onto one LAN address in both
+// directions. CONFIRMED from the device's context help:
+//
+//	nat-one-one 1                 (rule id {1-64})
+//	  lan-IP <addr>               <eg 192.168.200.50 | 192.168.200.0/24>
+//	  public-IP <addr>            <eg 192.168.200.50 | 192.168.200.0/24>
+//	  protocol <tcp|udp|any>
+//	  rule-name <name>            max 64 chars, names a counter
+//	  allowed-sources ip-address <addr>   single | CIDR | start-end range
+//	  allowed-sources ip-group <name>
+//
+// Note "lan-IP" takes a BARE address here, as it does under
+// port-forward-rule and unlike source-nat-rule, which puts the word
+// "address" first. The irregularity is per block and is quoted, never
+// reconstructed.
+//
+// "description" is deliberately not modelled: its argument form was not
+// probed, and this CLI has already proved that a leaf's shape cannot be
+// inferred from its name.
+type NATOneOneRule struct {
+	Interface string `json:"interface"`
+	Index     int    `json:"index"`
+	LANIP     string `json:"lan_ip"`
+	PublicIP  string `json:"public_ip"`
+	Protocol  string `json:"protocol,omitempty"`
+	RuleName  string `json:"rule_name,omitempty"`
+
+	// AllowedSourceType is "ip-address" or "ip-group"; AllowedSource is
+	// the value that follows it. Empty means the rule accepts any source.
+	AllowedSourceType string `json:"allowed_source_type,omitempty"`
+	AllowedSource     string `json:"allowed_source,omitempty"`
+}
+
+// Allowed-sources sub-keywords, as the device spells them.
+const (
+	AllowedSourceIPAddress = "ip-address"
+	AllowedSourceIPGroup   = "ip-group"
+)
+
+// NATOneOneProtocols is the set the device's help lists for this block.
+// Note it includes "any", which port-forward-rule does not offer.
+var NATOneOneProtocols = []string{"tcp", "udp", "any"}
+
+// NATRules is everything the NAT sub-contexts of the eth interfaces hold.
+// Grouped rather than returned as a widening tuple: the device has four
+// such contexts and ParseNATRules walks the tree once for all of them.
+type NATRules struct {
+	PortForwards []PortForwardRule `json:"port_forward_rules"`
+	SourceNATs   []SourceNATRule   `json:"source_nat_rules"`
+	OneOne       []NATOneOneRule   `json:"nat_one_one_rules"`
+}
+
 // PortForwardProtocols is the set this app will write. Only "tcp" has
 // been seen in a capture; "udp" is accepted because the pairing is
 // universal, but neither it nor any third value is confirmed for this CLI.
@@ -74,10 +129,14 @@ var PortForwardProtocols = []string{"tcp", "udp"}
 // ParseNATRules reads both rule kinds out of a `show config` capture,
 // walking whichever eth interfaces the device printed rather than a fixed
 // port range.
-func ParseNATRules(cfgRaw string) ([]PortForwardRule, []SourceNATRule) {
+func ParseNATRules(cfgRaw string) NATRules {
 	tree := ParseBlockTree(cfgRaw)
-	forwards := []PortForwardRule{}
-	snats := []SourceNATRule{}
+	out := NATRules{
+		PortForwards: []PortForwardRule{},
+		SourceNATs:   []SourceNATRule{},
+		OneOne:       []NATOneOneRule{},
+	}
+	forwards, snats := out.PortForwards, out.SourceNATs
 	for _, eth := range ethInterfaceBlocks(tree) {
 		name := fmt.Sprintf("eth%d", eth.port)
 		for _, blk := range eth.block.FindAll("port-forward-rule ") {
@@ -112,9 +171,34 @@ func ParseNATRules(cfgRaw string) ([]PortForwardRule, []SourceNATRule) {
 				PublicIP:  valueAfter(leaves, "public-IP "),
 			})
 		}
+		for _, blk := range eth.block.FindAll("nat-one-one ") {
+			idx, err := strconv.Atoi(strings.TrimPrefix(blk.Header, "nat-one-one "))
+			if err != nil {
+				continue
+			}
+			leaves := blockLeaves(blk)
+			r := NATOneOneRule{Interface: name, Index: idx,
+				LANIP:    valueAfter(leaves, "lan-IP "),
+				PublicIP: valueAfter(leaves, "public-IP "),
+				Protocol: valueAfter(leaves, "protocol "),
+				RuleName: valueAfter(leaves, "rule-name "),
+			}
+			for _, kind := range []string{AllowedSourceIPAddress, AllowedSourceIPGroup} {
+				if v := valueAfter(leaves, "allowed-sources "+kind+" "); v != "" {
+					r.AllowedSourceType, r.AllowedSource = kind, v
+					break
+				}
+			}
+			out.OneOne = append(out.OneOne, r)
+		}
 	}
-	return forwards, snats
+	out.PortForwards, out.SourceNATs = forwards, snats
+	return out
 }
+
+// maxNATRuleIndex is the device's stated ceiling: entering a rule
+// context without an id answers "Enter rule id {1-64}".
+const maxNATRuleIndex = 64
 
 // NextRuleIndex returns the lowest unused index for a rule kind on one
 // interface. Indexes are per interface and per kind, as the capture shows
@@ -167,6 +251,118 @@ func BuildRuleLines(header string, leaves []string) []string {
 	out = append(out, header)
 	out = append(out, leaves...)
 	return append(out, "exit")
+}
+
+// NATOneOneLeaves builds the body of a nat-one-one block.
+//
+// CONFIRMED live end to end: every leaf below was accepted on an NSE4000
+// and `show config` printed them back verbatim, in exactly this order.
+func NATOneOneLeaves(r NATOneOneRule) []string {
+	leaves := []string{"lan-IP " + r.LANIP, "public-IP " + r.PublicIP}
+	if r.Protocol != "" {
+		leaves = append(leaves, "protocol "+r.Protocol)
+	}
+	if r.RuleName != "" {
+		leaves = append(leaves, "rule-name "+r.RuleName)
+	}
+	if r.AllowedSourceType != "" {
+		leaves = append(leaves, "allowed-sources "+r.AllowedSourceType+" "+r.AllowedSource)
+	}
+	return leaves
+}
+
+// ValidateNATOneOne rejects a rule the device would refuse, or that would
+// smuggle a second command into a line.
+func ValidateNATOneOne(r NATOneOneRule) error {
+	if !isIPv4OrCIDR(r.LANIP) {
+		return fmt.Errorf("lan_ip must be an IPv4 address or CIDR, got %q", r.LANIP)
+	}
+	if !isIPv4OrCIDR(r.PublicIP) {
+		return fmt.Errorf("public_ip must be an IPv4 address or CIDR, got %q", r.PublicIP)
+	}
+	if r.Protocol != "" && !slices.Contains(NATOneOneProtocols, r.Protocol) {
+		return fmt.Errorf("protocol must be one of %s", strings.Join(NATOneOneProtocols, ", "))
+	}
+	if err := validateRuleName(r.RuleName); err != nil {
+		return err
+	}
+	switch r.AllowedSourceType {
+	case "":
+		if r.AllowedSource != "" {
+			return fmt.Errorf("allowed_source_type is required when allowed_source is set")
+		}
+	case AllowedSourceIPAddress:
+		if !isIPv4OrCIDR(r.AllowedSource) && !isIPv4Range(r.AllowedSource) {
+			return fmt.Errorf("allowed_source must be an address, CIDR, or start-end range, got %q", r.AllowedSource)
+		}
+	case AllowedSourceIPGroup:
+		if err := validateRuleWord("allowed_source", r.AllowedSource, 64); err != nil {
+			return err
+		}
+		if r.AllowedSource == "" {
+			return fmt.Errorf("allowed_source is required for an ip-group")
+		}
+	default:
+		return fmt.Errorf("allowed_source_type must be %q or %q", AllowedSourceIPAddress, AllowedSourceIPGroup)
+	}
+	return nil
+}
+
+// ruleNameChars is the device's own rule, quoted from its rejection of
+// "claude-test": "rule-name may only contain letters, digits, and
+// underscores". A hyphen is refused, so this is narrower than the "no
+// whitespace" guard a free-text leaf would otherwise get. The help says
+// max 64 characters.
+var ruleNameChars = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
+
+// validateRuleName guards the rule-name leaf, which names a traffic
+// counter rather than addressing anything.
+func validateRuleName(v string) error {
+	if v == "" {
+		return nil
+	}
+	if len(v) > 64 {
+		return fmt.Errorf("rule_name must be 64 characters or fewer")
+	}
+	if !ruleNameChars.MatchString(v) {
+		return fmt.Errorf("rule_name may only contain letters, digits, and underscores")
+	}
+	return nil
+}
+
+// validateRuleWord guards a free-text leaf whose character set the device
+// has not stated (an ip-group name). Whitespace is refused rather than
+// quoted: an unquoted space would be read as the start of another
+// argument, and no capture shows this CLI accepting a quoted value.
+func validateRuleWord(field, v string, max int) error {
+	if v == "" {
+		return nil
+	}
+	if len(v) > max {
+		return fmt.Errorf("%s must be %d characters or fewer", field, max)
+	}
+	if strings.ContainsFunc(v, unicode.IsSpace) {
+		return fmt.Errorf("%s cannot contain spaces", field)
+	}
+	return nil
+}
+
+// isIPv4OrCIDR accepts either a bare dotted quad or an IPv4 CIDR, the two
+// forms the device's help shows for lan-IP and public-IP.
+func isIPv4OrCIDR(s string) bool {
+	s = strings.TrimSpace(s)
+	if isIPv4(s) {
+		return true
+	}
+	ip, _, err := net.ParseCIDR(s)
+	return err == nil && ip.To4() != nil
+}
+
+// isIPv4Range accepts the "start-end" form the allowed-sources help shows
+// alongside a single address and a CIDR.
+func isIPv4Range(s string) bool {
+	start, end, ok := strings.Cut(strings.TrimSpace(s), "-")
+	return ok && isIPv4(start) && isIPv4(end)
 }
 
 // RuleDeleteLine removes a rule by index. CONFIRMED live for both

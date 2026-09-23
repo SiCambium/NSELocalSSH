@@ -226,12 +226,26 @@
         <tbody>${sourceNATRows() || '<tr><td colspan="6" class="muted">No source-NAT rules.</td></tr>'}</tbody>
       </table></div>
       <p>${wanPortsAvailable() ? '<button type="button" class="row-edit" id="add-source-nat-btn">Add source NAT</button>' : '<span class="muted">No WAN interface to add one to.</span>'}</p>
+
+      <h2>1:1 NAT</h2>
+      <p class="muted">Maps one public address onto one LAN address in <em>both</em> directions, with no ports involved — unlike a port forward, which only redirects one inbound port. Anything arriving on the public address reaches the LAN host, so restrict it with <strong>allowed sources</strong> unless you mean it to be open. A rule on the address you manage this device through would capture your own session, so it goes through the same confirmation as a WAN change.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>WAN</th><th>#</th><th>Public IP</th><th>LAN IP</th><th>Protocol</th><th>Allowed sources</th><th>Rule name</th><th></th></tr></thead>
+        <tbody>${natOneOneRows() || '<tr><td colspan="8" class="muted">No 1:1 NAT rules.</td></tr>'}</tbody>
+      </table></div>
+      <p>${wanPortsAvailable() ? '<button type="button" class="row-edit" id="add-nat-one-one-btn">Add 1:1 NAT</button>' : '<span class="muted">No WAN interface to add one to.</span>'}</p>
     `;
     document.getElementById("edit-firewall-btn").addEventListener("click", editFirewall);
     const addPF = document.getElementById("add-port-forward-btn");
     if (addPF) addPF.addEventListener("click", addPortForward);
     const addSN = document.getElementById("add-source-nat-btn");
     if (addSN) addSN.addEventListener("click", addSourceNAT);
+    const addOO = document.getElementById("add-nat-one-one-btn");
+    if (addOO) addOO.addEventListener("click", addNATOneOne);
+    panel.querySelectorAll("[data-del-oo]").forEach((btn) => {
+      btn.addEventListener("click", () =>
+        deleteNATRule("nat_one_one_delete", btn.dataset.iface, parseInt(btn.dataset.delOo, 10), "1:1 NAT"));
+    });
     panel.querySelectorAll("[data-del-pf]").forEach((btn) => {
       btn.addEventListener("click", () =>
         deleteNATRule("port_forward_delete", btn.dataset.iface, parseInt(btn.dataset.delPf, 10), "port forward"));
@@ -599,6 +613,26 @@
       .join("");
   }
 
+  function natOneOneRows() {
+    return (cache.nat_one_one_rules || [])
+      .map((r) => {
+        const src = r.allowed_source_type
+          ? `${esc(r.allowed_source_type === "ip-group" ? "group " : "")}${esc(r.allowed_source)}`
+          : '<span class="warn-text">any</span>';
+        return `<tr>
+          <td class="mono">${esc(r.interface)}</td>
+          <td>${r.index}</td>
+          <td class="mono">${esc(r.public_ip)}</td>
+          <td class="mono">${esc(r.lan_ip)}</td>
+          <td>${esc(r.protocol || "any")}</td>
+          <td class="mono">${src}</td>
+          <td>${esc(r.rule_name || "-")}</td>
+          <td><button type="button" class="row-edit" data-del-oo="${r.index}" data-iface="${esc(r.interface)}">Delete</button></td>
+        </tr>`;
+      })
+      .join("");
+  }
+
   function wanSelect(id) {
     const opts = (cache.wan_ports || []).map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join("");
     return `<label>WAN interface <select id="${id}">${opts}</select></label>`;
@@ -659,10 +693,54 @@
     });
   }
 
+  function addNATOneOne() {
+    const body = `
+      ${wanSelect("cfg-oo-iface")}
+      <label>Public address <input id="cfg-oo-public" type="text" placeholder="e.g. 203.0.113.7 or 203.0.113.0/24"></label>
+      <label>LAN address <input id="cfg-oo-lan" type="text" placeholder="e.g. 192.168.200.50 or 192.168.200.0/24"></label>
+      <label>Protocol
+        <select id="cfg-oo-proto">
+          <option value="any">any</option>
+          <option value="tcp">tcp</option>
+          <option value="udp">udp</option>
+        </select>
+      </label>
+      <label>Allowed sources
+        <select id="cfg-oo-srctype">
+          <option value="">any source</option>
+          <option value="ip-address">IP address, range or subnet</option>
+          <option value="ip-group">IP group</option>
+        </select>
+      </label>
+      <label>Allowed source value
+        <input id="cfg-oo-src" type="text" placeholder="e.g. 192.168.1.0/24, 192.168.1.5-192.168.1.9, or a group name">
+      </label>
+      <label>Rule name (optional, names a traffic counter)
+        <input id="cfg-oo-name" type="text" placeholder="no spaces, max 64 characters">
+      </label>
+      <p class="warn">This maps the whole public address to the LAN host in both directions. Left open to any source it exposes that host; and a rule on the address you manage this device through would capture your own session — confirm it promptly, or it is undone.</p>
+      <div id="cfg-oo-outcome"></div>
+    `;
+    openModal("Add 1:1 NAT", body, async (el) => {
+      const outcome = await postJSON("/api/config/firewall", {
+        action: "nat_one_one_add",
+        interface: el.querySelector("#cfg-oo-iface").value,
+        public_ip: el.querySelector("#cfg-oo-public").value.trim(),
+        lan_ip: el.querySelector("#cfg-oo-lan").value.trim(),
+        protocol: el.querySelector("#cfg-oo-proto").value,
+        allowed_source_type: el.querySelector("#cfg-oo-srctype").value,
+        allowed_source: el.querySelector("#cfg-oo-src").value.trim(),
+        rule_name: el.querySelector("#cfg-oo-name").value.trim(),
+      });
+      await renderOutcome(el.querySelector("#cfg-oo-outcome"), outcome);
+      await load();
+    });
+  }
+
   function deleteNATRule(action, iface, index, label) {
     const body = `
       <p class="warn">Delete ${esc(label)} rule ${index} on ${esc(iface)}?</p>
-      <p class="muted">Removal uses the device's <span class="mono">no &lt;rule&gt; &lt;n&gt;</span> convention, which no capture confirms for these two blocks. If the device rejects it the change fails cleanly and nothing is removed.</p>
+      <p class="muted">Removal uses the device's <span class="mono">no &lt;rule&gt; &lt;n&gt;</span> convention, confirmed live for port-forward and source-NAT rules. If the device rejects it the change fails cleanly and nothing is removed.</p>
       <div id="cfg-nat-del-outcome"></div>
     `;
     openModal(`Delete ${label} rule`, body, async (el) => {

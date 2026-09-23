@@ -1,6 +1,7 @@
 package nse
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -203,5 +204,44 @@ func TestConfigConfirmBlocksCrossOrigin(t *testing.T) {
 	s.handleConfigConfirm(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestFailedUndosBlocksCrossOrigin covers the clear action. Every
+// state-changing endpoint must check the origin; csrf_test.go enumerates
+// them and this one clears a safety record.
+func TestFailedUndosBlocksCrossOrigin(t *testing.T) {
+	s := &Server{Client: NewClient(Config{}), SkipConnect: true}
+	req := httptest.NewRequest(http.MethodPost, "/api/config/failed-undos", strings.NewReader(`{}`))
+	req.Header.Set("Origin", "http://evil.example")
+	rec := httptest.NewRecorder()
+	s.handleFailedUndos(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestFailedUndosReportsAndClears pins the read path. recordFailedUndo
+// wrote to a slice nothing read for the life of the feature.
+func TestFailedUndosReportsAndClears(t *testing.T) {
+	s := &Server{Client: NewClient(Config{}), SkipConnect: true}
+	s.safeApplier().recordFailedUndo("wan", errors.New("ssh: connection refused"), ApplyResult{})
+
+	rec := httptest.NewRecorder()
+	s.handleFailedUndos(rec, httptest.NewRequest(http.MethodGet, "/api/config/failed-undos", nil))
+	if body := rec.Body.String(); !strings.Contains(body, "connection refused") || !strings.Contains(body, `"wan"`) {
+		t.Fatalf("GET did not report the failure: %s", body)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/config/failed-undos", strings.NewReader(`{}`))
+	req.Header.Set("Origin", "http://127.0.0.1")
+	req.Host = "127.0.0.1"
+	rec = httptest.NewRecorder()
+	s.handleFailedUndos(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear returned %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := len(s.safeApplier().FailedUndos()); n != 0 {
+		t.Errorf("after clear, %d records remain", n)
 	}
 }

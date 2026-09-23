@@ -404,3 +404,68 @@ A local GUI can:
 4. Avoid `service show config` in the GUI unless secrets are stored in an OS keychain.
 
 I do **not** have a browser-control tool in this session, so I cannot drive cnMaestro Cloud from here. If you want that mapping next, we can either keep going over SSH, or you can walk the cloud UI while I match screens to CLI. Prefer a secrets file or env vars over pasting more passwords into chat.
+
+## 1:1 NAT (`nat-one-one`)
+
+A sub-context of `interface eth N`, rule id `{1-64}`. Maps one public
+address onto one LAN address in both directions — no ports involved,
+unlike `port-forward-rule`.
+
+```
+interface eth 1
+  nat-one-one 1
+    lan-IP <addr|CIDR>                        # BARE, as under port-forward-rule
+    public-IP <addr|CIDR>                     # and unlike source-nat-rule's "lan-IP address"
+    protocol <tcp|udp|any>                    # "any" is offered here; port-forward-rule has no such value
+    rule-name <name>                          # names a traffic counter
+    allowed-sources ip-address <addr|CIDR|start-end>
+    allowed-sources ip-group <name>
+    description <?>                           # UNCONFIRMED argument form, not probed
+  exit
+exit
+```
+
+CONFIRMED live on an NSE4000: every leaf above was accepted and printed
+back by `show config` verbatim, in the order listed.
+
+`rule-name` accepts **letters, digits and underscores only**, max 64
+characters — quoted from the device's own rejection of `claude-test`:
+
+```
+% Error setting interface eth settings: rule-name may only contain letters, digits, and underscores
+```
+
+A hyphen is refused, so the generic "no whitespace" guard used for other
+free-text leaves is not enough here.
+
+Removal follows the usual convention, `no nat-one-one <n>` inside the
+owning `interface eth N`.
+
+The context help also lists `apply`, alongside `exit`, `save` and `show`.
+It is not required: writing the leaves and leaving with `exit` sticks,
+and `save` is what persists the config across a reboot, exactly as
+everywhere else in this CLI.
+
+## 1:many DNAT (`nat-one-many`)
+
+Same shape, rule id `{1-64}`, with ports added and no `any` protocol:
+
+```
+interface eth 1
+  nat-one-many 1
+    allowed-sources ...
+    description ...
+    lan-IP ...
+    lan-port ...
+    port ...
+    protocol <tcp|udp>
+    public-IP ...
+    rule-name ...
+  exit
+exit
+```
+
+Leaf **names** are confirmed from the context help; their **argument
+forms are not**, and are not assumed to match `nat-one-one` — `lan-IP`
+already takes two different shapes across sibling blocks in this same
+context. Not yet implemented.

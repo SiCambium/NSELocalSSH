@@ -153,6 +153,9 @@
   // changes are shown as errors. Returns a promise that resolves once the
   // outcome is fully settled (confirmed, or auto-rolled-back).
   function renderOutcome(container, outcome) {
+    // An expiry can land while this page is open, so re-check whenever a
+    // change has just been applied.
+    setTimeout(refreshFailedUndos, 0);
     return new Promise((resolve) => {
       if (outcome.status === "applied") {
         // An "applied" outcome can still carry a reason — the change took
@@ -254,6 +257,47 @@
     });
   }
 
+  // --- Failed automatic undos -------------------------------------------
+  //
+  // SafeApplier's expiry loop runs in the background with no request to
+  // answer, so an undo that did not land had nowhere to be reported. It
+  // was recorded and never read. A device left holding a change the
+  // operator believes was undone is exactly the state this app exists to
+  // prevent, so the record gets a banner that stays until it is cleared.
+  async function refreshFailedUndos() {
+    const box = document.getElementById("failed-undo-banner");
+    if (!box) return;
+    let rows = [];
+    try {
+      const data = await getJSON("/api/config/failed-undos");
+      rows = data.failed_undos || [];
+    } catch (err) {
+      // The banner is a safety signal, not a feature: if it cannot be
+      // fetched, say nothing rather than claim all is well.
+      box.hidden = true;
+      return;
+    }
+    if (!rows.length) {
+      box.hidden = true;
+      box.innerHTML = "";
+      return;
+    }
+    box.hidden = false;
+    box.innerHTML = `
+      <h3>An automatic undo did not complete</h3>
+      <p>A change was held pending confirmation, was not confirmed in time, and the undo sent when the window closed did not land. <strong>The change may still be on the device.</strong> Check the section below and undo it by hand if it is.</p>
+      <p class="muted">It was never written to the device's startup config, so a power-cycle still restores the previous configuration.</p>
+      <ul>${rows
+        .map((r) => `<li><span class="mono">${esc(r.section)}</span> — ${esc(r.detail)} <span class="muted">(${esc(new Date(r.at).toLocaleString())})</span></li>`)
+        .join("")}</ul>
+      <p><button type="button" class="row-edit" id="failed-undo-clear">Dismiss</button></p>
+    `;
+    document.getElementById("failed-undo-clear").addEventListener("click", async () => {
+      await postJSON("/api/config/failed-undos", {});
+      await refreshFailedUndos();
+    });
+  }
+
   function selectSection(id) {
     currentSection = id;
     renderNav();
@@ -262,6 +306,7 @@
     });
     const mod = sectionModules[id];
     if (mod) mod.load();
+    refreshFailedUndos();
   }
 
   const sectionModules = {};
@@ -276,6 +321,7 @@
     });
     const mod = sectionModules[currentSection];
     if (mod) mod.load();
+    refreshFailedUndos();
   }
 
   window.NSEConfig = {

@@ -15,7 +15,8 @@ func TestParseNATRulesFromCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	forwards, snats := ParseNATRules(string(raw))
+	nat := ParseNATRules(string(raw))
+	forwards, snats := nat.PortForwards, nat.SourceNATs
 
 	wantFwd := []PortForwardRule{{
 		Interface: "eth1", Index: 1, Port: 9090,
@@ -90,7 +91,8 @@ func TestRuleRoundTrip(t *testing.T) {
 		asDevicePrints("port-forward-rule 3", PortForwardLeaves(fwd)) +
 		asDevicePrints("source-nat-rule 4", SourceNATLeaves(snat)) + "!\n"
 
-	gotFwd, gotSnat := ParseNATRules(cfg)
+	parsed := ParseNATRules(cfg)
+	gotFwd, gotSnat := parsed.PortForwards, parsed.SourceNATs
 	if len(gotFwd) != 1 || gotFwd[0] != fwd {
 		t.Errorf("port forward round trip = %+v, want %+v", gotFwd, fwd)
 	}
@@ -173,7 +175,7 @@ func TestOverloadAbsentMeansEnabled(t *testing.T) {
    overload disable
    public-IP 192.168.109.1-192.168.109.254
 !`
-	_, snats := ParseNATRules(cfg)
+	snats := ParseNATRules(cfg).SourceNATs
 	if len(snats) != 2 {
 		t.Fatalf("parsed %d rules, want 2", len(snats))
 	}
@@ -221,5 +223,117 @@ func TestKeylessBlockHasNoPreImage(t *testing.T) {
 	raw := "firewall geo-ip-restrictions inbound mode block\nfirewall geo-ip-restrictions inbound countries CN,RU\n"
 	if got := ExtractStanza(raw, nil); len(got) != 0 {
 		t.Fatalf("ExtractStanza with no keys = %q, want empty", got)
+	}
+}
+
+// TestNATOneOneLeavesSpelling pins the argument forms taken from the
+// device's own context help. "lan-IP" is BARE here, as under
+// port-forward-rule and unlike source-nat-rule, which puts the word
+// "address" first — the single irregularity most likely to be tidied by
+// someone reading only one of the three blocks.
+func TestNATOneOneLeavesSpelling(t *testing.T) {
+	got := NATOneOneLeaves(NATOneOneRule{
+		LANIP: "192.168.200.50", PublicIP: "203.0.113.7", Protocol: "any",
+		RuleName: "web_host", AllowedSourceType: AllowedSourceIPAddress,
+		AllowedSource: "192.168.200.20-192.168.200.80",
+	})
+	want := []string{
+		"lan-IP 192.168.200.50",
+		"public-IP 203.0.113.7",
+		"protocol any",
+		"rule-name web_host",
+		"allowed-sources ip-address 192.168.200.20-192.168.200.80",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("leaves =\n%q\nwant\n%q", got, want)
+	}
+
+	// Everything but the two addresses is optional.
+	got = NATOneOneLeaves(NATOneOneRule{LANIP: "10.0.0.5", PublicIP: "203.0.113.9"})
+	if want := []string{"lan-IP 10.0.0.5", "public-IP 203.0.113.9"}; !slices.Equal(got, want) {
+		t.Errorf("minimal rule = %q, want %q", got, want)
+	}
+}
+
+func TestValidateNATOneOne(t *testing.T) {
+	ok := NATOneOneRule{LANIP: "192.168.200.50", PublicIP: "203.0.113.7"}
+	if err := ValidateNATOneOne(ok); err != nil {
+		t.Fatalf("minimal valid rule rejected: %v", err)
+	}
+	for _, r := range []NATOneOneRule{
+		{LANIP: "192.168.200.0/24", PublicIP: "203.0.113.0/24"},
+		{LANIP: "10.0.0.5", PublicIP: "203.0.113.7", Protocol: "any"},
+		{LANIP: "10.0.0.5", PublicIP: "203.0.113.7", AllowedSourceType: AllowedSourceIPAddress, AllowedSource: "192.168.1.0/24"},
+		{LANIP: "10.0.0.5", PublicIP: "203.0.113.7", AllowedSourceType: AllowedSourceIPAddress, AllowedSource: "192.168.1.5-192.168.1.9"},
+		{LANIP: "10.0.0.5", PublicIP: "203.0.113.7", AllowedSourceType: AllowedSourceIPGroup, AllowedSource: "trusted"},
+		{LANIP: "10.0.0.5", PublicIP: "203.0.113.7", RuleName: "web_host_1"},
+	} {
+		if err := ValidateNATOneOne(r); err != nil {
+			t.Errorf("valid rule %+v rejected: %v", r, err)
+		}
+	}
+
+	for _, tc := range []struct {
+		name string
+		rule NATOneOneRule
+	}{
+		{"no lan ip", NATOneOneRule{PublicIP: "203.0.113.7"}},
+		{"no public ip", NATOneOneRule{LANIP: "10.0.0.5"}},
+		{"lan ip not an address", NATOneOneRule{LANIP: "not-an-ip", PublicIP: "203.0.113.7"}},
+		{"protocol not offered by this block", NATOneOneRule{LANIP: "10.0.0.5", PublicIP: "203.0.113.7", Protocol: "icmp"}},
+		{"source without a type", NATOneOneRule{LANIP: "10.0.0.5", PublicIP: "203.0.113.7", AllowedSource: "192.168.1.1"}},
+		{"unknown source type", NATOneOneRule{LANIP: "10.0.0.5", PublicIP: "203.0.113.7", AllowedSourceType: "mac", AllowedSource: "x"}},
+		{"ip-group with no name", NATOneOneRule{LANIP: "10.0.0.5", PublicIP: "203.0.113.7", AllowedSourceType: AllowedSourceIPGroup}},
+		// A space would be read as the start of another argument.
+		{"rule name with a space", NATOneOneRule{LANIP: "10.0.0.5", PublicIP: "203.0.113.7", RuleName: "web host"}},
+		// The device rejected "claude-test" with "rule-name may only
+		// contain letters, digits, and underscores" — a hyphen is out,
+		// which a generic no-whitespace guard would have let through.
+		{"rule name with a hyphen", NATOneOneRule{LANIP: "10.0.0.5", PublicIP: "203.0.113.7", RuleName: "claude-test"}},
+		{"rule name with a dot", NATOneOneRule{LANIP: "10.0.0.5", PublicIP: "203.0.113.7", RuleName: "web.host"}},
+		{"rule name too long", NATOneOneRule{LANIP: "10.0.0.5", PublicIP: "203.0.113.7", RuleName: strings.Repeat("a", 65)}},
+	} {
+		if err := ValidateNATOneOne(tc.rule); err == nil {
+			t.Errorf("%s: accepted, want rejected", tc.name)
+		}
+	}
+}
+
+// TestParseNATOneOne round-trips the block through the tree parser,
+// including the two allowed-sources forms and a rule that sets only the
+// required pair.
+func TestParseNATOneOne(t *testing.T) {
+	cfg := `interface eth 1
+ type wan
+ nat-one-one 1
+   lan-IP 192.168.200.50
+   public-IP 203.0.113.7
+   protocol any
+   rule-name web_host
+   allowed-sources ip-address 192.168.200.20-192.168.200.80
+ nat-one-one 2
+   lan-IP 10.0.0.5
+   public-IP 203.0.113.9
+   allowed-sources ip-group trusted
+ source-nat-rule 1
+   lan-IP address 192.168.120.0/24
+   public-IP 192.168.220.211-192.168.220.220
+!`
+	got := ParseNATRules(cfg).OneOne
+	want := []NATOneOneRule{
+		{Interface: "eth1", Index: 1, LANIP: "192.168.200.50", PublicIP: "203.0.113.7",
+			Protocol: "any", RuleName: "web_host",
+			AllowedSourceType: AllowedSourceIPAddress, AllowedSource: "192.168.200.20-192.168.200.80"},
+		{Interface: "eth1", Index: 2, LANIP: "10.0.0.5", PublicIP: "203.0.113.9",
+			AllowedSourceType: AllowedSourceIPGroup, AllowedSource: "trusted"},
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("parsed\n%+v\nwant\n%+v", got, want)
+	}
+
+	// The sibling source-nat-rule keeps its own "address" spelling, and
+	// its lan-IP must not be read as a bare one.
+	if snats := ParseNATRules(cfg).SourceNATs; len(snats) != 1 || snats[0].LANSubnet != "192.168.120.0/24" {
+		t.Errorf("sibling source-nat-rule misparsed: %+v", snats)
 	}
 }

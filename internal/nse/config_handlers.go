@@ -1069,3 +1069,28 @@ func (s *Server) handlePostConfigWAN(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, outcome)
 }
+
+// handleFailedUndos surfaces SafeApplier's record of automatic undos that
+// did not land.
+//
+// Until this existed, recordFailedUndo wrote to a slice nothing ever
+// read: the expiry loop runs in the background with no request to answer,
+// so a rollback that failed was invisible, and a device left holding a
+// change the operator believes was undone is exactly the state this app
+// exists to prevent. It cost two misdiagnoses during development before
+// it cost a user anything.
+//
+// POST clears the list; an operator who has dealt with a failure needs
+// the banner gone to notice the next one.
+func (s *Server) handleFailedUndos(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost {
+		if !isSameOrigin(r) {
+			writeCrossOriginBlocked(w)
+			return
+		}
+		s.safeApplier().ClearFailedUndos()
+		writeJSON(w, map[string]any{"cleared": true})
+		return
+	}
+	writeJSON(w, map[string]any{"failed_undos": s.safeApplier().FailedUndos()})
+}

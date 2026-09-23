@@ -159,6 +159,15 @@ func (a *SafeApplier) recordFailedUndo(section string, err error, undo ApplyResu
 	a.failed = append(a.failed, FailedUndo{Section: section, At: time.Now(), Detail: detail})
 }
 
+// ClearFailedUndos discards the breadcrumb trail. An operator who has
+// dealt with a failure needs the signal to go away, or the next one is
+// invisible under the old ones.
+func (a *SafeApplier) ClearFailedUndos() {
+	a.failedMu.Lock()
+	defer a.failedMu.Unlock()
+	a.failed = nil
+}
+
 // FailedUndos returns the undo failures recorded so far, oldest first.
 func (a *SafeApplier) FailedUndos() []FailedUndo {
 	a.failedMu.Lock()
