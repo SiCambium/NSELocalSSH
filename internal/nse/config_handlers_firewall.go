@@ -102,6 +102,7 @@ func (s *Server) handleGetConfigFirewall(w http.ResponseWriter, _ *http.Request)
 		"port_forward_rules":          nat.PortForwards,
 		"source_nat_rules":            nat.SourceNATs,
 		"nat_one_one_rules":           nat.OneOne,
+		"nat_one_many_rules":          nat.OneMany,
 		"wan_ports":                   wanPortNames(cfgRaw),
 	})
 }
@@ -283,7 +284,8 @@ func (s *Server) handlePostConfigFirewall(w http.ResponseWriter, r *http.Request
 	case "device_access_ip_address":
 		s.handlePostDeviceAccessSource(w, req)
 	case "port_forward_add", "port_forward_delete", "source_nat_add", "source_nat_delete",
-		"nat_one_one_add", "nat_one_one_delete":
+		"nat_one_one_add", "nat_one_one_delete",
+		"nat_one_many_add", "nat_one_many_delete":
 		s.handlePostNATRule(w, req)
 	default:
 		writeSettingsError(w, http.StatusBadRequest, "unknown action")
@@ -416,6 +418,45 @@ func (s *Server) handlePostNATRule(w http.ResponseWriter, req firewallRequest) {
 		}
 		name = "nat-one-one-delete"
 		leaves = []string{RuleDeleteLine("nat-one-one", req.Index)}
+
+	case "nat_one_many_add":
+		rule := NATOneManyRule{
+			LANIP:             strings.TrimSpace(req.LANIP),
+			LANPort:           req.LANPort,
+			PublicIP:          strings.TrimSpace(req.PublicIP),
+			Port:              req.WANPort,
+			Protocol:          strings.TrimSpace(req.Protocol),
+			RuleName:          strings.TrimSpace(req.RuleName),
+			AllowedSourceType: strings.TrimSpace(req.AllowedSourceType),
+			AllowedSource:     strings.TrimSpace(req.AllowedSource),
+		}
+		if err := ValidateNATOneMany(rule); err != nil {
+			writeSettingsError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		var used []int
+		for _, r := range nat.OneMany {
+			if r.Interface == req.Interface {
+				used = append(used, r.Index)
+			}
+		}
+		idx := NextRuleIndex(used)
+		if idx > maxNATRuleIndex {
+			writeSettingsError(w, http.StatusBadRequest,
+				fmt.Sprintf("%s already has the maximum of %d 1:many NAT rules", req.Interface, maxNATRuleIndex))
+			return
+		}
+		name = "nat-one-many-add"
+		leaves = BuildRuleLines(fmt.Sprintf("nat-one-many %d", idx), NATOneManyLeaves(rule))
+		undo = []string{RuleDeleteLine("nat-one-many", idx)}
+
+	case "nat_one_many_delete":
+		if req.Index < 1 {
+			writeSettingsError(w, http.StatusBadRequest, "index is required")
+			return
+		}
+		name = "nat-one-many-delete"
+		leaves = []string{RuleDeleteLine("nat-one-many", req.Index)}
 	}
 
 	outcome, err := s.safeApplier().Apply(natRuleBlock(port, name, leaves, undo))

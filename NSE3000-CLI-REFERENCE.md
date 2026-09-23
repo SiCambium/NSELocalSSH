@@ -465,7 +465,30 @@ interface eth 1
 exit
 ```
 
-Leaf **names** are confirmed from the context help; their **argument
-forms are not**, and are not assumed to match `nat-one-one` — `lan-IP`
-already takes two different shapes across sibling blocks in this same
-context. Not yet implemented.
+```
+interface eth 1
+  nat-one-many 1
+    lan-IP <addr|CIDR>
+    lan-port <n>
+    public-IP <addr|CIDR>
+    port <n>
+    protocol <tcp|udp>                        # no "any" here, unlike nat-one-one
+    rule-name <name>                          # same charset rule as nat-one-one
+    allowed-sources ip-address <addr|CIDR|start-end>
+    allowed-sources ip-group <name>
+    description <?>                           # UNCONFIRMED argument form, not probed
+  exit
+exit
+```
+
+CONFIRMED live on an NSE4000: every leaf above was accepted and printed
+back by `show config` verbatim, in the order listed. The argument forms
+are identical to `nat-one-one`'s.
+
+Which side each port names is carried over from `port-forward-rule`,
+where the pairing is confirmed: `lan-port` is behind the device, `port`
+faces the WAN. The help here says only "Specify port" and "Specify LAN
+port", so that mapping rests on the naming convention — a read-back
+proves the syntax, not which direction the translation runs.
+
+Removal: `no nat-one-many <n>` inside the owning `interface eth N`.

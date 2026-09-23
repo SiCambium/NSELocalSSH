@@ -234,6 +234,14 @@
         <tbody>${natOneOneRows() || '<tr><td colspan="8" class="muted">No 1:1 NAT rules.</td></tr>'}</tbody>
       </table></div>
       <p>${wanPortsAvailable() ? '<button type="button" class="row-edit" id="add-nat-one-one-btn">Add 1:1 NAT</button>' : '<span class="muted">No WAN interface to add one to.</span>'}</p>
+
+      <h2>1:many NAT</h2>
+      <p class="muted">Maps one public address and port onto one LAN address and port. Narrower than 1:1 NAT, which maps the whole address in both directions with no ports involved. A protocol is required here — unlike 1:1 NAT, this block has no <span class="mono">any</span>, because there has to be a protocol to take the port from.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>WAN</th><th>#</th><th>Public</th><th>To LAN</th><th>Protocol</th><th>Allowed sources</th><th>Rule name</th><th></th></tr></thead>
+        <tbody>${natOneManyRows() || '<tr><td colspan="8" class="muted">No 1:many NAT rules.</td></tr>'}</tbody>
+      </table></div>
+      <p>${wanPortsAvailable() ? '<button type="button" class="row-edit" id="add-nat-one-many-btn">Add 1:many NAT</button>' : '<span class="muted">No WAN interface to add one to.</span>'}</p>
     `;
     document.getElementById("edit-firewall-btn").addEventListener("click", editFirewall);
     const addPF = document.getElementById("add-port-forward-btn");
@@ -242,6 +250,12 @@
     if (addSN) addSN.addEventListener("click", addSourceNAT);
     const addOO = document.getElementById("add-nat-one-one-btn");
     if (addOO) addOO.addEventListener("click", addNATOneOne);
+    const addOM = document.getElementById("add-nat-one-many-btn");
+    if (addOM) addOM.addEventListener("click", addNATOneMany);
+    panel.querySelectorAll("[data-del-om]").forEach((btn) => {
+      btn.addEventListener("click", () =>
+        deleteNATRule("nat_one_many_delete", btn.dataset.iface, parseInt(btn.dataset.delOm, 10), "1:many NAT"));
+    });
     panel.querySelectorAll("[data-del-oo]").forEach((btn) => {
       btn.addEventListener("click", () =>
         deleteNATRule("nat_one_one_delete", btn.dataset.iface, parseInt(btn.dataset.delOo, 10), "1:1 NAT"));
@@ -613,12 +627,34 @@
       .join("");
   }
 
+  // Shared by both NAT tables. "any" is called out rather than left blank
+  // because an unrestricted rule is the notable state, not the default.
+  function allowedSourceCell(r) {
+    if (!r.allowed_source_type) return '<span class="warn-text">any</span>';
+    return `${esc(r.allowed_source_type === "ip-group" ? "group " : "")}${esc(r.allowed_source)}`;
+  }
+
+  function natOneManyRows() {
+    return (cache.nat_one_many_rules || [])
+      .map(
+        (r) => `<tr>
+          <td class="mono">${esc(r.interface)}</td>
+          <td>${r.index}</td>
+          <td class="mono">${esc(r.public_ip)}:${r.port}</td>
+          <td class="mono">${esc(r.lan_ip)}:${r.lan_port}</td>
+          <td>${esc(r.protocol || "-")}</td>
+          <td class="mono">${allowedSourceCell(r)}</td>
+          <td>${esc(r.rule_name || "-")}</td>
+          <td><button type="button" class="row-edit" data-del-om="${r.index}" data-iface="${esc(r.interface)}">Delete</button></td>
+        </tr>`
+      )
+      .join("");
+  }
+
   function natOneOneRows() {
     return (cache.nat_one_one_rules || [])
       .map((r) => {
-        const src = r.allowed_source_type
-          ? `${esc(r.allowed_source_type === "ip-group" ? "group " : "")}${esc(r.allowed_source)}`
-          : '<span class="warn-text">any</span>';
+        const src = allowedSourceCell(r);
         return `<tr>
           <td class="mono">${esc(r.interface)}</td>
           <td>${r.index}</td>
@@ -716,7 +752,7 @@
         <input id="cfg-oo-src" type="text" placeholder="e.g. 192.168.1.0/24, 192.168.1.5-192.168.1.9, or a group name">
       </label>
       <label>Rule name (optional, names a traffic counter)
-        <input id="cfg-oo-name" type="text" placeholder="no spaces, max 64 characters">
+        <input id="cfg-oo-name" type="text" placeholder="letters, digits and underscores only">
       </label>
       <p class="warn">This maps the whole public address to the LAN host in both directions. Left open to any source it exposes that host; and a rule on the address you manage this device through would capture your own session — confirm it promptly, or it is undone.</p>
       <div id="cfg-oo-outcome"></div>
@@ -733,6 +769,54 @@
         rule_name: el.querySelector("#cfg-oo-name").value.trim(),
       });
       await renderOutcome(el.querySelector("#cfg-oo-outcome"), outcome);
+      await load();
+    });
+  }
+
+  function addNATOneMany() {
+    const body = `
+      ${wanSelect("cfg-om-iface")}
+      <label>Public address <input id="cfg-om-public" type="text" placeholder="e.g. 203.0.113.7"></label>
+      <label>Public port <input id="cfg-om-port" type="number" min="1" max="65535" placeholder="e.g. 9443"></label>
+      <label>LAN address <input id="cfg-om-lan" type="text" placeholder="e.g. 192.168.200.50"></label>
+      <label>LAN port <input id="cfg-om-lanport" type="number" min="1" max="65535" placeholder="e.g. 443"></label>
+      <label>Protocol
+        <select id="cfg-om-proto">
+          <option value="tcp">tcp</option>
+          <option value="udp">udp</option>
+        </select>
+      </label>
+      <p class="muted">Required here. This block has no <span class="mono">any</span>, unlike 1:1 NAT — there has to be a protocol to take the port from.</p>
+      <label>Allowed sources
+        <select id="cfg-om-srctype">
+          <option value="">any source</option>
+          <option value="ip-address">IP address, range or subnet</option>
+          <option value="ip-group">IP group</option>
+        </select>
+      </label>
+      <label>Allowed source value
+        <input id="cfg-om-src" type="text" placeholder="e.g. 192.168.1.0/24, 192.168.1.5-192.168.1.9, or a group name">
+      </label>
+      <label>Rule name (optional, names a traffic counter)
+        <input id="cfg-om-name" type="text" placeholder="letters, digits and underscores only">
+      </label>
+      <p class="warn">A rule on the address and port you manage this device through would capture your own session — confirm it promptly, or it is undone.</p>
+      <div id="cfg-om-outcome"></div>
+    `;
+    openModal("Add 1:many NAT", body, async (el) => {
+      const outcome = await postJSON("/api/config/firewall", {
+        action: "nat_one_many_add",
+        interface: el.querySelector("#cfg-om-iface").value,
+        public_ip: el.querySelector("#cfg-om-public").value.trim(),
+        wan_port: parseInt(el.querySelector("#cfg-om-port").value, 10) || 0,
+        lan_ip: el.querySelector("#cfg-om-lan").value.trim(),
+        lan_port: parseInt(el.querySelector("#cfg-om-lanport").value, 10) || 0,
+        protocol: el.querySelector("#cfg-om-proto").value,
+        allowed_source_type: el.querySelector("#cfg-om-srctype").value,
+        allowed_source: el.querySelector("#cfg-om-src").value.trim(),
+        rule_name: el.querySelector("#cfg-om-name").value.trim(),
+      });
+      await renderOutcome(el.querySelector("#cfg-om-outcome"), outcome);
       await load();
     });
   }

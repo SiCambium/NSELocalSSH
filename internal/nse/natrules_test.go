@@ -337,3 +337,82 @@ func TestParseNATOneOne(t *testing.T) {
 		t.Errorf("sibling source-nat-rule misparsed: %+v", snats)
 	}
 }
+
+func TestNATOneManyLeavesSpelling(t *testing.T) {
+	got := NATOneManyLeaves(NATOneManyRule{
+		LANIP: "192.168.120.98", LANPort: 443, PublicIP: "192.168.220.232", Port: 9443,
+		Protocol: "tcp", RuleName: "web_dnat",
+		AllowedSourceType: AllowedSourceIPGroup, AllowedSource: "trusted",
+	})
+	want := []string{
+		"lan-IP 192.168.120.98",
+		"lan-port 443",
+		"public-IP 192.168.220.232",
+		"port 9443",
+		"protocol tcp",
+		"rule-name web_dnat",
+		"allowed-sources ip-group trusted",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("leaves =\n%q\nwant\n%q", got, want)
+	}
+}
+
+func TestValidateNATOneMany(t *testing.T) {
+	ok := NATOneManyRule{LANIP: "10.0.0.5", LANPort: 443, PublicIP: "203.0.113.7", Port: 9443, Protocol: "tcp"}
+	if err := ValidateNATOneMany(ok); err != nil {
+		t.Fatalf("valid rule rejected: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		mut  func(*NATOneManyRule)
+	}{
+		{"no protocol — this block has no \"any\" to fall back on", func(r *NATOneManyRule) { r.Protocol = "" }},
+		{"protocol any is not offered here", func(r *NATOneManyRule) { r.Protocol = "any" }},
+		{"port out of range", func(r *NATOneManyRule) { r.Port = 0 }},
+		{"lan port out of range", func(r *NATOneManyRule) { r.LANPort = 70000 }},
+		{"lan ip not an address", func(r *NATOneManyRule) { r.LANIP = "nope" }},
+		{"rule name with a hyphen", func(r *NATOneManyRule) { r.RuleName = "web-dnat" }},
+		{"source value without a type", func(r *NATOneManyRule) { r.AllowedSource = "10.0.0.1" }},
+	} {
+		r := ok
+		tc.mut(&r)
+		if err := ValidateNATOneMany(r); err == nil {
+			t.Errorf("%s: accepted, want rejected", tc.name)
+		}
+	}
+}
+
+// TestParseNATOneMany also guards the "port" / "lan-port" prefix overlap:
+// a naive prefix match for "port " must not pick up "lan-port ".
+func TestParseNATOneMany(t *testing.T) {
+	cfg := `interface eth 1
+ type wan
+ nat-one-many 1
+   lan-IP 192.168.120.98
+   lan-port 443
+   public-IP 192.168.220.232
+   port 9443
+   protocol tcp
+   rule-name web_dnat
+   allowed-sources ip-group trusted
+ nat-one-one 1
+   lan-IP 10.0.0.5
+   public-IP 203.0.113.9
+!`
+	parsed := ParseNATRules(cfg)
+	want := []NATOneManyRule{{
+		Interface: "eth1", Index: 1,
+		LANIP: "192.168.120.98", LANPort: 443,
+		PublicIP: "192.168.220.232", Port: 9443,
+		Protocol: "tcp", RuleName: "web_dnat",
+		AllowedSourceType: AllowedSourceIPGroup, AllowedSource: "trusted",
+	}}
+	if !slices.Equal(parsed.OneMany, want) {
+		t.Errorf("parsed\n%+v\nwant\n%+v", parsed.OneMany, want)
+	}
+	// The sibling 1:1 rule keeps its own identity and gains no ports.
+	if len(parsed.OneOne) != 1 || parsed.OneOne[0].LANIP != "10.0.0.5" {
+		t.Errorf("sibling nat-one-one misparsed: %+v", parsed.OneOne)
+	}
+}

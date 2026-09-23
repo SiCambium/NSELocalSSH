@@ -112,6 +112,48 @@ const (
 // Note it includes "any", which port-forward-rule does not offer.
 var NATOneOneProtocols = []string{"tcp", "udp", "any"}
 
+// NATOneManyRule maps one public address and port onto one LAN address
+// and port. CONFIRMED from the device's context help, which lists exactly
+// the nat-one-one leaves plus "lan-port" and "port", minus "any" from the
+// protocol set; the argument forms are identical to nat-one-one's.
+//
+//	nat-one-many 1                (rule id {1-64})
+//	  lan-IP <addr|CIDR>
+//	  lan-port <n>
+//	  public-IP <addr|CIDR>
+//	  port <n>
+//	  protocol <tcp|udp>          no "any" here, unlike nat-one-one
+//	  rule-name <name>
+//	  allowed-sources ip-address <addr|CIDR|start-end>
+//	  allowed-sources ip-group <name>
+//
+// Which side each port names is taken from port-forward-rule, where the
+// pairing is confirmed: "lan-port" is the port behind the device and
+// "port" is the one facing the WAN. The help here says only "Specify
+// port" and "Specify LAN port", so the mapping rests on that naming
+// convention rather than on a capture — read-back proves the syntax, not
+// which direction the translation runs.
+//
+// "description" is not modelled, for the same reason as in NATOneOneRule.
+type NATOneManyRule struct {
+	Interface string `json:"interface"`
+	Index     int    `json:"index"`
+	LANIP     string `json:"lan_ip"`
+	LANPort   int    `json:"lan_port"`
+	PublicIP  string `json:"public_ip"`
+	Port      int    `json:"port"`
+	Protocol  string `json:"protocol,omitempty"`
+	RuleName  string `json:"rule_name,omitempty"`
+
+	AllowedSourceType string `json:"allowed_source_type,omitempty"`
+	AllowedSource     string `json:"allowed_source,omitempty"`
+}
+
+// NATOneManyProtocols is the set the device's help lists for this block.
+// Note the absence of "any", which nat-one-one does offer: a rule here
+// translates a port, so there has to be a protocol to take it from.
+var NATOneManyProtocols = []string{"tcp", "udp"}
+
 // NATRules is everything the NAT sub-contexts of the eth interfaces hold.
 // Grouped rather than returned as a widening tuple: the device has four
 // such contexts and ParseNATRules walks the tree once for all of them.
@@ -119,6 +161,7 @@ type NATRules struct {
 	PortForwards []PortForwardRule `json:"port_forward_rules"`
 	SourceNATs   []SourceNATRule   `json:"source_nat_rules"`
 	OneOne       []NATOneOneRule   `json:"nat_one_one_rules"`
+	OneMany      []NATOneManyRule  `json:"nat_one_many_rules"`
 }
 
 // PortForwardProtocols is the set this app will write. Only "tcp" has
@@ -135,6 +178,7 @@ func ParseNATRules(cfgRaw string) NATRules {
 		PortForwards: []PortForwardRule{},
 		SourceNATs:   []SourceNATRule{},
 		OneOne:       []NATOneOneRule{},
+		OneMany:      []NATOneManyRule{},
 	}
 	forwards, snats := out.PortForwards, out.SourceNATs
 	for _, eth := range ethInterfaceBlocks(tree) {
@@ -183,13 +227,25 @@ func ParseNATRules(cfgRaw string) NATRules {
 				Protocol: valueAfter(leaves, "protocol "),
 				RuleName: valueAfter(leaves, "rule-name "),
 			}
-			for _, kind := range []string{AllowedSourceIPAddress, AllowedSourceIPGroup} {
-				if v := valueAfter(leaves, "allowed-sources "+kind+" "); v != "" {
-					r.AllowedSourceType, r.AllowedSource = kind, v
-					break
-				}
-			}
+			r.AllowedSourceType, r.AllowedSource = allowedSourceOf(leaves)
 			out.OneOne = append(out.OneOne, r)
+		}
+		for _, blk := range eth.block.FindAll("nat-one-many ") {
+			idx, err := strconv.Atoi(strings.TrimPrefix(blk.Header, "nat-one-many "))
+			if err != nil {
+				continue
+			}
+			leaves := blockLeaves(blk)
+			r := NATOneManyRule{Interface: name, Index: idx,
+				LANIP:    valueAfter(leaves, "lan-IP "),
+				PublicIP: valueAfter(leaves, "public-IP "),
+				Protocol: valueAfter(leaves, "protocol "),
+				RuleName: valueAfter(leaves, "rule-name "),
+			}
+			r.LANPort, _ = strconv.Atoi(valueAfter(leaves, "lan-port "))
+			r.Port, _ = strconv.Atoi(valueAfter(leaves, "port "))
+			r.AllowedSourceType, r.AllowedSource = allowedSourceOf(leaves)
+			out.OneMany = append(out.OneMany, r)
 		}
 	}
 	out.PortForwards, out.SourceNATs = forwards, snats
@@ -271,6 +327,89 @@ func NATOneOneLeaves(r NATOneOneRule) []string {
 	return leaves
 }
 
+// NATOneManyLeaves builds the body of a nat-one-many block. Deliberately
+// parallel to NATOneOneLeaves rather than sharing its body: the value of
+// this file is that each block's spelling can be read off directly, and
+// the two blocks are not guaranteed to stay identical.
+func NATOneManyLeaves(r NATOneManyRule) []string {
+	leaves := []string{
+		"lan-IP " + r.LANIP,
+		fmt.Sprintf("lan-port %d", r.LANPort),
+		"public-IP " + r.PublicIP,
+		fmt.Sprintf("port %d", r.Port),
+	}
+	if r.Protocol != "" {
+		leaves = append(leaves, "protocol "+r.Protocol)
+	}
+	if r.RuleName != "" {
+		leaves = append(leaves, "rule-name "+r.RuleName)
+	}
+	if r.AllowedSourceType != "" {
+		leaves = append(leaves, "allowed-sources "+r.AllowedSourceType+" "+r.AllowedSource)
+	}
+	return leaves
+}
+
+// ValidateNATOneMany rejects a rule the device would refuse.
+func ValidateNATOneMany(r NATOneManyRule) error {
+	if !isIPv4OrCIDR(r.LANIP) {
+		return fmt.Errorf("lan_ip must be an IPv4 address or CIDR, got %q", r.LANIP)
+	}
+	if !isIPv4OrCIDR(r.PublicIP) {
+		return fmt.Errorf("public_ip must be an IPv4 address or CIDR, got %q", r.PublicIP)
+	}
+	if r.Port < 1 || r.Port > 65535 {
+		return fmt.Errorf("port must be between 1 and 65535, got %d", r.Port)
+	}
+	if r.LANPort < 1 || r.LANPort > 65535 {
+		return fmt.Errorf("lan_port must be between 1 and 65535, got %d", r.LANPort)
+	}
+	// Unlike nat-one-one, this block has no "any": it translates a port,
+	// so a protocol is required to take the port from.
+	if !slices.Contains(NATOneManyProtocols, r.Protocol) {
+		return fmt.Errorf("protocol must be one of %s", strings.Join(NATOneManyProtocols, ", "))
+	}
+	if err := validateRuleName(r.RuleName); err != nil {
+		return err
+	}
+	return validateAllowedSource(r.AllowedSourceType, r.AllowedSource)
+}
+
+// allowedSourceOf reads whichever allowed-sources form a rule block used.
+func allowedSourceOf(leaves []string) (kind, value string) {
+	for _, k := range []string{AllowedSourceIPAddress, AllowedSourceIPGroup} {
+		if v := valueAfter(leaves, "allowed-sources "+k+" "); v != "" {
+			return k, v
+		}
+	}
+	return "", ""
+}
+
+// validateAllowedSource guards the allowed-sources leaf shared by both
+// nat-one-one and nat-one-many. An empty type means any source.
+func validateAllowedSource(kind, value string) error {
+	switch kind {
+	case "":
+		if value != "" {
+			return fmt.Errorf("allowed_source_type is required when allowed_source is set")
+		}
+	case AllowedSourceIPAddress:
+		if !isIPv4OrCIDR(value) && !isIPv4Range(value) {
+			return fmt.Errorf("allowed_source must be an address, CIDR, or start-end range, got %q", value)
+		}
+	case AllowedSourceIPGroup:
+		if value == "" {
+			return fmt.Errorf("allowed_source is required for an ip-group")
+		}
+		if err := validateRuleWord("allowed_source", value, 64); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("allowed_source_type must be %q or %q", AllowedSourceIPAddress, AllowedSourceIPGroup)
+	}
+	return nil
+}
+
 // ValidateNATOneOne rejects a rule the device would refuse, or that would
 // smuggle a second command into a line.
 func ValidateNATOneOne(r NATOneOneRule) error {
@@ -286,26 +425,7 @@ func ValidateNATOneOne(r NATOneOneRule) error {
 	if err := validateRuleName(r.RuleName); err != nil {
 		return err
 	}
-	switch r.AllowedSourceType {
-	case "":
-		if r.AllowedSource != "" {
-			return fmt.Errorf("allowed_source_type is required when allowed_source is set")
-		}
-	case AllowedSourceIPAddress:
-		if !isIPv4OrCIDR(r.AllowedSource) && !isIPv4Range(r.AllowedSource) {
-			return fmt.Errorf("allowed_source must be an address, CIDR, or start-end range, got %q", r.AllowedSource)
-		}
-	case AllowedSourceIPGroup:
-		if err := validateRuleWord("allowed_source", r.AllowedSource, 64); err != nil {
-			return err
-		}
-		if r.AllowedSource == "" {
-			return fmt.Errorf("allowed_source is required for an ip-group")
-		}
-	default:
-		return fmt.Errorf("allowed_source_type must be %q or %q", AllowedSourceIPAddress, AllowedSourceIPGroup)
-	}
-	return nil
+	return validateAllowedSource(r.AllowedSourceType, r.AllowedSource)
 }
 
 // ruleNameChars is the device's own rule, quoted from its rejection of
