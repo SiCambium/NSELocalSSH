@@ -103,6 +103,16 @@ type pendingChange struct {
 	expiresAt time.Time
 }
 
+// FailedUndo records an automatic undo that did not land. There is
+// nowhere else for this to surface: the expiry loop runs in the
+// background with no HTTP request to answer, and the operator may well be
+// looking at a device they can no longer reach.
+type FailedUndo struct {
+	Section string    `json:"section"`
+	At      time.Time `json:"at"`
+	Detail  string    `json:"detail"`
+}
+
 // SafeApplier reduces the damage a risky config change can do: snapshot,
 // apply, verify the device still accepts a brand-new connection (not the
 // shared session, which can survive `management ssh` being disabled and so
@@ -121,16 +131,6 @@ type pendingChange struct {
 // the previous configuration and a power-cycle recovers it. That is the
 // safety net worth relying on, and it is the one this code must not
 // undermine by saving a change before it is confirmed.
-// FailedUndo records an automatic undo that did not land. There is
-// nowhere else for this to surface: the expiry loop runs in the
-// background with no HTTP request to answer, and the operator may well be
-// looking at a device they can no longer reach.
-type FailedUndo struct {
-	Section string    `json:"section"`
-	At      time.Time `json:"at"`
-	Detail  string    `json:"detail"`
-}
-
 type SafeApplier struct {
 	client *Client
 
@@ -335,17 +335,7 @@ func (a *SafeApplier) expireLoop() {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
-		a.mu.Lock()
-		now := time.Now()
-		var expired []pendingChange
-		for token, pc := range a.pending {
-			if now.After(pc.expiresAt) {
-				expired = append(expired, pc)
-				delete(a.pending, token)
-			}
-		}
-		a.mu.Unlock()
-		for _, pc := range expired {
+		for _, pc := range a.takeExpired(time.Now()) {
 			undo, err := a.client.ApplyLines(pc.preImage, 20*time.Second)
 			if err != nil || !undo.OK {
 				// Same limitation as the unreachable branch in Apply: if
@@ -355,6 +345,22 @@ func (a *SafeApplier) expireLoop() {
 			}
 		}
 	}
+}
+
+// takeExpired removes and returns every pending change whose window has
+// closed by now. Split out of expireLoop so the sweep can be tested
+// without a device: the loop around it does nothing but tick and send.
+func (a *SafeApplier) takeExpired(now time.Time) []pendingChange {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var expired []pendingChange
+	for token, pc := range a.pending {
+		if now.After(pc.expiresAt) {
+			expired = append(expired, pc)
+			delete(a.pending, token)
+		}
+	}
+	return expired
 }
 
 // checkReachable proves the device accepts a brand-new SSH login — not

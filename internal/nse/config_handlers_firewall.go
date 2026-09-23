@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,6 +31,51 @@ func (s *Server) handleConfigFirewall(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// wanPortNames lists the eth ports currently carrying a WAN role, which
+// is where a port-forward or source-NAT rule can go.
+func wanPortNames(cfgRaw string) []string {
+	out := []string{}
+	for _, eth := range ethInterfaceBlocks(ParseBlockTree(cfgRaw)) {
+		if valueAfter(blockLeaves(eth.block), "type ") == "wan" {
+			out = append(out, fmt.Sprintf("eth%d", eth.port))
+		}
+	}
+	return out
+}
+
+// ethPortNumber turns "eth3" into 3.
+func ethPortNumber(name string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimPrefix(strings.TrimSpace(name), "eth"))
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("interface must be an eth port, e.g. eth3")
+	}
+	return n, nil
+}
+
+// natRuleBlock builds the ConfigBlock for a port-forward or source-NAT
+// change.
+//
+// Classified with the WAN sections rather than as a plain change. A
+// port-forward alone cannot cut off management, but a source-NAT rule
+// rewrites the source address of traffic leaving the device, and one
+// covering the subnet an operator reaches it from can break the return
+// path — the same reasoning that puts outbound filter rules in that list.
+// Both kinds edit an "interface eth N" stanza, so the snapshot key is the
+// whole interface, and an undo restores every rule on it rather than just
+// the one edited.
+func natRuleBlock(port int, name string, leaves, undo []string) ConfigBlock {
+	b := ConfigBlock{
+		Name:  name,
+		Lines: BuildInterfaceEthLines(port, leaves),
+		Risk:  ClassifyRisk("wan"),
+		Keys:  []string{fmt.Sprintf("interface eth %d", port)},
+	}
+	if len(undo) > 0 {
+		b.Undo = BuildInterfaceEthLines(port, undo)
+	}
+	return b
+}
+
 func (s *Server) handleGetConfigFirewall(w http.ResponseWriter, _ *http.Request) {
 	cloud, err := FetchCloudConfig(s.Client, 20*time.Second)
 	if err != nil {
@@ -41,6 +87,7 @@ func (s *Server) handleGetConfigFirewall(w http.ResponseWriter, _ *http.Request)
 		return
 	}
 	geoInbound, geoOutbound := ParseGeoIP(cfgRaw)
+	portForwards, sourceNATs := ParseNATRules(cfgRaw)
 	writeJSON(w, map[string]any{
 		"dos_protection_ip_spoof":     cloud.DOSProtectionSpoof,
 		"dos_protection_ip_spoof_log": cloud.DOSProtectionLog,
@@ -52,6 +99,9 @@ func (s *Server) handleGetConfigFirewall(w http.ResponseWriter, _ *http.Request)
 		"device_access_sources":       parseDeviceAccessSources(cfgRaw),
 		"geo_ip_inbound":              geoInbound,
 		"geo_ip_outbound":             geoOutbound,
+		"port_forward_rules":          portForwards,
+		"source_nat_rules":            sourceNATs,
+		"wan_ports":                   wanPortNames(cfgRaw),
 	})
 }
 
@@ -140,6 +190,18 @@ type firewallRequest struct {
 	DstGroup   string `json:"dst_group"`
 	DstPort    string `json:"dst_port"`
 
+	// Port-forward and source-NAT fields. Interface is the eth port the
+	// rule lives on; Index identifies an existing rule for deletion and is
+	// allocated by the server on add.
+	Interface string `json:"interface"`
+	Index     int    `json:"index"`
+	WANPort   int    `json:"wan_port"`
+	LANIP     string `json:"lan_ip"`
+	LANPort   int    `json:"lan_port"`
+	LANSubnet string `json:"lan_subnet"`
+	PublicIP  string `json:"public_ip"`
+	Overload  string `json:"overload"`
+
 	// Device Access source restriction. Empty clears it.
 	DeviceAccessIPAddress string `json:"device_access_ip_address"`
 	Precedence            int    `json:"precedence"`
@@ -213,9 +275,110 @@ func (s *Server) handlePostConfigFirewall(w http.ResponseWriter, r *http.Request
 		s.handlePostGeoIP(w, req)
 	case "device_access_ip_address":
 		s.handlePostDeviceAccessSource(w, req)
+	case "port_forward_add", "port_forward_delete", "source_nat_add", "source_nat_delete":
+		s.handlePostNATRule(w, req)
 	default:
 		writeSettingsError(w, http.StatusBadRequest, "unknown action")
 	}
+}
+
+// handlePostNATRule implements the port-forward and source-NAT actions.
+//
+// There is no edit: a rule is deleted and re-added. Nothing confirms that
+// re-sending a leaf inside an existing rule block replaces it rather than
+// appending, and getting that wrong would leave a half-changed rule. The
+// whole sequence applies as one block through safe-apply, so a delete that
+// succeeds followed by an add that fails is undone together.
+func (s *Server) handlePostNATRule(w http.ResponseWriter, req firewallRequest) {
+	port, err := ethPortNumber(req.Interface)
+	if err != nil {
+		writeSettingsError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	cfgRaw, ok := s.cli(w, "show config", 25*time.Second)
+	if !ok {
+		return
+	}
+	if !slices.Contains(wanPortNames(cfgRaw), req.Interface) {
+		writeSettingsError(w, http.StatusBadRequest,
+			fmt.Sprintf("%s is not a WAN port; these rules apply to a WAN interface", req.Interface))
+		return
+	}
+	forwards, snats := ParseNATRules(cfgRaw)
+
+	var leaves []string
+	var name string
+
+	// undo is set only for the two add actions. Safe-apply's default
+	// rollback replays a snapshot of the interface stanza taken before
+	// the change, which can restore a leaf that was edited but cannot
+	// remove an entity that did not exist when it was taken. Proved
+	// live: a port-forward add was left unconfirmed, the window lapsed,
+	// the undo reported OK, and the rule was still on the device. A
+	// delete needs nothing here — its pre-image does contain the rule,
+	// so replaying the stanza recreates it at the same index.
+	var undo []string
+
+	switch req.Action {
+	case "port_forward_add":
+		rule := PortForwardRule{Port: req.WANPort, LANIP: strings.TrimSpace(req.LANIP),
+			Protocol: strings.TrimSpace(req.Protocol), LANPort: req.LANPort}
+		if err := ValidatePortForward(rule); err != nil {
+			writeSettingsError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		var used []int
+		for _, r := range forwards {
+			if r.Interface == req.Interface {
+				used = append(used, r.Index)
+			}
+		}
+		idx := NextRuleIndex(used)
+		name = "port-forward-add"
+		leaves = BuildRuleLines(fmt.Sprintf("port-forward-rule %d", idx), PortForwardLeaves(rule))
+		undo = []string{RuleDeleteLine("port-forward-rule", idx)}
+
+	case "port_forward_delete":
+		if req.Index < 1 {
+			writeSettingsError(w, http.StatusBadRequest, "index is required")
+			return
+		}
+		name = "port-forward-delete"
+		leaves = []string{RuleDeleteLine("port-forward-rule", req.Index)}
+
+	case "source_nat_add":
+		rule := SourceNATRule{LANSubnet: strings.TrimSpace(req.LANSubnet),
+			Overload: strings.TrimSpace(req.Overload), PublicIP: strings.TrimSpace(req.PublicIP)}
+		if err := ValidateSourceNAT(rule); err != nil {
+			writeSettingsError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		var used []int
+		for _, r := range snats {
+			if r.Interface == req.Interface {
+				used = append(used, r.Index)
+			}
+		}
+		idx := NextRuleIndex(used)
+		name = "source-nat-add"
+		leaves = BuildRuleLines(fmt.Sprintf("source-nat-rule %d", idx), SourceNATLeaves(rule))
+		undo = []string{RuleDeleteLine("source-nat-rule", idx)}
+
+	case "source_nat_delete":
+		if req.Index < 1 {
+			writeSettingsError(w, http.StatusBadRequest, "index is required")
+			return
+		}
+		name = "source-nat-delete"
+		leaves = []string{RuleDeleteLine("source-nat-rule", req.Index)}
+	}
+
+	outcome, err := s.safeApplier().Apply(natRuleBlock(port, name, leaves, undo))
+	if err != nil {
+		writeDeviceError(w, err)
+		return
+	}
+	writeJSON(w, outcome)
 }
 
 // handlePostGeoIP implements the GEO IP filtering actions: setting a
@@ -313,8 +476,9 @@ func (s *Server) handlePostGeoIP(w http.ResponseWriter, req firewallRequest) {
 		writeSettingsError(w, http.StatusBadRequest, "geo_direction must be 'inbound' or 'outbound'")
 		return
 	}
-
-	var lines []string
+	// Argument validation comes first, before anything touches the
+	// device: a malformed request must be refused without spending an
+	// SSH round-trip on it.
 	switch req.Action {
 	case "geo_mode":
 		switch req.GeoMode {
@@ -323,24 +487,57 @@ func (s *Server) handlePostGeoIP(w http.ResponseWriter, req firewallRequest) {
 			writeSettingsError(w, http.StatusBadRequest, "geo_mode must be 'allow', 'block', or 'none'")
 			return
 		}
-		lines = []string{GeoIPModeLine(req.GeoDirection, req.GeoMode)}
-	case "geo_countries":
-		lines = []string{GeoIPCountriesLine(req.GeoDirection, req.Countries)}
-	case "geo_exception_add":
+	case "geo_exception_add", "geo_exception_delete":
 		if req.StartIP == "" || req.EndIP == "" {
 			writeSettingsError(w, http.StatusBadRequest, "start_ip and end_ip are required")
 			return
 		}
-		lines = []string{GeoIPExceptionAddLine(req.GeoDirection, req.StartIP, req.EndIP)}
-	case "geo_exception_delete":
-		if req.StartIP == "" || req.EndIP == "" {
-			writeSettingsError(w, http.StatusBadRequest, "start_ip and end_ip are required")
-			return
-		}
-		lines = []string{GeoIPExceptionDeleteLine(req.GeoDirection, req.StartIP, req.EndIP)}
 	}
 
-	block := ConfigBlock{Name: "geo-ip-" + req.Action, Lines: lines, Risk: ClassifyRisk("geo-ip")}
+	// These are flat top-level lines, not a submode block, so there is no
+	// stanza for safe-apply to snapshot: this block used to carry no Keys
+	// at all, which made ExtractStanza return nothing and the rollback a
+	// no-op — the change was held provisional for 60 seconds and then
+	// "undone" by sending zero lines. Every action here builds its own
+	// explicit inverse from the config as it stands now.
+	cfgRaw, ok := s.cli(w, "show config", 25*time.Second)
+	if !ok {
+		return
+	}
+	inbound, outbound := ParseGeoIP(cfgRaw)
+	before := inbound
+	if req.GeoDirection == "outbound" {
+		before = outbound
+	}
+
+	var lines, undo []string
+	switch req.Action {
+	case "geo_mode":
+		lines = []string{GeoIPModeLine(req.GeoDirection, req.GeoMode)}
+		undo = []string{GeoIPModeLine(req.GeoDirection, before.Mode)}
+	case "geo_countries":
+		lines = []string{GeoIPCountriesLine(req.GeoDirection, req.Countries)}
+		if len(before.Countries) > 0 {
+			undo = []string{GeoIPCountriesLine(req.GeoDirection, before.Countries)}
+		} else {
+			// No previous list to restore, and no confirmed line clears
+			// one — "countries" with an empty value is not a form the
+			// device has been seen to accept. Restoring the mode is the
+			// honest partial: it switches the restriction back off, which
+			// is what an absent list meant in practice, but it leaves the
+			// list itself behind for the next mode change to pick up.
+			undo = []string{GeoIPModeLine(req.GeoDirection, before.Mode)}
+		}
+	case "geo_exception_add":
+		lines = []string{GeoIPExceptionAddLine(req.GeoDirection, req.StartIP, req.EndIP)}
+		undo = []string{GeoIPExceptionDeleteLine(req.GeoDirection, req.StartIP, req.EndIP)}
+	case "geo_exception_delete":
+		lines = []string{GeoIPExceptionDeleteLine(req.GeoDirection, req.StartIP, req.EndIP)}
+		undo = []string{GeoIPExceptionAddLine(req.GeoDirection, req.StartIP, req.EndIP)}
+	}
+
+	block := ConfigBlock{Name: "geo-ip-" + req.Action, Lines: lines,
+		Risk: ClassifyRisk("geo-ip"), Undo: undo}
 	outcome, err := s.safeApplier().Apply(block)
 	if err != nil {
 		writeDeviceError(w, err)
@@ -536,9 +733,16 @@ func (s *Server) handlePostOutboundFilterRule(w http.ResponseWriter, req firewal
 		newOrder[idx], newOrder[swapWith] = newOrder[swapWith], newOrder[idx]
 	}
 
+	// The forward direction deletes every existing rule and rewrites the
+	// list, so the exact inverse is the same call with the two lists
+	// swapped. The stanza pre-image safe-apply would otherwise use is
+	// wrong here for anything that adds a rule: replaying the old stanza
+	// re-asserts the old rules but never deletes the new one, leaving a
+	// list that matches neither state.
 	block := ConfigBlock{
 		Name:  "outbound-filter-" + req.Action,
 		Lines: ReplaceFilterRulesLines(current, newOrder),
+		Undo:  ReplaceFilterRulesLines(newOrder, current),
 		Risk:  ClassifyRisk("outbound-filter"),
 		Keys:  []string{"filter global-filter"},
 	}

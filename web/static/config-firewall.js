@@ -211,10 +211,35 @@
       ${geoDirectionHTML("inbound", "WAN to LAN", cache.geo_ip_inbound)}
       ${geoDirectionHTML("outbound", "LAN to WAN", cache.geo_ip_outbound)}
 
-      <h2>Port Forward / NAT</h2>
-      <p class="muted">Read-only for now — this device's port-forward and NAT (1:1 / 1:many) commands exist but their exact CLI argument syntax isn't confirmed yet, unlike filter rules and GEO IP above; use cnMaestro for those until that's verified.</p>
+      <h2>Port Forwarding</h2>
+      <p class="muted">Forwards a port on a WAN interface to a host behind the device. Applied through the safe-apply path, like the rules above.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>WAN</th><th>#</th><th>WAN port</th><th>Protocol</th><th>To host</th><th>To port</th><th></th></tr></thead>
+        <tbody>${portForwardRows() || '<tr><td colspan="7" class="muted">No port-forward rules.</td></tr>'}</tbody>
+      </table></div>
+      <p>${wanPortsAvailable() ? '<button type="button" class="row-edit" id="add-port-forward-btn">Add port forward</button>' : '<span class="muted">No WAN interface to add one to.</span>'}</p>
+
+      <h2>Source NAT</h2>
+      <p class="muted">Rewrites the source address of traffic leaving a WAN. <strong>Overload</strong> is what separates the two modes: on, many LAN hosts share the public address by port (1:many); off, each takes its own address from the range (1:1). The device prints nothing when overload is on, so a rule showing <span class="mono">enable</span> may have no line of its own in the config. A rule covering the subnet you reach this device from can break your own return path, so it goes through the same confirmation as a WAN change.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>WAN</th><th>#</th><th>LAN subnet</th><th>Public address</th><th>Overload</th><th></th></tr></thead>
+        <tbody>${sourceNATRows() || '<tr><td colspan="6" class="muted">No source-NAT rules.</td></tr>'}</tbody>
+      </table></div>
+      <p>${wanPortsAvailable() ? '<button type="button" class="row-edit" id="add-source-nat-btn">Add source NAT</button>' : '<span class="muted">No WAN interface to add one to.</span>'}</p>
     `;
     document.getElementById("edit-firewall-btn").addEventListener("click", editFirewall);
+    const addPF = document.getElementById("add-port-forward-btn");
+    if (addPF) addPF.addEventListener("click", addPortForward);
+    const addSN = document.getElementById("add-source-nat-btn");
+    if (addSN) addSN.addEventListener("click", addSourceNAT);
+    panel.querySelectorAll("[data-del-pf]").forEach((btn) => {
+      btn.addEventListener("click", () =>
+        deleteNATRule("port_forward_delete", btn.dataset.iface, parseInt(btn.dataset.delPf, 10), "port forward"));
+    });
+    panel.querySelectorAll("[data-del-sn]").forEach((btn) => {
+      btn.addEventListener("click", () =>
+        deleteNATRule("source_nat_delete", btn.dataset.iface, parseInt(btn.dataset.delSn, 10), "source NAT"));
+    });
     document.getElementById("add-filter-rule-btn").addEventListener("click", addFilterRule);
     panel.querySelectorAll("[data-move]").forEach((btn) => {
       btn.addEventListener("click", () => moveFilterRule(parseInt(btn.dataset.precedence, 10), btn.dataset.move));
@@ -517,6 +542,132 @@
     openModal("Delete filter rule", body, async (el) => {
       const outcome = await postJSON("/api/config/firewall", { action: "filter_delete", precedence });
       await renderOutcome(el.querySelector("#cfg-filter-delete-outcome"), outcome);
+      await load();
+    });
+  }
+
+  // --- Port forwarding and source NAT ---------------------------------
+  //
+  // Both live as sub-contexts inside an "interface eth N" block and are
+  // written with the device's own irregular spelling (lan-IP, public-IP —
+  // see natrules.go). There is no edit: a rule is deleted and re-added,
+  // because nothing confirms that re-sending a leaf inside an existing
+  // rule replaces it rather than appending.
+
+  function wanPortsAvailable() {
+    return (cache.wan_ports || []).length > 0;
+  }
+
+  function portForwardRows() {
+    return (cache.port_forward_rules || [])
+      .map(
+        (r) => `<tr>
+          <td class="mono">${esc(r.interface)}</td>
+          <td>${r.index}</td>
+          <td class="mono">${r.port}</td>
+          <td>${esc(r.protocol)}</td>
+          <td class="mono">${esc(r.lan_ip)}</td>
+          <td class="mono">${r.lan_port}</td>
+          <td><button type="button" class="row-edit" data-del-pf="${r.index}" data-iface="${esc(r.interface)}">Delete</button></td>
+        </tr>`
+      )
+      .join("");
+  }
+
+  // The device prints "overload disable" and prints nothing when overload
+  // is on, so the read path fills an absent leaf in as "enable". Show the
+  // mode alongside, since the keyword on its own says nothing about which
+  // kind of NAT the rule performs.
+  function overloadLabel(v) {
+    if (v === "disable") return 'disable <span class="muted">(1:1)</span>';
+    if (v === "enable") return 'enable <span class="muted">(1:many)</span>';
+    return esc(v || "-");
+  }
+
+  function sourceNATRows() {
+    return (cache.source_nat_rules || [])
+      .map(
+        (r) => `<tr>
+          <td class="mono">${esc(r.interface)}</td>
+          <td>${r.index}</td>
+          <td class="mono">${esc(r.lan_subnet)}</td>
+          <td class="mono">${esc(r.public_ip)}</td>
+          <td>${overloadLabel(r.overload)}</td>
+          <td><button type="button" class="row-edit" data-del-sn="${r.index}" data-iface="${esc(r.interface)}">Delete</button></td>
+        </tr>`
+      )
+      .join("");
+  }
+
+  function wanSelect(id) {
+    const opts = (cache.wan_ports || []).map((p) => `<option value="${esc(p)}">${esc(p)}</option>`).join("");
+    return `<label>WAN interface <select id="${id}">${opts}</select></label>`;
+  }
+
+  function addPortForward() {
+    const body = `
+      ${wanSelect("cfg-pf-iface")}
+      <label>WAN port <input id="cfg-pf-port" type="number" min="1" max="65535" placeholder="e.g. 9090"></label>
+      <label>Protocol
+        <select id="cfg-pf-proto"><option value="tcp">tcp</option><option value="udp">udp</option></select>
+      </label>
+      <p class="muted">Only tcp has been seen on a real device; udp is offered because the pairing is universal, but it is not confirmed for this CLI. A value the device rejects fails the whole change cleanly.</p>
+      <label>Forward to host <input id="cfg-pf-ip" type="text" placeholder="e.g. 10.0.0.50"></label>
+      <label>Forward to port <input id="cfg-pf-lanport" type="number" min="1" max="65535" placeholder="e.g. 9090"></label>
+      <div id="cfg-pf-outcome"></div>
+    `;
+    openModal("Add port forward", body, async (el) => {
+      const outcome = await postJSON("/api/config/firewall", {
+        action: "port_forward_add",
+        interface: el.querySelector("#cfg-pf-iface").value,
+        wan_port: parseInt(el.querySelector("#cfg-pf-port").value, 10) || 0,
+        protocol: el.querySelector("#cfg-pf-proto").value,
+        lan_ip: el.querySelector("#cfg-pf-ip").value.trim(),
+        lan_port: parseInt(el.querySelector("#cfg-pf-lanport").value, 10) || 0,
+      });
+      await renderOutcome(el.querySelector("#cfg-pf-outcome"), outcome);
+      await load();
+    });
+  }
+
+  function addSourceNAT() {
+    const body = `
+      ${wanSelect("cfg-sn-iface")}
+      <label>LAN subnet (CIDR) <input id="cfg-sn-subnet" type="text" placeholder="e.g. 10.1.0.0/24"></label>
+      <label>Public address or range
+        <input id="cfg-sn-public" type="text" placeholder="e.g. 203.0.113.5 or 203.0.113.1-203.0.113.254">
+      </label>
+      <label>Overload
+        <select id="cfg-sn-overload">
+          <option value="enable">enable — many hosts share the address, by port (1:many)</option>
+          <option value="disable">disable — one address each, from the range (1:1)</option>
+        </select>
+      </label>
+      <p class="warn">This rewrites the source address of traffic leaving the WAN. A rule covering the subnet you reach this device from can break your own return path — confirm it promptly, or it is undone.</p>
+      <div id="cfg-sn-outcome"></div>
+    `;
+    openModal("Add source NAT", body, async (el) => {
+      const outcome = await postJSON("/api/config/firewall", {
+        action: "source_nat_add",
+        interface: el.querySelector("#cfg-sn-iface").value,
+        lan_subnet: el.querySelector("#cfg-sn-subnet").value.trim(),
+        public_ip: el.querySelector("#cfg-sn-public").value.trim(),
+        overload: el.querySelector("#cfg-sn-overload").value,
+      });
+      await renderOutcome(el.querySelector("#cfg-sn-outcome"), outcome);
+      await load();
+    });
+  }
+
+  function deleteNATRule(action, iface, index, label) {
+    const body = `
+      <p class="warn">Delete ${esc(label)} rule ${index} on ${esc(iface)}?</p>
+      <p class="muted">Removal uses the device's <span class="mono">no &lt;rule&gt; &lt;n&gt;</span> convention, which no capture confirms for these two blocks. If the device rejects it the change fails cleanly and nothing is removed.</p>
+      <div id="cfg-nat-del-outcome"></div>
+    `;
+    openModal(`Delete ${label} rule`, body, async (el) => {
+      const outcome = await postJSON("/api/config/firewall", { action, interface: iface, index });
+      await renderOutcome(el.querySelector("#cfg-nat-del-outcome"), outcome);
       await load();
     });
   }

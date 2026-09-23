@@ -226,3 +226,39 @@ func TestFailedUndoIsRecorded(t *testing.T) {
 		t.Errorf("kept %d records, want the list bounded at 20", n)
 	}
 }
+
+// TestTakeExpiredSweepsTheWindow covers the expiry sweep itself. Every
+// other test here builds a SafeApplier literal and calls a helper, so the
+// loop that actually undoes an unconfirmed change had no coverage at all
+// — and a provisional change that is never swept is never undone, which
+// is the whole point of holding it.
+func TestTakeExpiredSweepsTheWindow(t *testing.T) {
+	now := time.Now()
+	a := &SafeApplier{client: NewClient(Config{}), pending: map[string]pendingChange{
+		"stale": {block: ConfigBlock{Name: "wan"}, preImage: []string{"a"},
+			expiresAt: now.Add(-time.Second)},
+		"fresh": {block: ConfigBlock{Name: "lan-port"}, preImage: []string{"b"},
+			expiresAt: now.Add(time.Minute)},
+	}}
+
+	got := a.takeExpired(now)
+	if len(got) != 1 || got[0].block.Name != "wan" {
+		t.Fatalf("swept %+v, want only the lapsed change", got)
+	}
+	if a.PendingCount() != 1 {
+		t.Errorf("PendingCount = %d, want 1 — the unexpired change must stay", a.PendingCount())
+	}
+	if _, ok := a.pending["stale"]; ok {
+		t.Error("a swept change must be removed, or the next tick undoes it again")
+	}
+
+	// A change swept once is gone: taking again at a later time yields
+	// only the one whose window has since closed.
+	got = a.takeExpired(now.Add(2 * time.Minute))
+	if len(got) != 1 || got[0].block.Name != "lan-port" {
+		t.Fatalf("second sweep = %+v, want the now-lapsed change", got)
+	}
+	if a.PendingCount() != 0 {
+		t.Errorf("PendingCount = %d, want 0", a.PendingCount())
+	}
+}

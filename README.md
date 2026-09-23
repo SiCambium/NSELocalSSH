@@ -27,7 +27,7 @@ Any change that could plausibly lock you out of the device — WAN edits, LAN po
 1. Snapshot the device's current config for the affected section(s).
 2. Apply the change.
 3. Open a **brand-new** SSH connection (not the one that made the change — an already-open channel can survive some settings changes and would prove nothing) to confirm the device is still reachable.
-4. If the change only partially applied, undo it from the snapshot.
+4. If the change only partially applied, undo it — from the snapshot, or, for a change that *creates* something (a port-forward or NAT rule, a filter rule, a geo-ip exception), from an explicit inverse built at the same time, since a snapshot taken before the change cannot describe deleting it.
 5. If reachable, hold the change **provisional** for 60 seconds — confirm it in the UI, or it is undone.
 6. The change is only written to the device's startup config once you confirm it.
 
