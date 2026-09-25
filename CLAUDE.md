@@ -21,6 +21,7 @@ sh scripts/dev.sh                # same, plus live reload of web/static (see bel
 sh scripts/package-macos.sh      # local .app into dist/ (copies ./.env into the bundle)
 sh scripts/build-portable.sh     # cross-compile nse-status for all platforms into build/
 sh scripts/build-release.sh v0.3 # portable + macOS app
+sh scripts/stats.sh              # release downloads + traffic (needs gh)
 ```
 
 There is no linter config and no frontend build step — `web/static/*` is served straight from `embed.FS`, so a JS/CSS edit just needs a rebuild of the Go binary (or a reload in `go run` mode after restart).
@@ -30,6 +31,10 @@ There is no linter config and no frontend build step — `web/static/*` is serve
 Device credentials come from `.env` (`NSE_HOST`, `NSE_USER`, `NSE_PASSWORD`, `NSE_PORT`); `cp .env.example .env` to start. `LoadConfig` merges several candidate paths (exe dir, cwd, `~/.config/nse-status/`, `~/Library/Application Support/NSE Status/`) and env vars win over files; `WritableSettingsPath()` picks where the Settings UI writes back — inside a `.app` bundle that is Application Support, otherwise `./.env`. `prefs.json`, `profiles.json`, and `known_hosts.json` all live next to the writable `.env`.
 
 Tags matching `v*` trigger `.github/workflows/release.yml`, which builds the portable binaries plus native desktop apps for macOS/Windows/Linux and uploads them to the release.
+
+**The checksums job sums build artifacts, never the published release.** It used to `gh release download --pattern '*'`, which quietly added one download to every asset of every release — 117 of the project's first 205 recorded downloads were that job and list-walking bots, not people. Hashing after upload is also weaker: a corrupted upload would get a checksum matching its own corruption and pass `sha256sum -c`. Summing the artifacts means a bad upload fails verification, which is the point. The `upload-artifact` steps therefore run on tag builds too — do not re-add the `if: !startsWith(github.ref, 'refs/tags/')` guard, or `checksums` finds nothing to sum. The job's `count -lt 12` check is what turns "an artifact went missing" into a failed release rather than a short `SHA256SUMS` that silently omits a file.
+
+`scripts/stats.sh` reports downloads as **raw** and **signal**: signal subtracts each release's floor, the count even `linux_armv6` and `freebsd_amd64` reach, which is machinery walking the asset list rather than anyone choosing a file. Raw totals are close to meaningless at this scale — v0.5.1's 42 downloads are 3 real ones — and the counter is neither live nor decaying, so day-over-day deltas on raw mean nothing.
 
 ## Architecture
 
