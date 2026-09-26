@@ -1,3 +1,5 @@
+[☕ Buy me a coffee](https://buymeacoffee.com/simonstaddon)
+
 # NSE Local SSH
 
 A local-first read/write configuration tool for Cambium NSE3000/NSE4000 firewalls. It talks to the device directly over SSH — no cloud (cnMaestro) dependency — so it works before a unit is cloud-connected, or any time a change is faster to make locally than through a cloud round-trip.
