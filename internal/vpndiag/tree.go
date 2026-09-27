@@ -36,6 +36,12 @@ const (
 	// still picks a branch.
 	Margin = 0.10
 
+	// HighConfidenceFrom is the distance from the threshold above which the
+	// least-certain decision on a path is reported as high confidence. Below
+	// Margin is low; between the two is medium. The band edges are here rather
+	// than in a caller so every consumer labels the same walk the same way.
+	HighConfidenceFrom = 0.30
+
 	// MaxSteps guards against a cyclic tree. The Python reference has this and
 	// SPEC.md's pseudocode omits it; without it a malformed playbook hangs.
 	MaxSteps = 64
@@ -195,6 +201,15 @@ func (t *Tree) Questions() map[string]Question {
 	return out
 }
 
+// Confidence bands, reported instead of raw probabilities: the numbers are
+// calibrated but they invite false precision, and an operator deciding whether
+// to change a firewall needs "how much should I trust this" rather than 0.92.
+const (
+	ConfidenceLow    = "low"
+	ConfidenceMedium = "medium"
+	ConfidenceHigh   = "high"
+)
+
 // Step is one node visited by a walk.
 type Step struct {
 	Node         string   `json:"node"`
@@ -216,6 +231,11 @@ type Result struct {
 	// DeferTo names another playbook covering this candidate in depth, when the
 	// tree declares one. It may not be a playbook that exists here.
 	DeferTo string `json:"defer_to,omitempty"`
+
+	// Confidence bands MinConfidence into low/medium/high. Low whenever
+	// Escalate is set — including when a node went unanswered, which is a
+	// different reason for doubt but the same practical advice.
+	Confidence string `json:"confidence"`
 
 	// Escalate is set when the leaf says so, or when any node on the path was
 	// within Margin of the threshold. It means "low confidence — verify
@@ -310,6 +330,7 @@ func (t *Tree) Walk(answers map[string]Answer) (*Result, error) {
 			res.DeferTo = d
 		}
 	}
+	res.Confidence = bandConfidence(res.Escalate, res.MinConfidence)
 	switch {
 	case res.CandidateID == "":
 		res.Reason = "no candidate cause was reached; the evidence did not match a known pattern"
@@ -317,6 +338,25 @@ func (t *Tree) Walk(answers map[string]Answer) (*Result, error) {
 		res.Reason = "a decision on this path was close to a coin flip, so treat the cause as a lead rather than a finding"
 	}
 	return res, nil
+}
+
+// bandConfidence maps the closest call on a path to a label.
+//
+// Escalate always wins: a leaf that declares itself inconclusive, or a node Jev
+// did not answer, is low confidence regardless of how decisive the other steps
+// looked.
+func bandConfidence(escalate bool, minConf *float64) string {
+	if escalate || minConf == nil {
+		return ConfidenceLow
+	}
+	switch {
+	case *minConf >= HighConfidenceFrom:
+		return ConfidenceHigh
+	case *minConf < Margin:
+		return ConfidenceLow
+	default:
+		return ConfidenceMedium
+	}
 }
 
 func sortedKeys[V any](m map[string]V) []string {

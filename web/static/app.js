@@ -1271,41 +1271,44 @@ function renderDiagnosis(d) {
 
   const c = r.candidate || {};
   const fix = cleanList(c.fix);
-  const confirm = cleanList(c.confirm);
-  const ruleOut = cleanList(c.rule_out);
 
-  // Probabilities are deliberately not shown. The confidence they carry is
-  // still reported, as words: a decision close to a coin flip sets escalate,
-  // and hiding that would make a guess look like a finding.
-  const lowConf = r.escalate
-    ? `<p class="warn">Low confidence &mdash; treat this as a lead and verify it independently before changing anything.</p>`
-    : "";
-
-  const reasoning = (r.path || []).length
-    ? `<h4>What was checked</h4><ul>${r.path
-        .map((s) => `<li>${esc(s.instructions)} &mdash; <strong>${esc(s.branch)}</strong></li>`)
-        .join("")}</ul>`
-    : "";
+  // "How to confirm" and "Rule out first" are not shown. They are written for
+  // the upstream RCA agent, and instruct the reader to query internal log
+  // source names and to jump between rule ids — neither of which means
+  // anything to someone operating this device.
 
   return `
     <h2>Diagnosis &mdash; ${esc(d.tunnel)}</h2>
     <p class="muted">Advisory. A reading of the evidence below, not a verified verdict.</p>
-    <h3>${esc(c.title || r.candidate_id || "No cause identified")}</h3>
-    ${lowConf}
+    <h3>${esc(c.title || "No cause identified")}</h3>
+    ${confidenceLine(r.confidence)}
     ${c.mechanism ? `<p>${esc(sentenceCase(trimPlaybookText(c.mechanism)))}</p>` : ""}
-    ${!r.candidate_id && r.note ? `<p>${esc(r.note)}</p>` : ""}
+    ${!r.candidate_id && r.note ? `<p>${esc(trimPlaybookText(r.note))}</p>` : ""}
     ${fix.length ? `<h4>Suggested fix</h4>${listOrEmpty(fix)}` : ""}
-    ${confirm.length ? `<h4>How to confirm</h4>${listOrEmpty(confirm)}` : ""}
-    ${ruleOut.length ? `<h4>Rule out first</h4>${listOrEmpty(ruleOut)}` : ""}
-    ${reasoning}
     ${
-      r.defer_to
-        ? `<p class="muted">A deeper playbook exists for this cause (<span class="mono">${esc(r.defer_to)}</span>) but is not bundled with this build.</p>`
+      (r.path || []).length
+        ? `<h4>What was checked</h4><ul>${r.path
+            .map((s) => `<li>${esc(s.instructions)} &mdash; <strong>${esc(s.branch)}</strong></li>`)
+            .join("")}</ul>`
         : ""
     }
     ${cost}
     ${evidenceBlock(d)}
   `;
+}
+
+// Confidence is reported as a band rather than a probability: the numbers are
+// calibrated but invite false precision, and the decision this informs is
+// whether to change a firewall. Low is called out in warning colour because it
+// is the case where acting on the suggestion without checking is a mistake.
+function confidenceLine(band) {
+  const text = {
+    high: "Confidence: high.",
+    medium: "Confidence: medium &mdash; worth corroborating before acting.",
+    low: "Confidence: low &mdash; treat this as a lead and verify it independently before changing anything.",
+  };
+  if (!band || !text[band]) return "";
+  return `<p class="${band === "low" ? "warn" : "muted"}">${text[band]}</p>`;
 }
 
 // The evidence stays available but collapsed: it is what the analysis rests on,
@@ -1323,11 +1326,23 @@ function cleanList(items) {
   return (items || []).map(trimPlaybookText).filter(Boolean);
 }
 
-// trimPlaybookText drops the trailing "---" that the playbook's markdown
-// compiler leaves on the last entry of a block. It is a horizontal rule from
-// the source document, not part of the text.
+// trimPlaybookText prepares authored playbook prose for display. It drops the
+// trailing "---" the markdown compiler leaves on the last entry of a block, and
+// strips cross-references to the playbook's own rule ids ("see D3 fix block",
+// "jump to D2-D5", "candidate D3 in foo.md"). Those ids are internal and mean
+// nothing to an operator, and the surrounding sentence reads fine without them.
 function trimPlaybookText(s) {
-  return String(s).replace(/\s*-{3,}\s*$/, "").trim();
+  return String(s)
+    .replace(/\s*-{3,}\s*$/, "")
+    // Internal playbook filenames first: they contain a dot, which would stop
+    // the rule-id patterns below from reaching the id that follows them.
+    .replace(/`[^`]*\.md`/g, "")
+    .replace(/\s*\((?:see|cf\.?|per)\b[^)]*\bD\d+[^)]*\)/gi, "")
+    .replace(/[;,]?\s*(?:see|refer to)\b[^.;]*\bD\d+\b[^.;]*/gi, "")
+    .replace(/[;,]?\s*jump to\s+D\d+(?:\s*[-\u2013]\s*D\d+)?[^.;]*/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([.;,])/g, "$1")
+    .trim();
 }
 
 // Several mechanism strings begin lower-case because they continue a heading in

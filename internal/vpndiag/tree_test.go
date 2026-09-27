@@ -304,3 +304,54 @@ func TestValidateRejectsBadTrees(t *testing.T) {
 		t.Errorf("the good tree was rejected: %v", err)
 	}
 }
+
+// TestWalkReportsConfidenceBand covers the label shown instead of a
+// probability. The numbers are calibrated but invite false precision, so an
+// operator gets low/medium/high; the bands live with the walk so every consumer
+// labels the same walk identically.
+func TestWalkReportsConfidenceBand(t *testing.T) {
+	tr := walkTree()
+	for _, tc := range []struct {
+		name    string
+		answers map[string]Answer
+		want    string
+		why     string
+	}{
+		{"decisive both steps", map[string]Answer{"a": noul(0.97), "b": noul(0.99)}, ConfidenceHigh,
+			"closest call 0.47 from the threshold"},
+		{"one middling step", map[string]Answer{"a": noul(0.75), "b": noul(0.99)}, ConfidenceMedium,
+			"closest call 0.25 — past the margin but short of high"},
+		{"near coin flip", map[string]Answer{"a": noul(0.52), "b": noul(0.99)}, ConfidenceLow,
+			"closest call 0.02 is inside the margin"},
+		{"exactly at the high edge", map[string]Answer{"a": noul(0.80), "b": noul(0.99)}, ConfidenceHigh,
+			"0.30 is inclusive"},
+		{"unanswered node", map[string]Answer{"b": noul(0.99)}, ConfidenceLow,
+			"a node Jev did not answer is doubt of a different kind, same advice"},
+	} {
+		res, err := tr.Walk(tc.answers)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if res.Confidence != tc.want {
+			t.Errorf("%s: confidence = %q, want %q (%s; min_confidence=%v escalate=%v)",
+				tc.name, res.Confidence, tc.want, tc.why, res.MinConfidence, res.Escalate)
+		}
+	}
+}
+
+// TestEscalateLeafIsAlwaysLowConfidence pins the precedence: a leaf that
+// declares itself inconclusive is low confidence however decisive the steps
+// that reached it looked.
+func TestEscalateLeafIsAlwaysLowConfidence(t *testing.T) {
+	tr := walkTree()
+	res, err := tr.Walk(map[string]Answer{"a": noul(0.99), "b": noul(0.01)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Leaf != "leaf_esc" {
+		t.Fatalf("landed %q, want the escalate leaf", res.Leaf)
+	}
+	if res.Confidence != ConfidenceLow {
+		t.Errorf("confidence = %q, want low — the leaf declares itself inconclusive", res.Confidence)
+	}
+}
