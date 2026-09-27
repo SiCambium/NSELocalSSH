@@ -578,3 +578,17 @@ tr[hidden] { display: none; }
   box-sizing: border-box;
 }
 .conn-row-tag.is-down { color: var(--down); }
+
+/* About panel. A definition list rather than a table: these are four labelled
+   facts, not tabular data. */
+dl.about {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 6px 18px;
+  margin: 0 0 16px;
+  max-width: 720px;
+}
+dl.about dt { color: var(--muted); font-size: 13px; }
+dl.about dd { margin: 0; }
+a.ext { color: var(--accent); }
+a.ext:hover { text-decoration: underline; }

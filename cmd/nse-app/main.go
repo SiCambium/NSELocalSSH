@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	webview "github.com/webview/webview_go"
 
@@ -74,6 +75,26 @@ func main() {
 		log.Printf("bind nseOpenInBrowser: %v", err)
 	}
 
+	// Exposed as window.nseOpenExternal(href) so a link in the UI can reach the
+	// system browser. Without it a plain <a href> inside the webview navigates
+	// the APP WINDOW to that site, with no back button and no way home.
+	//
+	// Allowlisted rather than open: this page renders text derived from device
+	// output, so handing it an unrestricted "open any URL" primitive would be a
+	// way to turn a compromised or malformed device response into a launched
+	// browser request. Only the project's own links are permitted.
+	if err := w.Bind("nseOpenExternal", func(href string) {
+		if !allowedExternal(href) {
+			log.Printf("refused to open non-allowlisted URL")
+			return
+		}
+		if err := openInBrowser(href); err != nil {
+			log.Printf("open external: %v", err)
+		}
+	}); err != nil {
+		log.Printf("bind nseOpenExternal: %v", err)
+	}
+
 	log.Printf("NSE desktop app %s serving %s (device %s)", nse.BuildVersion, url, cfg.Addr())
 	w.Navigate(url)
 	w.Run()
@@ -133,4 +154,22 @@ h1{font-size:22px;margin:0 0 12px}
 p{color:#9ca3af;max-width:42rem}
 </style></head>
 <body><h1>%s</h1><p>%s</p></body></html>`, html.EscapeString(title), html.EscapeString(detail))
+}
+
+// externalAllowlist is every off-box URL the UI may ask to open. Kept as exact
+// prefixes over https, so neither a lookalike host nor a redirect through one of
+// these hosts' open paths can smuggle in a different destination.
+var externalAllowlist = []string{
+	"https://github.com/SiCambium/NSELocalSSH",
+	"https://buymeacoffee.com/simonstaddon",
+}
+
+// allowedExternal reports whether href is one of the project's own links.
+func allowedExternal(href string) bool {
+	for _, ok := range externalAllowlist {
+		if href == ok || strings.HasPrefix(href, ok+"/") {
+			return true
+		}
+	}
+	return false
 }

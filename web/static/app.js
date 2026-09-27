@@ -361,6 +361,10 @@ let deviceModel = "";
 // until the user visited Status and came back.
 async function initHeader() {
   try {
+    fetch("/api/health")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((h) => applyAbout(h))
+      .catch(() => applyAbout(null));
     const res = await fetch("/api/identity");
     if (!res.ok) throw new Error("identity unavailable");
     const data = await res.json();
@@ -1267,6 +1271,8 @@ async function loadSettings() {
     if (!connById(selectedSlot)) selectedSlot = data.active_id || 0;
     fillConnForm(connById(selectedSlot));
     applyLiveConntrack(data.live_conntrack);
+    const af = document.getElementById("about-settings-file");
+    if (af) af.textContent = data.file || "—";
     document.getElementById("settings-file").textContent = data.file ? `Saved in ${data.file}` : "";
     note.textContent = "";
   } catch (e) {
@@ -1588,6 +1594,30 @@ document.getElementById("panel-dhcp").addEventListener("click", (ev) => {
   }
   if (cache.dhcp) render("dhcp", cache.dhcp);
 });
+
+// openExternal sends a link to the system browser.
+//
+// In the desktop build a plain <a href> would navigate the APP WINDOW to that
+// site, with no back button and no way home, so cmd/nse-app binds
+// window.nseOpenExternal for this. In a real browser the default behaviour is
+// already correct and the handler stays out of the way.
+function bindExternalLinks(root) {
+  if (typeof window.nseOpenExternal !== "function") return;
+  (root || document).querySelectorAll("a.ext").forEach((a) => {
+    if (a.dataset.extBound) return;
+    a.dataset.extBound = "1";
+    a.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      window.nseOpenExternal(a.href);
+    });
+  });
+}
+
+function applyAbout(d) {
+  const v = document.getElementById("about-version");
+  if (v) v.textContent = d && d.version ? d.version : "unknown";
+  bindExternalLinks();
+}
 
 function applyLiveConntrack(on) {
   liveConntrack = !!on;
