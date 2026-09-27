@@ -210,7 +210,15 @@ func writeCrossOriginBlocked(w http.ResponseWriter) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, map[string]string{"host": s.Client.Cfg.Host, "user": s.Client.Cfg.User})
+	// Version is here so the About panel can state which build is running.
+	// `--version` existed for exactly this reason — a bug report that cannot be
+	// pinned to a build is hard to act on — but it was unreachable from the UI,
+	// which is where anyone reporting a problem actually is.
+	writeJSON(w, map[string]string{
+		"host":    s.Client.Cfg.Host,
+		"user":    s.Client.Cfg.User,
+		"version": BuildVersion,
+	})
 }
 
 // handleIdentity answers "which device is this, and is it answering?" in

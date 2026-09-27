@@ -51,3 +51,33 @@ func TestRunBrowserCommandStartsAndReaps(t *testing.T) {
 		t.Fatalf("starting a launcher that exists should succeed: %v", err)
 	}
 }
+
+// TestAllowedExternal pins the allowlist. The page renders text derived from
+// device output, so nseOpenExternal must not be a general "open any URL"
+// primitive — that would turn a malformed or hostile device response into a
+// launched browser request.
+func TestAllowedExternal(t *testing.T) {
+	for _, ok := range []string{
+		"https://github.com/SiCambium/NSELocalSSH",
+		"https://github.com/SiCambium/NSELocalSSH/releases",
+		"https://buymeacoffee.com/simonstaddon",
+	} {
+		if !allowedExternal(ok) {
+			t.Errorf("%q should be allowed", ok)
+		}
+	}
+	for _, bad := range []string{
+		"https://github.com/SiCambium/NSELocalSSH-evil", // prefix is not enough
+		"https://github.com/someoneelse/repo",
+		"https://buymeacoffee.com/someoneelse",
+		"https://buymeacoffee.com.evil.test/simonstaddon", // lookalike host
+		"http://github.com/SiCambium/NSELocalSSH",         // downgraded to http
+		"file:///etc/passwd",
+		"javascript:alert(1)",
+		"",
+	} {
+		if allowedExternal(bad) {
+			t.Errorf("%q must NOT be allowed", bad)
+		}
+	}
+}

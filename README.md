@@ -6,6 +6,8 @@ A local-first read/write configuration tool for Cambium NSE3000/NSE4000 firewall
 
 This is a personal tool, not an official Cambium product.
 
+Maintained by Simon Staddon and Vivek Atreya.
+
 ## What it does
 
 **Status dashboard** (read-only, polls `show` / `service show` commands): Overview, Throughput, Details, Memory, Connection tracking, Interfaces, VLANs, Routing, DHCP (pools + MAC bindings), Neighbors, Devices, VPN tunnels (Starlink, client VPN), Tailscale, Firewall counters, Traffic, Events, and a raw Config viewer with secret-bearing lines redacted.
