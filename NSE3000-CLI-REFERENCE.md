@@ -492,3 +492,175 @@ port", so that mapping rests on the naming convention — a read-back
 proves the syntax, not which direction the translation runs.
 
 Removal: `no nat-one-many <n>` inside the owning `interface eth N`.
+
+## Site-to-site IPsec: what is and is not observable
+
+Probed live on an NSE4000 (2026-09-27) carrying one configured S2S tunnel that
+was actively failing to establish. `cmd/nse-probe` ran 26 read-only candidates;
+the negative results below matter as much as the positive one, because they are
+what justifies a diagnosis tool escalating rather than guessing.
+
+### `service show debug-logs vpn` — CONFIRMED, and the only real source
+
+Returns strongSwan/charon events as **JSONL**, one object per line:
+
+```json
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: giving up after 5 retransmits ","time": "2026-09-27T08:36:09+05:30"}
+```
+
+Fields are exactly `level`, `msg`, `time`. The tunnel is named inside `msg` as
+`ikesa-name: <name>`, and that name matches `name <x>` in the `vpn ipsec N`
+config stanza, so config and log can be correlated.
+
+Volume: **735,842 bytes / 4,429 lines in 3.1 s** on the probed device. Event
+text is highly repetitive — 4,219 events for one tunnel collapsed to **7
+distinct templates** once volatile tokens (SA indices, message IDs, retransmit
+counters, byte counts) were normalised away. Anything consuming this must dedup
+on a normalised template or the diagnostic lines drown in
+`sending packet: ... (464 bytes)` repeats.
+
+**Firmware bug to allow for:** when `ikesa-name` is nil the device emits the
+literal Go format-string error `%!s(<nil>)` as the name:
+
+```
+ikesa-name: %!s(<nil>), msg: vici initiate CHILD_SA 'azure'
+```
+
+So scope matching cannot rely on the `ikesa-name` field alone — the tunnel name
+often appears only in the message body.
+
+Checked for secrets across the full 735 KB: no `psk`, `secret`, `password`,
+`private-key`, `$crypt$`, or base64-shaped values. This log is safe to display.
+
+### `show site-to-site-vpn statistics <site name | all>` — the SA-state source
+
+This is the swanctl-shaped view, and the **only** way to read SA state here.
+Note the mandatory subcommand: bare `show site-to-site-vpn` is rejected, and
+`show site-to-site-vpn statistics` with no argument answers `Specify arguments`.
+
+**It is a snapshot refreshed roughly every 5 minutes, not a live read.** Treat
+it exactly as `service show cloud-json-config` is treated elsewhere in this
+project: a periodically regenerated view that can contradict reality. The
+difference matters here because `service show debug-logs vpn` *is* live, so the
+two sources can disagree by up to five minutes — a tunnel that just came up
+still reads as absent, and one that just dropped still reads as installed. When
+they disagree, the log is authoritative.
+
+Observed on a device whose only tunnel had never established: both
+`statistics all` and `statistics azure` returned **nothing at all** between the
+echoed command and the prompt — no header, no "no SAs" message.
+
+```
+show site-to-site-vpn statistics all
+NSE-Vivek(config)#
+```
+
+So empty output means no established SA. Distinguish that from *unavailable*:
+an empty body is a real answer ("no SA"), whereas a command that failed is not,
+and conflating them turns "cannot tell" into a confident "tunnel is down".
+
+**UNCONFIRMED: the populated format.** No capture yet of this command against
+an established tunnel, so the field layout and whether it carries byte counters
+is not known.
+
+### Other IPsec SA commands — CONFIRMED ABSENT
+
+Nothing else exposes Child-SA state, IKE SA state, or SA byte counters. All
+rejected with `%Error processing cli command`:
+
+```
+show ipsec              show crypto ipsec sa     service show ipsec
+show ipsec sa           show site-to-site-vpn    service show ipsec sa
+show ipsec status         (bare - see above)     service show swanctl
+show ipsec tunnel       show site-to-site        service show strongswan
+show ipsec statistics   show s2s                 service show charon
+                        show tunnel              service show vpn
+                        show tunnels             service show xfrm
+```
+
+strongSwan itself **is** running — `/usr/libexec/ipsec/charon` appears in
+`service show top` — so `swanctl` exists on the filesystem. It is unreachable:
+this CLI has no shell and no escape to one. Any tooling that assumes
+`swanctl --list-sas` / `--list-conns` / `--counters` cannot work here.
+
+### Trap: `show vpn` silently ignores trailing words
+
+`show vpn`, `show vpn ipsec`, `show vpn ipsec sa` and `show vpn statistics` all
+return **the same 174-byte remote-access client session table** —
+`USERNAME / IP ADDRESS / START TIME / END TIME / SESSION TIME / RX BYTES /
+TX BYTES / TERMINATE`. Nothing is rejected and nothing about IPsec is reported.
+
+A probe that only checks "did this error?" will wrongly conclude
+`show vpn ipsec sa` is supported. Compare the *body*, not just the exit shape.
+
+### Trap: `service show ip <anything>` reads an iperf file
+
+`service show ip xfrm state` and `service show ip -s link` both return
+`cat: can't open '/run/iperfd.txt': No such file or directory`. `service show
+ip` is an unrelated iperf-daemon reader, not `ip(8)`.
+
+### The `vpn ipsec N` config stanza
+
+Nested inside `site-to-site-vpn`, and the tunnel name is on a **child** line,
+not the block header — so the name cannot be recovered from the header regex
+alone. Capture: `internal/nse/testdata/show_config_ipsec.txt`.
+
+```
+site-to-site-vpn
+ vpn ipsec 1
+   name azure
+   ike-version ikev2
+   role initiator
+   dead-peer-detection interval 30
+   remote-address <ip>
+   remote-id <ip>
+   local-id <ip>
+   force-encap
+   remote-subnets 10.1.0.0/16
+   local-subnets translation <cidr>        # repeatable
+   remote-psk <secret>                     # redacted by secretLine
+   local-psk <secret>                      # redacted by secretLine
+   ike phase 1
+      encryption aes256
+      integrity sha256
+      dh-group 14
+      key-lifetime 2
+      exit
+   ike phase 2
+      encryption aes256
+      integrity sha256
+      pfs dh-group 14
+      key-lifetime 1
+      exit
+   exit
+!
+```
+
+This stanza is the **only** way to enumerate configured tunnels on this
+platform.
+
+### Geo-IP and site-to-site IPsec
+
+`show config` states whether geo-ip filtering is enabled, so the playbook's
+geo-ip node is answerable from config rather than guesswork. On a device that
+has never configured it, **there are no geo-ip lines in `show config` at all** —
+not a `mode none` line, nothing. `ParseGeoIP` defaults both directions to
+`none`, the same absence-is-the-default convention as `overload` and per-VLAN
+`port-scan`.
+
+Why it matters for a tunnel: NSE uses **policy-based** IPsec, so there is no
+virtual tunnel interface. After xfrm decrypts an ESP packet the inner packet's
+ingress interface is still the physical WAN, so unless the `geoip_firewall`
+forward chain exempts IPsec-decrypted traffic, the inner RFC1918 source address
+fails the country-IP check and is dropped. RFC1918 addresses have no country, so
+an active inbound filter rejects them by default. Documented workaround: add the
+tunnel's remote subnets to the Geo-IP inbound allowlist.
+
+That makes the precondition computable from `show config` alone — inbound mode
+is not `none`, AND at least one of the tunnel's remote subnets is outside the
+allowlist. See `GeoIPCouldDropTunnel` in `internal/nse/geoipvpn.go`.
+
+**The precondition is not the outcome.** Proving a drop actually happened needs
+the nft counters (`nft list table ... geoip`) and the xfrm policy, and both need
+a shell this CLI does not provide. A positive result means "possible, worth
+checking", never "this is happening".

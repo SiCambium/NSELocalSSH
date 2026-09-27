@@ -21,6 +21,7 @@ sh scripts/dev.sh                # same, plus live reload of web/static (see bel
 sh scripts/package-macos.sh      # local .app into dist/ (copies ./.env into the bundle)
 sh scripts/build-portable.sh     # cross-compile nse-status for all platforms into build/
 sh scripts/build-release.sh v0.3 # portable + macOS app
+sh scripts/stats.sh              # release downloads + traffic (needs gh)
 ```
 
 There is no linter config and no frontend build step — `web/static/*` is served straight from `embed.FS`, so a JS/CSS edit just needs a rebuild of the Go binary (or a reload in `go run` mode after restart).
@@ -30,6 +31,10 @@ There is no linter config and no frontend build step — `web/static/*` is serve
 Device credentials come from `.env` (`NSE_HOST`, `NSE_USER`, `NSE_PASSWORD`, `NSE_PORT`); `cp .env.example .env` to start. `LoadConfig` merges several candidate paths (exe dir, cwd, `~/.config/nse-status/`, `~/Library/Application Support/NSE Status/`) and env vars win over files; `WritableSettingsPath()` picks where the Settings UI writes back — inside a `.app` bundle that is Application Support, otherwise `./.env`. `prefs.json`, `profiles.json`, and `known_hosts.json` all live next to the writable `.env`.
 
 Tags matching `v*` trigger `.github/workflows/release.yml`, which builds the portable binaries plus native desktop apps for macOS/Windows/Linux and uploads them to the release.
+
+**The checksums job sums build artifacts, never the published release.** It used to `gh release download --pattern '*'`, which quietly added one download to every asset of every release — 117 of the project's first 205 recorded downloads were that job and list-walking bots, not people. Hashing after upload is also weaker: a corrupted upload would get a checksum matching its own corruption and pass `sha256sum -c`. Summing the artifacts means a bad upload fails verification, which is the point. The `upload-artifact` steps therefore run on tag builds too — do not re-add the `if: !startsWith(github.ref, 'refs/tags/')` guard, or `checksums` finds nothing to sum. The job's `count -lt 12` check is what turns "an artifact went missing" into a failed release rather than a short `SHA256SUMS` that silently omits a file.
+
+`scripts/stats.sh` reports downloads as **raw** and **signal**: signal subtracts each release's floor, the count even `linux_armv6` and `freebsd_amd64` reach, which is machinery walking the asset list rather than anyone choosing a file. Raw totals are close to meaningless at this scale — v0.5.1's 42 downloads are 3 real ones — and the counter is neither live nor decaying, so day-over-day deltas on raw mean nothing.
 
 ## Architecture
 
@@ -51,6 +56,22 @@ Tags matching `v*` trigger `.github/workflows/release.yml`, which builds the por
 The result is cached for `configTTL` and dropped by every `RunSequence` (i.e. every write). A device that rejects the JSON command is remembered on the `Client` so the dead round-trip is paid at most twice, not per read.
 
 **The four NAT rule contexts.** `interface eth N` holds four numbered (`{1-64}`) rule sub-contexts: `port-forward-rule`, `source-nat-rule`, `nat-one-one` and `nat-one-many`. All four are in `blockOpeners`; `natrules.go` models all four. **Their leaf spellings are irregular and differ between siblings** — `lan-IP <addr>` under port-forward-rule and nat-one-one, but `lan-IP address <subnet>` under source-nat-rule. Quote what the device prints; never reconstruct it from the keyword. Two device-stated rules are easy to get wrong: an absent `overload` leaf means *enabled* (only `disable` is ever printed), and `rule-name` accepts **letters, digits and underscores only** — a hyphen is rejected, so the generic no-whitespace guard used for other free-text leaves is not enough. `nat-one-many` takes `nat-one-one`'s argument forms plus `port`/`lan-port`, and drops `any` from its protocol set. `description` is modelled nowhere: its argument form was never probed, and this CLI has already proved a leaf's shape cannot be inferred from its name.
+
+### VPN diagnosis (`internal/vpndiag` + `vpndiag_source.go`)
+
+`internal/vpndiag` interprets the playbook JSON in `internal/vpndiag/playbooks/` — load, validate, assemble evidence, walk the tree. It has **no dependency on the device packages and never reads a credential from the environment**, so the logic is testable with no device and no egress; `Client.APIKey` is passed in. The playbooks are byte-identical copies of `jev-vpn-debug-onbox/playbooks/` and `TestPlaybooksMatchUpstream` fails if they drift — that tree is shared with an upstream Python implementation, so **device-specific changes belong in the EvidenceSource, never in the JSON**.
+
+`internal/nse/vpndiag_source.go` is the only environment-specific piece. It maps the playbook's swanctl-named logical sources onto what this CLI can actually produce: `swanctl_list_sas`/`swanctl_counters` → `show site-to-site-vpn statistics <name>`, `swanctl_list_conns` → the `vpn ipsec N` stanza, `s2s_vpn_log` → `service show debug-logs vpn`.
+
+**`SourceResult.Available` is not a nicety.** Three declared sources do not exist here. If they returned blank text, a missing SA table would read as a confident "no Child SA installed" and send the walk down the wrong branch — so the assembled state says "not available on this platform — this is not evidence of absence". The converse matters equally: this device prints *nothing* when a tunnel has no SA, so empty output is a real finding and is rendered as an explicit no-SA line, never as unavailable.
+
+**`SourceResult.PreScoped`** suppresses re-scoping for a source the device already narrowed by argument; applying the playbook's swanctl-shaped block regex on top reports a misleading "no block found".
+
+**Staleness is stated in the evidence.** The SA view is a ~5 minute snapshot while the log is live, so the two can disagree by minutes; every source carries a note saying which it is and that the log wins. Same trap as cloud-json-config.
+
+**`Answer.Noul` is a `*float64`.** An unanswered node takes the same branch as a confident 0.0 but must *also* set `escalate`; a value type takes the branch while silently claiming certainty. **`candidate.fix` is polymorphic** — an array in the s2s tree, a string in the WireGuard one — hence `FlexStrings`.
+
+Egress is opt-in: `Prefs.VPNDiagnose` defaults false and no key means no request. With neither, the endpoint still returns the evidence. `show config` is an evidence source carrying cleartext PSKs, so everything routes through `SanitizeCLIOutput` and `TestEvidenceNoSecretsReachTheAssembledState` pins it — **that test must never be weakened.**
 
 **A failed automatic undo is surfaced, not just recorded.** `recordFailedUndo` fed a slice nothing read for the life of the feature. `GET /api/config/failed-undos` now reports it and the config page shows a banner until dismissed (`POST` clears). Keep it that way: the expiry loop has no request to answer, so this is the only channel a background rollback failure has.
 

@@ -9,6 +9,11 @@ import (
 type Prefs struct {
 	LiveConntrack bool `json:"live_conntrack"`
 	IPLookup      bool `json:"ip_lookup"`
+
+	// VPNDiagnose gates the only outbound request this app makes that carries
+	// device output rather than just an address. Off by default, like IPLookup:
+	// the zero value must be "no egress".
+	VPNDiagnose bool `json:"vpn_diagnose"`
 }
 
 func PrefsPath(settingsPath string) string {

@@ -162,6 +162,22 @@
       </label>
       <p class="warn">Warning: the live table runs <span class="mono">show conntrack</span>. If there are too many connections this can overload the NSE CPU and make this app slow. Leave it off unless you need the table.</p>
 
+      <h2>VPN diagnosis</h2>
+      <p class="muted">The VPN tab can gather a tunnel's IKE log and SA state and assemble them into one diagnostic bundle. That part is entirely local. Optionally it can also send that bundle to OpenRouter, which returns a probability for each step of a troubleshooting playbook and names a likely cause.</p>
+      <label class="check-row">
+        <input type="checkbox" id="set-vpn-diagnose">
+        Ask OpenRouter for a likely cause
+      </label>
+      <p class="warn">This is the only feature that sends device output off the box &mdash; up to about 15,000 characters of tunnel config and IKE log per diagnosis. Configuration secrets are stripped first, but addresses, subnets and peer identities are not. Leave it off if that is not acceptable on your network; the local evidence still works without it.</p>
+      <label>OpenRouter API key
+        <input id="set-api-key" type="password" placeholder="sk-or-… &mdash; leave blank to keep the current key" autocomplete="off" spellcheck="false">
+      </label>
+      <p class="settings-actions">
+        <button type="button" id="api-key-save">Save key</button>
+        <button type="button" id="api-key-clear">Remove key</button>
+        <span id="api-key-note" class="muted"></span>
+      </p>
+      <p class="muted">Stored in the same file as your device credentials, mode <span class="mono">0600</span>, and never sent anywhere except OpenRouter. It is never displayed again after saving &mdash; only whether one is set. Billing is per diagnosis and small: a real call measured 2,371 input tokens at about US$0.0001.</p>
       <h2>About</h2>
       <dl class="about">
         <dt>Version</dt><dd><span class="mono" id="about-version">—</span></dd>

@@ -30,6 +30,7 @@ let dhcpPoolFilter = null;
 // because the page re-renders on every poll, which would otherwise wipe
 // the filter out from under whoever is typing.
 let deviceSearch = "";
+let s2sSearch = "";
 // Which firewall rule's details are open, by name. Held here because the
 // page re-polls, and an expanded rule should survive the refresh.
 let firewallRuleOpen = null;
@@ -246,6 +247,29 @@ function setConnDot(state) {
 // there is. config-common.js reports through this.
 window.NSEHeader = { setConnDot };
 
+// Tabs whose first load is slow enough that a blank panel looks broken. Each
+// issues several serialised `show` commands over the one SSH session, so the
+// wait is real and the user deserves to know what is being waited on.
+const SLOW_TAB_NOTE = {
+  tunnels: "Reading VPN configuration, sessions and interfaces…",
+  conntrack: "Reading the connection table…",
+  devices: "Reading connected devices…",
+  traffic: "Reading traffic counters…",
+  events: "Reading the event log…",
+  config: "Reading the running configuration…",
+};
+
+// showPanelLoading fills an EMPTY panel with a note. Deliberately only when
+// empty: on a refresh the panel already holds usable data, and replacing it
+// with a spinner would be a step backwards — and on the VPN tab it would throw
+// away a diagnosis the user is reading.
+function showPanelLoading(tab) {
+  const el = document.getElementById(`panel-${tab}`);
+  if (!el || el.innerHTML.trim() !== "") return;
+  const note = SLOW_TAB_NOTE[tab] || "Loading…";
+  el.innerHTML = `<p class="muted loading-note">${esc(note)}</p>`;
+}
+
 async function load(tab, force = false, quiet = false) {
   const state = document.getElementById("poll-state");
   const err = document.getElementById("error");
@@ -255,7 +279,10 @@ async function load(tab, force = false, quiet = false) {
   }
   if (loading) return;
   loading = true;
-  if (!quiet) state.textContent = "Loading…";
+  if (!quiet) {
+    state.textContent = "Loading…";
+    showPanelLoading(tab);
+  }
   err.hidden = true;
   try {
     const res = await fetch(`/api/${tab}`);
@@ -301,7 +328,24 @@ function render(tab, data) {
     // a filter set a minute ago still holds.
     applyDeviceFilter();
   }
-  if (tab === "tunnels") el.innerHTML = renderTunnels(data);
+  if (tab === "tunnels") {
+    // The site-to-site section must survive a poll. Replacing the whole panel
+    // wiped both the tunnel table and any diagnosis showing in it — a
+    // diagnosis takes several seconds, so a poll landing mid-request destroyed
+    // the result the user was waiting for. So the polled content gets its own
+    // child and the site-to-site host is a sibling that is built once.
+    let live = el.querySelector("#tunnels-live");
+    if (!live) {
+      // Site-to-site goes first: it is the part of this tab an operator opens it
+      // for. Starlink and client VPN are status, not troubleshooting.
+      el.innerHTML = '<h2>Site-to-site IPsec</h2>' +
+        '<div id="s2s-tunnels"><p class="muted">Loading tunnels…</p></div>' +
+        '<div id="tunnels-live"></div>';
+      live = el.querySelector("#tunnels-live");
+    }
+    live.innerHTML = renderTunnels(data);
+    loadS2STunnels(false);
+  }
   if (tab === "tailscale") el.innerHTML = renderTailscale(data);
   if (tab === "firewallcounters") el.innerHTML = renderFirewallCounters(data);
   if (tab === "traffic") el.innerHTML = renderTraffic(data);
@@ -1053,11 +1097,23 @@ function renderTunnels(d) {
       ${stat("WAN", sl.wan_name || sl.interface || "—")}
       ${stat("Dish mode", sl.dish_mode)}
       ${stat("Dish IP", sl.dish_ip)}
-      ${stat("Dish ping", ping.ok ? `ok · ${ping.rtt || ping.loss_pct}` : ping.loss_pct || "fail")}
+      ${stat(
+        "Dish ping",
+        d.starlink_ping_skipped
+          ? "not checked"
+          : ping.ok
+          ? `ok · ${ping.rtt || ping.loss_pct}`
+          : ping.loss_pct || "fail"
+      )}
       ${stat("WAN1 link", wanIface.status)}
       ${stat("WAN address", o.ip)}
       ${stat("WAN gateway", o.router)}
     </div>
+    ${
+      d.starlink_ping_skipped
+        ? '<p class="muted">Starlink is not configured, so the dish is not pinged.</p>'
+        : ""
+    }
     <h2>Client VPN (L2TP / IPsec / WireGuard)</h2>
     <div class="grid">
       ${stat("Server", vpn.enabled ? "enabled" : "disabled")}
@@ -1067,7 +1123,350 @@ function renderTunnels(d) {
     </div>
     ${vpnBlocks}
     <p class="muted">Active session tables come from <span class="mono">show vpn-sessions …</span>. Empty JSON means the service is up but no clients are connected, or the NSE returned no session payload.</p>
+
   `;
+}
+
+// Site-to-site tunnels load separately from the rest of the VPN tab. Listing
+// them costs a `show config` plus an SA snapshot, so it is not folded into the
+// dashboard poll — it runs once when the tab is opened.
+let s2sLoaded = false;
+let s2sLoading = false;
+
+// resetS2S discards the tunnel list and any diagnosis shown. Called on a device
+// switch: both describe one specific device, and a diagnosis left on screen
+// after switching would be actively misleading.
+function resetS2S() {
+  s2sLoaded = false;
+  s2sLoading = false;
+  document.querySelectorAll("tr.s2s-diag").forEach((el) => el.remove());
+  const host = document.getElementById("s2s-tunnels");
+  if (host) host.innerHTML = '<p class="muted">Loading tunnels…</p>';
+}
+
+async function loadS2STunnels(force) {
+  const host = document.getElementById("s2s-tunnels");
+  if (!host) return;
+  // Listing costs a `show config` plus an SA snapshot, both over the shared SSH
+  // lock, so this must not run per poll. It loads once per tab visit, or when
+  // something explicitly invalidates it.
+  if (s2sLoading || (s2sLoaded && !force)) return;
+  s2sLoading = true;
+  s2sLoaded = true;
+  try {
+    const res = await fetch("/api/vpn/tunnels");
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || res.statusText);
+    renderS2STunnels(d);
+  } catch (e) {
+    host.innerHTML = `<p class="apply-error">${esc(e.message)}</p>`;
+    s2sLoaded = false; // let a later visit retry
+  } finally {
+    s2sLoading = false;
+  }
+}
+
+// tunnelStatus reduces the two SA states to one word an operator can scan,
+// without discarding the raw states — those are what a network engineer
+// actually wants once the word has told them where to look.
+function tunnelStatus(sa) {
+  if (!sa) return { word: "Down", tone: "bad", detail: "no security association" };
+  if (sa.ike_state !== "ESTABLISHED") {
+    return {
+      word: sa.ike_state === "CONNECTING" ? "Connecting" : "Down",
+      tone: "bad",
+      detail: `IKE ${String(sa.ike_state || "unknown").toLowerCase()}`,
+    };
+  }
+  if (sa.child_state && sa.child_state !== "INSTALLED") {
+    return {
+      word: "Partly up",
+      tone: "warn",
+      detail: `IKE established, child ${sa.child_state.toLowerCase()}`,
+    };
+  }
+  return { word: "Up", tone: "good", detail: "IKE established, child installed" };
+}
+
+function saCell(sa) {
+  const st = tunnelStatus(sa);
+  return `<span class="s2s-state s2s-${st.tone}">${esc(st.word)}</span>
+    <span class="s2s-sub">${esc(st.detail)}</span>`;
+}
+
+function trafficCell(sa) {
+  if (!sa) return '<span class="s2s-sub">—</span>';
+  const inB = Number(sa.in_bytes || 0);
+  const outB = Number(sa.out_bytes || 0);
+  // One direction only means the SA is up but return traffic is not arriving.
+  const oneWay = (inB > 0) !== (outB > 0);
+  return `<span class="s2s-num">${esc(bytes(inB))} in</span>
+    <span class="s2s-num">${esc(bytes(outB))} out</span>
+    ${oneWay ? '<span class="s2s-sub s2s-warn-text">one-way</span>' : ""}`;
+}
+
+// tunnelTrouble scores a tunnel so the ones needing attention sort first. With
+// forty tunnels the page is only long if a reader has to scan healthy rows to
+// find the broken one, so the ordering is the real-estate fix, not the length.
+function tunnelTrouble(r) {
+  const sa = r.sa;
+  if (!sa) return 3; // configured but no SA at all — the loudest case
+  if (sa.ike_state !== "ESTABLISHED") return 3;
+  if (sa.child_state && sa.child_state !== "INSTALLED") return 2;
+  if ((Number(sa.in_bytes || 0) > 0) !== (Number(sa.out_bytes || 0) > 0)) return 2;
+  if (r.geoip && r.geoip.possible) return 1;
+  return 0;
+}
+
+function renderS2STunnels(d) {
+  const host = document.getElementById("s2s-tunnels");
+  const rows = (d.tunnels || []).slice();
+  if (!rows.length) {
+    host.innerHTML = '<p class="muted">No site-to-site tunnels are configured.</p>';
+    return;
+  }
+  // Trouble first, then by name so the order is stable between refreshes.
+  rows.sort((a, b) => tunnelTrouble(b) - tunnelTrouble(a) || a.name.localeCompare(b.name));
+
+  const advisory = d.advisory_enabled === true;
+  const gate = advisory
+    ? ""
+    : `<p class="muted">Diagnosis will gather and show the evidence locally. ${
+        d.api_key_set
+          ? "Turn on <strong>Ask OpenRouter for a likely cause</strong> in Settings"
+          : "Add an OpenRouter API key in Settings"
+      } to also get a suggested cause.</p>`;
+
+  // A search box only earns its space once the list is long enough to scan.
+  const filter =
+    rows.length > 8
+      ? `<div class="panel-search">
+           <input id="s2s-search" type="search" value="${esc(s2sSearch)}" placeholder="Filter by name, peer or subnet…" autocomplete="off" aria-label="Filter site-to-site tunnels">
+           <span class="muted" id="s2s-count"></span>
+         </div>`
+      : "";
+
+  host.innerHTML = `
+    ${tunnelSummary(rows)}
+    ${filter}
+    <div class="table-wrap"><table class="s2s-table">
+      <thead><tr><th>Tunnel</th><th>Status</th><th>Traffic</th><th>Peer</th><th>Remote subnets</th><th></th></tr></thead>
+      ${rows.map(tunnelBody).join("")}
+    </table></div>
+    <p class="muted">SA state is a snapshot: ${esc(d.sa_snapshot_note || "")}. Configuration comes from <span class="mono">show config</span>.</p>
+    ${gate}
+  `;
+  host.querySelectorAll("[data-diagnose]").forEach((b) => {
+    b.addEventListener("click", () => diagnoseTunnel(b.dataset.diagnose, b));
+  });
+  const search = document.getElementById("s2s-search");
+  if (search) {
+    search.addEventListener("input", (ev) => {
+      s2sSearch = ev.target.value;
+      applyS2SFilter();
+    });
+  }
+  applyS2SFilter();
+}
+
+function tunnelSummary(rows) {
+  const bad = rows.filter((r) => tunnelTrouble(r) >= 2).length;
+  const watch = rows.filter((r) => tunnelTrouble(r) === 1).length;
+  const parts = [`${rows.length} tunnel${rows.length === 1 ? "" : "s"}`];
+  if (bad) parts.push(`${bad} needing attention`);
+  if (watch) parts.push(`${watch} worth checking`);
+  if (!bad && !watch) parts.push("all established");
+  return `<p class="${bad ? "warn" : "muted"}">${esc(parts.join(" · "))}</p>`;
+}
+
+// Each tunnel gets its own tbody so a diagnosis can be inserted beside the row
+// it belongs to. Several tbodies in one table is valid, and it keeps the
+// grouping explicit rather than relying on row arithmetic.
+function tunnelBody(r) {
+  const sa = r.sa;
+  const searchable = [r.name, sa && sa.remote_addr, sa && (sa.remote_subnets || []).join(" ")]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const geo =
+    r.geoip && r.geoip.possible
+      ? `<tr class="s2s-geo"><td colspan="6" class="warn">Geo-IP may be dropping this tunnel's decrypted traffic: ${esc(r.geoip.reason)}</td></tr>`
+      : "";
+  const subnets = (sa && sa.remote_subnets) || [];
+  return `<tbody data-tunnel="${esc(r.name)}" data-search="${esc(searchable)}">
+    <tr>
+      <td><span class="s2s-name">${esc(r.name)}</span></td>
+      <td>${saCell(sa)}</td>
+      <td>${trafficCell(sa)}</td>
+      <td>${
+        sa
+          ? `<span class="s2s-num">${esc(sa.remote_addr || "—")}</span>${
+              sa.nat_t ? '<span class="s2s-sub">NAT-T</span>' : ""
+            }`
+          : '<span class="s2s-sub">—</span>'
+      }</td>
+      <td>${
+        subnets.length
+          ? subnets.map((n) => `<span class="s2s-num">${esc(n)}</span>`).join("")
+          : '<span class="s2s-sub">—</span>'
+      }</td>
+      <td><button type="button" class="row-edit" data-diagnose="${esc(r.name)}">Diagnose</button></td>
+    </tr>
+    ${geo}
+  </tbody>`;
+}
+
+function applyS2SFilter() {
+  const host = document.getElementById("s2s-tunnels");
+  if (!host) return;
+  const bodies = [...host.querySelectorAll("tbody[data-tunnel]")];
+  if (!bodies.length) return;
+  const q = s2sSearch.trim().toLowerCase();
+  let shown = 0;
+  bodies.forEach((b) => {
+    const match = !q || (b.dataset.search || "").includes(q);
+    b.hidden = !match;
+    if (match) shown++;
+  });
+  const countEl = document.getElementById("s2s-count");
+  if (countEl) {
+    countEl.textContent = q
+      ? `${shown} of ${bodies.length} match "${s2sSearch.trim()}"`
+      : "";
+  }
+}
+
+async function diagnoseTunnel(name, btn) {
+  // The result lands in the tunnel's own tbody, directly beneath its row. With
+  // forty tunnels a single panel-bottom container means clicking row 37 puts
+  // the answer somewhere off screen, and the reader has to hunt for it.
+  const body = btn.closest("tbody[data-tunnel]");
+  if (!body) return;
+  // One diagnosis at a time: two open results invite reading the wrong one.
+  document.querySelectorAll("tr.s2s-diag").forEach((el) => el.remove());
+
+  const row = document.createElement("tr");
+  row.className = "s2s-diag";
+  row.innerHTML = `<td colspan="6"><p class="muted loading-note">Gathering evidence for ${esc(
+    name
+  )}. This reads the full IKE log, so it takes a few seconds.</p></td>`;
+  body.appendChild(row);
+
+  const was = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Diagnosing…";
+  try {
+    const res = await fetch("/api/vpn/diagnose", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tunnel: name }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || res.statusText);
+    row.innerHTML = `<td colspan="6">${renderDiagnosis(d)}</td>`;
+  } catch (e) {
+    row.innerHTML = `<td colspan="6"><p class="apply-error">${esc(e.message)}</p></td>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = was;
+  }
+}
+
+function listOrEmpty(items) {
+  const v = items || [];
+  if (!v.length) return "";
+  return `<ul>${v.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`;
+}
+
+function renderDiagnosis(d) {
+  const r = d.result;
+  const cost = d.cost_usd
+    ? `<p class="muted">Cost ${esc(d.cost_usd.toFixed(6))} USD</p>`
+    : "";
+
+  if (!r) {
+    return `<h3>No analysis</h3><p class="muted">${esc(d.reason || "No cause was suggested.")}</p>${cost}
+      ${evidenceBlock(d)}`;
+  }
+
+  const c = r.candidate || {};
+  const fix = cleanList(c.fix);
+
+  // "How to confirm" and "Rule out first" are not shown. They are written for
+  // the upstream RCA agent, and instruct the reader to query internal log
+  // source names and to jump between rule ids — neither of which means
+  // anything to someone operating this device.
+
+  return `
+    <h3>${esc(c.title || "No cause identified")}</h3>
+    ${confidenceLine(r.confidence)}
+    ${c.mechanism ? `<p>${esc(sentenceCase(trimPlaybookText(c.mechanism)))}</p>` : ""}
+    ${!r.candidate_id && r.note ? `<p>${esc(trimPlaybookText(r.note))}</p>` : ""}
+    ${fix.length ? `<h4>Suggested fix</h4>${listOrEmpty(fix)}` : ""}
+    ${
+      (r.path || []).length
+        ? `<h4>What was checked</h4><ul>${r.path
+            .map((s) => `<li>${esc(s.instructions)} &mdash; <strong>${esc(s.branch)}</strong></li>`)
+            .join("")}</ul>`
+        : ""
+    }
+    ${cost}
+    ${evidenceBlock(d)}
+  `;
+}
+
+// Confidence is reported as a band rather than a probability: the numbers are
+// calibrated but invite false precision, and the decision this informs is
+// whether to change a firewall. Low is called out in warning colour because it
+// is the case where acting on the suggestion without checking is a mistake.
+function confidenceLine(band) {
+  const text = {
+    high: "Confidence: high.",
+    medium: "Confidence: medium &mdash; worth corroborating before acting.",
+    low: "Confidence: low &mdash; treat this as a lead and verify it independently before changing anything.",
+  };
+  if (!band || !text[band]) return "";
+  return `<p class="${band === "low" ? "warn" : "muted"}">${text[band]}</p>`;
+}
+
+// The evidence stays available but collapsed: it is what the analysis rests on,
+// so an operator must be able to check it, without it dominating the panel.
+function evidenceBlock(d) {
+  const ev = d.evidence || "";
+  if (!ev) return "";
+  return `<details>
+    <summary>Evidence this is based on (${esc(String(ev.length))} characters)</summary>
+    <pre class="debug-out">${esc(ev)}</pre>
+  </details>`;
+}
+
+function cleanList(items) {
+  return (items || []).map(trimPlaybookText).filter(Boolean);
+}
+
+// trimPlaybookText prepares authored playbook prose for display. It drops the
+// trailing "---" the markdown compiler leaves on the last entry of a block, and
+// strips cross-references to the playbook's own rule ids ("see D3 fix block",
+// "jump to D2-D5", "candidate D3 in foo.md"). Those ids are internal and mean
+// nothing to an operator, and the surrounding sentence reads fine without them.
+function trimPlaybookText(s) {
+  return String(s)
+    .replace(/\s*-{3,}\s*$/, "")
+    // Internal playbook filenames first: they contain a dot, which would stop
+    // the rule-id patterns below from reaching the id that follows them.
+    .replace(/`[^`]*\.md`/g, "")
+    .replace(/\s*\((?:see|cf\.?|per)\b[^)]*\bD\d+[^)]*\)/gi, "")
+    .replace(/[;,]?\s*(?:see|refer to)\b[^.;]*\bD\d+\b[^.;]*/gi, "")
+    .replace(/[;,]?\s*jump to\s+D\d+(?:\s*[-\u2013]\s*D\d+)?[^.;]*/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([.;,])/g, "$1")
+    .trim();
+}
+
+// Several mechanism strings begin lower-case because they continue a heading in
+// the source document; on their own they read as a fragment.
+function sentenceCase(s) {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
 function renderTailscale(d) {
@@ -1271,6 +1670,8 @@ async function loadSettings() {
     if (!connById(selectedSlot)) selectedSlot = data.active_id || 0;
     fillConnForm(connById(selectedSlot));
     applyLiveConntrack(data.live_conntrack);
+    applyVPNDiagnose(data.vpn_diagnose);
+    applyAPIKeyState(data.api_key_set);
     const af = document.getElementById("about-settings-file");
     if (af) af.textContent = data.file || "—";
     document.getElementById("settings-file").textContent = data.file ? `Saved in ${data.file}` : "";
@@ -1411,6 +1812,9 @@ async function openConnection(id) {
     if (!res.ok) throw new Error(data.detail || res.statusText);
     // Every cached panel belongs to the site we just left.
     Object.keys(cache).forEach((k) => delete cache[k]);
+    // Including the site-to-site tunnel list and any diagnosis on screen, which
+    // are loaded outside the poll and would otherwise describe the old device.
+    resetS2S();
     selectedSlot = data.active_id || id;
     await loadSettings();
     if (data.connected) {
@@ -1650,6 +2054,11 @@ async function persistLiveConntrack(on) {
 document.getElementById("set-live-conntrack").addEventListener("change", (ev) => {
   persistLiveConntrack(ev.target.checked);
 });
+document.getElementById("set-vpn-diagnose").addEventListener("change", (ev) => {
+  persistVPNDiagnose(ev.target.checked);
+});
+document.getElementById("api-key-save").addEventListener("click", saveAPIKey);
+document.getElementById("api-key-clear").addEventListener("click", clearAPIKey);
 document.getElementById("panel-conntrack").addEventListener("change", (ev) => {
   const liveBox = ev.target.closest("#conntrack-live");
   if (liveBox) {
@@ -1659,6 +2068,86 @@ document.getElementById("panel-conntrack").addEventListener("change", (ev) => {
   const lookupBox = ev.target.closest("#conntrack-iplookup");
   if (lookupBox) persistIPLookup(lookupBox.checked);
 });
+
+// applyVPNDiagnose mirrors the pref into the Settings checkbox. Kept separate
+// from the save so the initial /api/settings read and a user toggle share it.
+function applyVPNDiagnose(on) {
+  const box = document.getElementById("set-vpn-diagnose");
+  if (box) box.checked = !!on;
+}
+
+function applyAPIKeyState(isSet) {
+  const note = document.getElementById("api-key-note");
+  if (note) note.textContent = isSet ? "A key is saved." : "No key saved — diagnosis will show evidence only.";
+  const field = document.getElementById("set-api-key");
+  if (field) field.value = "";
+}
+
+async function persistVPNDiagnose(on) {
+  applyVPNDiagnose(on);
+  const err = document.getElementById("error");
+  err.hidden = true;
+  try {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "prefs", vpn_diagnose: on }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    delete cache.tunnels;
+  } catch (e) {
+    err.hidden = false;
+    err.textContent = e.message;
+    applyVPNDiagnose(!on);
+  }
+}
+
+// The key is write-only: an empty field means "keep the current key", so the
+// save is a no-op rather than a silent deletion. Removing one is its own button.
+async function saveAPIKey() {
+  const field = document.getElementById("set-api-key");
+  const note = document.getElementById("api-key-note");
+  const value = field.value.trim();
+  if (!value) {
+    note.textContent = "Nothing entered — the existing key was left alone.";
+    return;
+  }
+  note.textContent = "Saving…";
+  try {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "api_key", api_key: value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    applyAPIKeyState(data.api_key_set);
+    note.textContent = "Key saved.";
+    delete cache.tunnels;
+  } catch (e) {
+    note.textContent = e.message;
+  }
+}
+
+async function clearAPIKey() {
+  const note = document.getElementById("api-key-note");
+  note.textContent = "Removing…";
+  try {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "api_key_clear" }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    applyAPIKeyState(data.api_key_set);
+    note.textContent = "Key removed.";
+    delete cache.tunnels;
+  } catch (e) {
+    note.textContent = e.message;
+  }
+}
 
 async function persistIPLookup(on) {
   const err = document.getElementById("error");
@@ -1683,7 +2172,12 @@ tabs.forEach((b) => b.addEventListener("click", () => activate(b.dataset.tab)));
 document.querySelectorAll(".menu button").forEach((b) => {
   b.addEventListener("click", () => showPage(b.dataset.page));
 });
-document.getElementById("refresh").addEventListener("click", () => load(current, true));
+document.getElementById("refresh").addEventListener("click", () => {
+  // Refresh is the operator asking for current data, so the site-to-site
+  // section refetches as well — a poll deliberately does not.
+  if (current === "tunnels") loadS2STunnels(true);
+  load(current, true);
+});
 
 // The "Open in Browser" button only makes sense inside the native app
 // window, where window.nseOpenInBrowser is bound by cmd/nse-app. It's
@@ -1763,6 +2257,8 @@ fetch("/api/settings")
   .then((d) => {
     renderProfileSlots(d);
     applyLiveConntrack(d.live_conntrack);
+    applyVPNDiagnose(d.vpn_diagnose);
+    applyAPIKeyState(d.api_key_set);
     if (!d.password_set && !location.hash) showPage("connections");
   })
   .catch(() => {});

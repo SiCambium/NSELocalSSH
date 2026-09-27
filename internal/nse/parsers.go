@@ -332,6 +332,12 @@ func ParseDHCPPool(raw string, poolID int) (DHCPPool, bool) {
 	if body == "" || strings.Contains(body, "Specify arguments") || strings.Contains(body, "Error") {
 		return DHCPPool{}, false
 	}
+	// "Pool Status: NA" is how the device answers for a pool that does not
+	// exist. Treating it as found put six phantom pools on the DHCP tab of a
+	// device that had two — the caller cannot tell them apart, so this must.
+	if strings.Contains(body, "Pool Status: NA") {
+		return DHCPPool{}, false
+	}
 	info := DHCPPool{Pool: poolID, Leases: []Lease{}}
 	inLeases := false
 	for _, line := range strings.Split(body, "\n") {
