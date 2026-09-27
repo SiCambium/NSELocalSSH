@@ -599,3 +599,18 @@ tr[hidden] { display: none; }
   box-sizing: border-box;
 }
 .conn-row-tag.is-down { color: var(--down); }
+
+/* First-load placeholder for a panel that takes a moment to fill. The pulse is
+   the only motion in the app: a static line of text is indistinguishable from
+   a panel that has simply failed to render. */
+.loading-note {
+  padding: 24px 0;
+  animation: loading-pulse 1.4s ease-in-out infinite;
+}
+@keyframes loading-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-note { animation: none; }
+}

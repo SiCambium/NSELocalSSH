@@ -246,6 +246,29 @@ function setConnDot(state) {
 // there is. config-common.js reports through this.
 window.NSEHeader = { setConnDot };
 
+// Tabs whose first load is slow enough that a blank panel looks broken. Each
+// issues several serialised `show` commands over the one SSH session, so the
+// wait is real and the user deserves to know what is being waited on.
+const SLOW_TAB_NOTE = {
+  tunnels: "Reading VPN configuration, sessions and interfaces…",
+  conntrack: "Reading the connection table…",
+  devices: "Reading connected devices…",
+  traffic: "Reading traffic counters…",
+  events: "Reading the event log…",
+  config: "Reading the running configuration…",
+};
+
+// showPanelLoading fills an EMPTY panel with a note. Deliberately only when
+// empty: on a refresh the panel already holds usable data, and replacing it
+// with a spinner would be a step backwards — and on the VPN tab it would throw
+// away a diagnosis the user is reading.
+function showPanelLoading(tab) {
+  const el = document.getElementById(`panel-${tab}`);
+  if (!el || el.innerHTML.trim() !== "") return;
+  const note = SLOW_TAB_NOTE[tab] || "Loading…";
+  el.innerHTML = `<p class="muted loading-note">${esc(note)}</p>`;
+}
+
 async function load(tab, force = false, quiet = false) {
   const state = document.getElementById("poll-state");
   const err = document.getElementById("error");
@@ -255,7 +278,10 @@ async function load(tab, force = false, quiet = false) {
   }
   if (loading) return;
   loading = true;
-  if (!quiet) state.textContent = "Loading…";
+  if (!quiet) {
+    state.textContent = "Loading…";
+    showPanelLoading(tab);
+  }
   err.hidden = true;
   try {
     const res = await fetch(`/api/${tab}`);
@@ -1064,11 +1090,23 @@ function renderTunnels(d) {
       ${stat("WAN", sl.wan_name || sl.interface || "—")}
       ${stat("Dish mode", sl.dish_mode)}
       ${stat("Dish IP", sl.dish_ip)}
-      ${stat("Dish ping", ping.ok ? `ok · ${ping.rtt || ping.loss_pct}` : ping.loss_pct || "fail")}
+      ${stat(
+        "Dish ping",
+        d.starlink_ping_skipped
+          ? "not checked"
+          : ping.ok
+          ? `ok · ${ping.rtt || ping.loss_pct}`
+          : ping.loss_pct || "fail"
+      )}
       ${stat("WAN1 link", wanIface.status)}
       ${stat("WAN address", o.ip)}
       ${stat("WAN gateway", o.router)}
     </div>
+    ${
+      d.starlink_ping_skipped
+        ? '<p class="muted">Starlink is not configured, so the dish is not pinged.</p>'
+        : ""
+    }
     <h2>Client VPN (L2TP / IPsec / WireGuard)</h2>
     <div class="grid">
       ${stat("Server", vpn.enabled ? "enabled" : "disabled")}
