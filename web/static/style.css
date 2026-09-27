@@ -614,3 +614,14 @@ tr[hidden] { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .loading-note { animation: none; }
 }
+
+/* An inline diagnosis sits inside the tunnel table, beneath the row it belongs
+   to. Indented and tinted so it reads as attached to that row rather than as
+   another tunnel. */
+tr.s2s-diag > td {
+  background: var(--bg-2);
+  border-left: 3px solid var(--accent);
+  padding: 4px 16px 16px;
+}
+tr.s2s-diag h3 { margin-top: 12px; }
+tbody[data-tunnel] + tbody[data-tunnel] > tr:first-child > td { border-top: 1px solid var(--line); }

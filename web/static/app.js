@@ -30,6 +30,7 @@ let dhcpPoolFilter = null;
 // because the page re-renders on every poll, which would otherwise wipe
 // the filter out from under whoever is typing.
 let deviceSearch = "";
+let s2sSearch = "";
 // Which firewall rule's details are open, by name. Held here because the
 // page re-polls, and an expanded rule should survive the refresh.
 let firewallRuleOpen = null;
@@ -336,8 +337,7 @@ function render(tab, data) {
     let live = el.querySelector("#tunnels-live");
     if (!live) {
       el.innerHTML = '<div id="tunnels-live"></div>' +
-        '<h2>Site-to-site IPsec</h2><div id="s2s-tunnels"><p class="muted">Loading tunnels…</p></div>' +
-        '<div id="s2s-diagnosis"></div>';
+        '<h2>Site-to-site IPsec</h2><div id="s2s-tunnels"><p class="muted">Loading tunnels…</p></div>';
       live = el.querySelector("#tunnels-live");
     }
     live.innerHTML = renderTunnels(data);
@@ -1132,8 +1132,7 @@ let s2sLoading = false;
 function resetS2S() {
   s2sLoaded = false;
   s2sLoading = false;
-  const diag = document.getElementById("s2s-diagnosis");
-  if (diag) diag.innerHTML = "";
+  document.querySelectorAll("tr.s2s-diag").forEach((el) => el.remove());
   const host = document.getElementById("s2s-tunnels");
   if (host) host.innerHTML = '<p class="muted">Loading tunnels…</p>';
 }
@@ -1184,13 +1183,29 @@ function trafficCell(sa) {
   return oneWay ? `<span class="warn-text">${txt} — one-way</span>` : txt;
 }
 
+// tunnelTrouble scores a tunnel so the ones needing attention sort first. With
+// forty tunnels the page is only long if a reader has to scan healthy rows to
+// find the broken one, so the ordering is the real-estate fix, not the length.
+function tunnelTrouble(r) {
+  const sa = r.sa;
+  if (!sa) return 3; // configured but no SA at all — the loudest case
+  if (sa.ike_state !== "ESTABLISHED") return 3;
+  if (sa.child_state && sa.child_state !== "INSTALLED") return 2;
+  if ((Number(sa.in_bytes || 0) > 0) !== (Number(sa.out_bytes || 0) > 0)) return 2;
+  if (r.geoip && r.geoip.possible) return 1;
+  return 0;
+}
+
 function renderS2STunnels(d) {
   const host = document.getElementById("s2s-tunnels");
-  const rows = d.tunnels || [];
+  const rows = (d.tunnels || []).slice();
   if (!rows.length) {
     host.innerHTML = '<p class="muted">No site-to-site tunnels are configured.</p>';
     return;
   }
+  // Trouble first, then by name so the order is stable between refreshes.
+  rows.sort((a, b) => tunnelTrouble(b) - tunnelTrouble(a) || a.name.localeCompare(b.name));
+
   const advisory = d.advisory_enabled === true;
   const gate = advisory
     ? ""
@@ -1200,25 +1215,21 @@ function renderS2STunnels(d) {
           : "Add an OpenRouter API key in Settings"
       } to also get a suggested cause.</p>`;
 
+  // A search box only earns its space once the list is long enough to scan.
+  const filter =
+    rows.length > 8
+      ? `<div class="panel-search">
+           <input id="s2s-search" type="search" value="${esc(s2sSearch)}" placeholder="Filter by name, peer or subnet…" autocomplete="off" aria-label="Filter site-to-site tunnels">
+           <span class="muted" id="s2s-count"></span>
+         </div>`
+      : "";
+
   host.innerHTML = `
+    ${tunnelSummary(rows)}
+    ${filter}
     <div class="table-wrap"><table>
       <thead><tr><th>Tunnel</th><th>IKE / Child SA</th><th>Traffic</th><th>Peer</th><th>Remote subnets</th><th></th></tr></thead>
-      <tbody>${rows
-        .map(
-          (r) => `<tr>
-        <td class="mono">${esc(r.name)}</td>
-        <td>${saCell(r.sa)}</td>
-        <td class="mono">${trafficCell(r.sa)}</td>
-        <td class="mono">${r.sa ? esc(r.sa.remote_addr || "—") + (r.sa.nat_t ? " (NAT-T)" : "") : "—"}</td>
-        <td class="mono">${esc((r.sa && (r.sa.remote_subnets || []).join(", ")) || "—")}</td>
-        <td><button type="button" class="row-edit" data-diagnose="${esc(r.name)}">Diagnose</button></td>
-      </tr>${
-        r.geoip && r.geoip.possible
-          ? `<tr><td colspan="6" class="warn">Geo-IP may be dropping this tunnel's decrypted traffic: ${esc(r.geoip.reason)}</td></tr>`
-          : ""
-      }`
-        )
-        .join("")}</tbody>
+      ${rows.map(tunnelBody).join("")}
     </table></div>
     <p class="muted">SA state is a snapshot: ${esc(d.sa_snapshot_note || "")}. Configuration comes from <span class="mono">show config</span>.</p>
     ${gate}
@@ -1226,14 +1237,91 @@ function renderS2STunnels(d) {
   host.querySelectorAll("[data-diagnose]").forEach((b) => {
     b.addEventListener("click", () => diagnoseTunnel(b.dataset.diagnose, b));
   });
+  const search = document.getElementById("s2s-search");
+  if (search) {
+    search.addEventListener("input", (ev) => {
+      s2sSearch = ev.target.value;
+      applyS2SFilter();
+    });
+  }
+  applyS2SFilter();
+}
+
+function tunnelSummary(rows) {
+  const bad = rows.filter((r) => tunnelTrouble(r) >= 2).length;
+  const watch = rows.filter((r) => tunnelTrouble(r) === 1).length;
+  const parts = [`${rows.length} tunnel${rows.length === 1 ? "" : "s"}`];
+  if (bad) parts.push(`${bad} needing attention`);
+  if (watch) parts.push(`${watch} worth checking`);
+  if (!bad && !watch) parts.push("all established");
+  return `<p class="${bad ? "warn" : "muted"}">${esc(parts.join(" · "))}</p>`;
+}
+
+// Each tunnel gets its own tbody so a diagnosis can be inserted beside the row
+// it belongs to. Several tbodies in one table is valid, and it keeps the
+// grouping explicit rather than relying on row arithmetic.
+function tunnelBody(r) {
+  const sa = r.sa;
+  const searchable = [r.name, sa && sa.remote_addr, sa && (sa.remote_subnets || []).join(" ")]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  const geo =
+    r.geoip && r.geoip.possible
+      ? `<tr class="s2s-geo"><td colspan="6" class="warn">Geo-IP may be dropping this tunnel's decrypted traffic: ${esc(r.geoip.reason)}</td></tr>`
+      : "";
+  return `<tbody data-tunnel="${esc(r.name)}" data-search="${esc(searchable)}">
+    <tr>
+      <td class="mono">${esc(r.name)}</td>
+      <td>${saCell(sa)}</td>
+      <td class="mono">${trafficCell(sa)}</td>
+      <td class="mono">${sa ? esc(sa.remote_addr || "—") + (sa.nat_t ? " (NAT-T)" : "") : "—"}</td>
+      <td class="mono">${esc((sa && (sa.remote_subnets || []).join(", ")) || "—")}</td>
+      <td><button type="button" class="row-edit" data-diagnose="${esc(r.name)}">Diagnose</button></td>
+    </tr>
+    ${geo}
+  </tbody>`;
+}
+
+function applyS2SFilter() {
+  const host = document.getElementById("s2s-tunnels");
+  if (!host) return;
+  const bodies = [...host.querySelectorAll("tbody[data-tunnel]")];
+  if (!bodies.length) return;
+  const q = s2sSearch.trim().toLowerCase();
+  let shown = 0;
+  bodies.forEach((b) => {
+    const match = !q || (b.dataset.search || "").includes(q);
+    b.hidden = !match;
+    if (match) shown++;
+  });
+  const countEl = document.getElementById("s2s-count");
+  if (countEl) {
+    countEl.textContent = q
+      ? `${shown} of ${bodies.length} match "${s2sSearch.trim()}"`
+      : "";
+  }
 }
 
 async function diagnoseTunnel(name, btn) {
-  const out = document.getElementById("s2s-diagnosis");
+  // The result lands in the tunnel's own tbody, directly beneath its row. With
+  // forty tunnels a single panel-bottom container means clicking row 37 puts
+  // the answer somewhere off screen, and the reader has to hunt for it.
+  const body = btn.closest("tbody[data-tunnel]");
+  if (!body) return;
+  // One diagnosis at a time: two open results invite reading the wrong one.
+  document.querySelectorAll("tr.s2s-diag").forEach((el) => el.remove());
+
+  const row = document.createElement("tr");
+  row.className = "s2s-diag";
+  row.innerHTML = `<td colspan="6"><p class="muted loading-note">Gathering evidence for ${esc(
+    name
+  )}. This reads the full IKE log, so it takes a few seconds.</p></td>`;
+  body.appendChild(row);
+
   const was = btn.textContent;
   btn.disabled = true;
   btn.textContent = "Diagnosing…";
-  out.innerHTML = `<p class="muted">Gathering evidence for ${esc(name)}. This reads the full IKE log, so it takes a few seconds.</p>`;
   try {
     const res = await fetch("/api/vpn/diagnose", {
       method: "POST",
@@ -1242,9 +1330,9 @@ async function diagnoseTunnel(name, btn) {
     });
     const d = await res.json();
     if (!res.ok) throw new Error(d.detail || res.statusText);
-    out.innerHTML = renderDiagnosis(d);
+    row.innerHTML = `<td colspan="6">${renderDiagnosis(d)}</td>`;
   } catch (e) {
-    out.innerHTML = `<p class="apply-error">${esc(e.message)}</p>`;
+    row.innerHTML = `<td colspan="6"><p class="apply-error">${esc(e.message)}</p></td>`;
   } finally {
     btn.disabled = false;
     btn.textContent = was;
@@ -1264,8 +1352,7 @@ function renderDiagnosis(d) {
     : "";
 
   if (!r) {
-    return `<h2>Diagnosis &mdash; ${esc(d.tunnel)}</h2>
-      <h3>No analysis</h3><p class="muted">${esc(d.reason || "No cause was suggested.")}</p>${cost}
+    return `<h3>No analysis</h3><p class="muted">${esc(d.reason || "No cause was suggested.")}</p>${cost}
       ${evidenceBlock(d)}`;
   }
 
@@ -1278,8 +1365,6 @@ function renderDiagnosis(d) {
   // anything to someone operating this device.
 
   return `
-    <h2>Diagnosis &mdash; ${esc(d.tunnel)}</h2>
-    <p class="muted">Advisory. A reading of the evidence below, not a verified verdict.</p>
     <h3>${esc(c.title || "No cause identified")}</h3>
     ${confidenceLine(r.confidence)}
     ${c.mechanism ? `<p>${esc(sentenceCase(trimPlaybookText(c.mechanism)))}</p>` : ""}
