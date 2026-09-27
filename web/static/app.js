@@ -1221,54 +1221,35 @@ function listOrEmpty(items) {
 
 function renderDiagnosis(d) {
   const r = d.result;
-  let verdict = "";
-  if (r) {
-    const c = r.candidate || {};
-    // Framed as advisory throughout: this is a strong prior from a probabilistic
-    // read of the evidence, not a verified finding.
-    verdict = `
-      <h3>Likely cause: ${esc(c.title || r.candidate_id || "none identified")}</h3>
-      ${r.escalate ? `<p class="warn">Low confidence &mdash; verify this independently. ${esc(r.reason || "")}</p>` : ""}
-      ${c.mechanism ? `<p>${esc(c.mechanism)}</p>` : ""}
-      ${c.fix && c.fix.length ? `<h4>Suggested fix</h4>${listOrEmpty(c.fix)}` : ""}
-      ${c.confirm && c.confirm.length ? `<h4>How to confirm</h4>${listOrEmpty(c.confirm)}` : ""}
-      ${c.rule_out && c.rule_out.length ? `<h4>Rule out first</h4>${listOrEmpty(c.rule_out)}` : ""}
-      ${r.defer_to ? `<p class="muted">A deeper playbook exists for this cause (<span class="mono">${esc(r.defer_to)}</span>) but is not bundled with this build.</p>` : ""}
-      ${!r.candidate_id && r.note ? `<p>${esc(r.note)}</p>` : ""}
-      <h4>How it got there</h4>
-      <div class="table-wrap"><table>
-        <thead><tr><th>Question</th><th>Probability</th><th>Answer</th></tr></thead>
-        <tbody>${(r.path || [])
-          .map(
-            (s) => `<tr>
-              <td>${esc(s.instructions)}</td>
-              <td class="mono">${s.noul === null || s.noul === undefined ? "unanswered" : esc(String(s.noul))}</td>
-              <td>${esc(s.branch)}</td>
-            </tr>`
-          )
-          .join("")}</tbody>
-      </table></div>
-      <p class="muted">Closest call on this path: ${
-        r.min_confidence === null || r.min_confidence === undefined
-          ? "n/a"
-          : esc(String(r.min_confidence))
-      } away from a coin flip. Every step of the playbook was evaluated, not just these.</p>
-      ${d.cost_usd ? `<p class="muted">Cost ${esc(d.cost_usd.toFixed(6))} USD for ${esc(String(d.input_tokens || 0))} input tokens.</p>` : ""}
-    `;
-  } else {
-    verdict = `<h3>Evidence only</h3><p class="muted">${esc(d.reason || "No cause was suggested.")}</p>`;
-  }
+  // Cost is shown whenever a call was actually billed, including the cases
+  // below where it bought no usable answer.
+  const cost = d.cost_usd
+    ? `<p class="muted">Cost ${esc(d.cost_usd.toFixed(6))} USD</p>`
+    : "";
 
-  return `
-    <h2>Diagnosis &mdash; ${esc(d.tunnel)}</h2>
-    <p class="muted">Advisory. A strong prior from the evidence below, not a verified verdict &mdash; read the evidence before acting on it.</p>
-    ${verdict}
-    <details>
-      <summary>Evidence sent for analysis (${esc(String((d.evidence || "").length))} characters)</summary>
-      <pre class="debug-out">${esc(d.evidence || "")}</pre>
-      ${listOrEmpty(d.notes)}
-    </details>
-  `;
+  if (!r) {
+    return `<h3>No suggested fix</h3><p class="muted">${esc(d.reason || "No cause was suggested.")}</p>${cost}`;
+  }
+  const c = r.candidate || {};
+  const fix = (c.fix || []).map(trimFixText).filter(Boolean);
+  if (!fix.length) {
+    // A candidate can land with no fix text of its own (the geo-ip one keeps
+    // its remedy inside the mechanism prose), and an escalate leaf has no
+    // candidate at all. Say which rather than rendering an empty list.
+    return `<h3>No suggested fix</h3><p class="muted">${esc(
+      r.candidate_id
+        ? "The playbook identified a cause but carries no fix text for it."
+        : r.note || "No cause was identified."
+    )}</p>${cost}`;
+  }
+  return `<h3>Suggested fix</h3>${listOrEmpty(fix)}${cost}`;
+}
+
+// trimFixText drops the trailing "---" that the playbook's markdown compiler
+// leaves on the last entry of a fix block. It is a horizontal rule from the
+// source document, not part of the instruction.
+function trimFixText(s) {
+  return String(s).replace(/\s*-{3,}\s*$/, "").trim();
 }
 
 function renderTailscale(d) {
