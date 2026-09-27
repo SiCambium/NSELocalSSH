@@ -1,0 +1,33 @@
+show config
+site-to-site-vpn
+ vpn ipsec 1
+   name azure
+   ike-version ikev2
+   role initiator
+   dead-peer-detection interval 30
+   remote-address 198.51.100.9
+   remote-id 198.51.100.9
+   local-id 203.0.113.4
+   force-encap
+   remote-subnets 10.1.0.0/16
+   local-subnets translation 10.1.3.0/24
+   local-subnets translation 192.168.200.0/24
+   local-subnets translation 192.168.10.1/24
+   local-subnets translation 192.168.20.1/24
+   remote-psk $crypt$1$REDACTED_FOR_TESTDATA
+   local-psk $crypt$1$REDACTED_FOR_TESTDATA
+   ike phase 1
+      encryption aes256
+      integrity sha256
+      dh-group 14
+      key-lifetime 2
+      exit
+   ike phase 2
+      encryption aes256
+      integrity sha256
+      pfs dh-group 14
+      key-lifetime 1
+      exit
+   exit
+!
+NSE-00009C(config)# 

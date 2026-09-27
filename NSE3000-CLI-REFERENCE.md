@@ -492,3 +492,118 @@ port", so that mapping rests on the naming convention — a read-back
 proves the syntax, not which direction the translation runs.
 
 Removal: `no nat-one-many <n>` inside the owning `interface eth N`.
+
+## Site-to-site IPsec: what is and is not observable
+
+Probed live on an NSE4000 (2026-09-27) carrying one configured S2S tunnel that
+was actively failing to establish. `cmd/nse-probe` ran 26 read-only candidates;
+the negative results below matter as much as the positive one, because they are
+what justifies a diagnosis tool escalating rather than guessing.
+
+### `service show debug-logs vpn` — CONFIRMED, and the only real source
+
+Returns strongSwan/charon events as **JSONL**, one object per line:
+
+```json
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: giving up after 5 retransmits ","time": "2026-09-27T08:36:09+05:30"}
+```
+
+Fields are exactly `level`, `msg`, `time`. The tunnel is named inside `msg` as
+`ikesa-name: <name>`, and that name matches `name <x>` in the `vpn ipsec N`
+config stanza, so config and log can be correlated.
+
+Volume: **735,842 bytes / 4,429 lines in 3.1 s** on the probed device. Event
+text is highly repetitive — 4,219 events for one tunnel collapsed to **7
+distinct templates** once volatile tokens (SA indices, message IDs, retransmit
+counters, byte counts) were normalised away. Anything consuming this must dedup
+on a normalised template or the diagnostic lines drown in
+`sending packet: ... (464 bytes)` repeats.
+
+**Firmware bug to allow for:** when `ikesa-name` is nil the device emits the
+literal Go format-string error `%!s(<nil>)` as the name:
+
+```
+ikesa-name: %!s(<nil>), msg: vici initiate CHILD_SA 'azure'
+```
+
+So scope matching cannot rely on the `ikesa-name` field alone — the tunnel name
+often appears only in the message body.
+
+Checked for secrets across the full 735 KB: no `psk`, `secret`, `password`,
+`private-key`, `$crypt$`, or base64-shaped values. This log is safe to display.
+
+### IPsec SA state and counters — CONFIRMED ABSENT
+
+There is no way to read Child-SA state, IKE SA state, or SA byte counters from
+this CLI. All rejected with `%Error processing cli command`:
+
+```
+show ipsec              show crypto ipsec sa     service show ipsec
+show ipsec sa           show site-to-site-vpn    service show ipsec sa
+show ipsec status       show site-to-site        service show swanctl
+show ipsec tunnel       show s2s                 service show strongswan
+show ipsec statistics   show tunnel              service show charon
+                        show tunnels             service show vpn
+                                                 service show xfrm
+```
+
+strongSwan itself **is** running — `/usr/libexec/ipsec/charon` appears in
+`service show top` — so `swanctl` exists on the filesystem. It is unreachable:
+this CLI has no shell and no escape to one. Any tooling that assumes
+`swanctl --list-sas` / `--list-conns` / `--counters` cannot work here.
+
+### Trap: `show vpn` silently ignores trailing words
+
+`show vpn`, `show vpn ipsec`, `show vpn ipsec sa` and `show vpn statistics` all
+return **the same 174-byte remote-access client session table** —
+`USERNAME / IP ADDRESS / START TIME / END TIME / SESSION TIME / RX BYTES /
+TX BYTES / TERMINATE`. Nothing is rejected and nothing about IPsec is reported.
+
+A probe that only checks "did this error?" will wrongly conclude
+`show vpn ipsec sa` is supported. Compare the *body*, not just the exit shape.
+
+### Trap: `service show ip <anything>` reads an iperf file
+
+`service show ip xfrm state` and `service show ip -s link` both return
+`cat: can't open '/run/iperfd.txt': No such file or directory`. `service show
+ip` is an unrelated iperf-daemon reader, not `ip(8)`.
+
+### The `vpn ipsec N` config stanza
+
+Nested inside `site-to-site-vpn`, and the tunnel name is on a **child** line,
+not the block header — so the name cannot be recovered from the header regex
+alone. Capture: `internal/nse/testdata/show_config_ipsec.txt`.
+
+```
+site-to-site-vpn
+ vpn ipsec 1
+   name azure
+   ike-version ikev2
+   role initiator
+   dead-peer-detection interval 30
+   remote-address <ip>
+   remote-id <ip>
+   local-id <ip>
+   force-encap
+   remote-subnets 10.1.0.0/16
+   local-subnets translation <cidr>        # repeatable
+   remote-psk <secret>                     # redacted by secretLine
+   local-psk <secret>                      # redacted by secretLine
+   ike phase 1
+      encryption aes256
+      integrity sha256
+      dh-group 14
+      key-lifetime 2
+      exit
+   ike phase 2
+      encryption aes256
+      integrity sha256
+      pfs dh-group 14
+      key-lifetime 1
+      exit
+   exit
+!
+```
+
+This stanza is the **only** way to enumerate configured tunnels on this
+platform.
