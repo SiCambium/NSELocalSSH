@@ -377,7 +377,10 @@ td.mono, .mono { font-family: var(--mono); }
 }
 
 .conn-current-kicker {
-  font-size: 10px;
+  /* 11px, not 10: at 10 this was the smallest text in the app, and it is
+     uppercase and letter-spaced, which costs legibility again. Contrast was
+     never the problem here (5.6:1) — size was. */
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted);
@@ -719,3 +722,47 @@ table.s2s-table .row-edit:disabled {
 }
 /* The action column should not stretch. */
 table.s2s-table td:last-child { width: 1%; white-space: nowrap; }
+
+/* Below about 1100px the header's three-column grid cannot fit: its
+   minmax(340px,...) + menu + minmax(280px,...) plus gaps and padding set a hard
+   floor near 1090px, so the whole PAGE scrolled sideways and content was cut
+   off — at 1024, a common laptop width, not just on phones. Tables scrolling
+   inside .table-wrap is by design; the page itself scrolling is not.
+   Stack the header instead. */
+@media (max-width: 1100px) {
+  .top {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+  /* Grid children default to min-width:auto, which refuses to shrink below
+     their content — the reason the floor existed at all. */
+  .top > *,
+  .brand {
+    min-width: 0;
+  }
+  .menu,
+  .top-meta {
+    justify-self: stretch;
+  }
+  .menu {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .top-meta {
+    justify-content: flex-start;
+  }
+  /* A long connection name must truncate rather than widen the header. */
+  #conn-current-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 40vw;
+  }
+  main {
+    padding: 16px 16px 32px;
+  }
+  .tabs {
+    padding: 0 8px;
+  }
+}
