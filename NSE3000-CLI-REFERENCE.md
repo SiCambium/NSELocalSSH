@@ -638,3 +638,29 @@ site-to-site-vpn
 
 This stanza is the **only** way to enumerate configured tunnels on this
 platform.
+
+### Geo-IP and site-to-site IPsec
+
+`show config` states whether geo-ip filtering is enabled, so the playbook's
+geo-ip node is answerable from config rather than guesswork. On a device that
+has never configured it, **there are no geo-ip lines in `show config` at all** —
+not a `mode none` line, nothing. `ParseGeoIP` defaults both directions to
+`none`, the same absence-is-the-default convention as `overload` and per-VLAN
+`port-scan`.
+
+Why it matters for a tunnel: NSE uses **policy-based** IPsec, so there is no
+virtual tunnel interface. After xfrm decrypts an ESP packet the inner packet's
+ingress interface is still the physical WAN, so unless the `geoip_firewall`
+forward chain exempts IPsec-decrypted traffic, the inner RFC1918 source address
+fails the country-IP check and is dropped. RFC1918 addresses have no country, so
+an active inbound filter rejects them by default. Documented workaround: add the
+tunnel's remote subnets to the Geo-IP inbound allowlist.
+
+That makes the precondition computable from `show config` alone — inbound mode
+is not `none`, AND at least one of the tunnel's remote subnets is outside the
+allowlist. See `GeoIPCouldDropTunnel` in `internal/nse/geoipvpn.go`.
+
+**The precondition is not the outcome.** Proving a drop actually happened needs
+the nft counters (`nft list table ... geoip`) and the xfrm policy, and both need
+a shell this CLI does not provide. A positive result means "possible, worth
+checking", never "this is happening".
