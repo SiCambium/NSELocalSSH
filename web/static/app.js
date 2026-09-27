@@ -336,8 +336,11 @@ function render(tab, data) {
     // child and the site-to-site host is a sibling that is built once.
     let live = el.querySelector("#tunnels-live");
     if (!live) {
-      el.innerHTML = '<div id="tunnels-live"></div>' +
-        '<h2>Site-to-site IPsec</h2><div id="s2s-tunnels"><p class="muted">Loading tunnels…</p></div>';
+      // Site-to-site goes first: it is the part of this tab an operator opens it
+      // for. Starlink and client VPN are status, not troubleshooting.
+      el.innerHTML = '<h2>Site-to-site IPsec</h2>' +
+        '<div id="s2s-tunnels"><p class="muted">Loading tunnels…</p></div>' +
+        '<div id="tunnels-live"></div>';
       live = el.querySelector("#tunnels-live");
     }
     live.innerHTML = renderTunnels(data);
@@ -1159,28 +1162,43 @@ async function loadS2STunnels(force) {
   }
 }
 
+// tunnelStatus reduces the two SA states to one word an operator can scan,
+// without discarding the raw states — those are what a network engineer
+// actually wants once the word has told them where to look.
+function tunnelStatus(sa) {
+  if (!sa) return { word: "Down", tone: "bad", detail: "no security association" };
+  if (sa.ike_state !== "ESTABLISHED") {
+    return {
+      word: sa.ike_state === "CONNECTING" ? "Connecting" : "Down",
+      tone: "bad",
+      detail: `IKE ${String(sa.ike_state || "unknown").toLowerCase()}`,
+    };
+  }
+  if (sa.child_state && sa.child_state !== "INSTALLED") {
+    return {
+      word: "Partly up",
+      tone: "warn",
+      detail: `IKE established, child ${sa.child_state.toLowerCase()}`,
+    };
+  }
+  return { word: "Up", tone: "good", detail: "IKE established, child installed" };
+}
+
 function saCell(sa) {
-  if (!sa) return '<span class="muted">no SA</span>';
-  const ike = sa.ike_state === "ESTABLISHED"
-    ? `<span class="badge-on">${esc(sa.ike_state)}</span>`
-    : `<span class="warn-text">${esc(sa.ike_state || "?")}</span>`;
-  const child = sa.child_state
-    ? (sa.child_state === "INSTALLED"
-        ? ` / <span class="badge-on">${esc(sa.child_state)}</span>`
-        : ` / <span class="warn-text">${esc(sa.child_state)}</span>`)
-    : "";
-  return ike + child;
+  const st = tunnelStatus(sa);
+  return `<span class="s2s-state s2s-${st.tone}">${esc(st.word)}</span>
+    <span class="s2s-sub">${esc(st.detail)}</span>`;
 }
 
 function trafficCell(sa) {
-  if (!sa) return "—";
+  if (!sa) return '<span class="s2s-sub">—</span>';
   const inB = Number(sa.in_bytes || 0);
   const outB = Number(sa.out_bytes || 0);
-  // Traffic in one direction only means the SA is up but return traffic is not
-  // arriving — worth calling out rather than leaving as two numbers.
+  // One direction only means the SA is up but return traffic is not arriving.
   const oneWay = (inB > 0) !== (outB > 0);
-  const txt = `${bytes(inB)} in / ${bytes(outB)} out`;
-  return oneWay ? `<span class="warn-text">${txt} — one-way</span>` : txt;
+  return `<span class="s2s-num">${esc(bytes(inB))} in</span>
+    <span class="s2s-num">${esc(bytes(outB))} out</span>
+    ${oneWay ? '<span class="s2s-sub s2s-warn-text">one-way</span>' : ""}`;
 }
 
 // tunnelTrouble scores a tunnel so the ones needing attention sort first. With
@@ -1227,8 +1245,8 @@ function renderS2STunnels(d) {
   host.innerHTML = `
     ${tunnelSummary(rows)}
     ${filter}
-    <div class="table-wrap"><table>
-      <thead><tr><th>Tunnel</th><th>IKE / Child SA</th><th>Traffic</th><th>Peer</th><th>Remote subnets</th><th></th></tr></thead>
+    <div class="table-wrap"><table class="s2s-table">
+      <thead><tr><th>Tunnel</th><th>Status</th><th>Traffic</th><th>Peer</th><th>Remote subnets</th><th></th></tr></thead>
       ${rows.map(tunnelBody).join("")}
     </table></div>
     <p class="muted">SA state is a snapshot: ${esc(d.sa_snapshot_note || "")}. Configuration comes from <span class="mono">show config</span>.</p>
@@ -1270,13 +1288,24 @@ function tunnelBody(r) {
     r.geoip && r.geoip.possible
       ? `<tr class="s2s-geo"><td colspan="6" class="warn">Geo-IP may be dropping this tunnel's decrypted traffic: ${esc(r.geoip.reason)}</td></tr>`
       : "";
+  const subnets = (sa && sa.remote_subnets) || [];
   return `<tbody data-tunnel="${esc(r.name)}" data-search="${esc(searchable)}">
     <tr>
-      <td class="mono">${esc(r.name)}</td>
+      <td><span class="s2s-name">${esc(r.name)}</span></td>
       <td>${saCell(sa)}</td>
-      <td class="mono">${trafficCell(sa)}</td>
-      <td class="mono">${sa ? esc(sa.remote_addr || "—") + (sa.nat_t ? " (NAT-T)" : "") : "—"}</td>
-      <td class="mono">${esc((sa && (sa.remote_subnets || []).join(", ")) || "—")}</td>
+      <td>${trafficCell(sa)}</td>
+      <td>${
+        sa
+          ? `<span class="s2s-num">${esc(sa.remote_addr || "—")}</span>${
+              sa.nat_t ? '<span class="s2s-sub">NAT-T</span>' : ""
+            }`
+          : '<span class="s2s-sub">—</span>'
+      }</td>
+      <td>${
+        subnets.length
+          ? subnets.map((n) => `<span class="s2s-num">${esc(n)}</span>`).join("")
+          : '<span class="s2s-sub">—</span>'
+      }</td>
       <td><button type="button" class="row-edit" data-diagnose="${esc(r.name)}">Diagnose</button></td>
     </tr>
     ${geo}

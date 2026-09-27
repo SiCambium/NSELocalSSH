@@ -625,3 +625,56 @@ tr.s2s-diag > td {
 }
 tr.s2s-diag h3 { margin-top: 12px; }
 tbody[data-tunnel] + tbody[data-tunnel] > tr:first-child > td { border-top: 1px solid var(--line); }
+
+/* The site-to-site tunnel table. Styled on its own rather than by loosening the
+   global table rules: the dashboard's other tables are deliberately dense
+   summaries, whereas this one is read carefully when something is broken.
+   Larger type, room to breathe, and one value per line instead of values
+   comma-joined into a single cramped cell. */
+table.s2s-table { font-size: 14px; }
+table.s2s-table th,
+table.s2s-table td {
+  padding: 11px 14px;
+  vertical-align: top;
+}
+table.s2s-table th { font-size: 11px; }
+table.s2s-table tbody[data-tunnel]:hover > tr > td { background: var(--bg-2); }
+
+/* Tunnel names are identifiers but often long and hyphenated, so they read
+   better in the UI face than in monospace. */
+.s2s-name {
+  font-weight: 600;
+  font-size: 15px;
+  word-break: break-word;
+}
+
+/* Values that benefit from digit alignment — addresses, subnets, byte counts —
+   each on its own line. */
+.s2s-num {
+  display: block;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: nowrap;
+}
+
+/* Secondary detail under a value: the raw SA states, a NAT-T marker, an em dash
+   for an absent value. */
+.s2s-sub {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.s2s-warn-text { color: var(--warn); }
+
+/* Status word. Deliberately the largest thing in the row after the name: it is
+   what a reader scans a long list for. */
+.s2s-state {
+  display: block;
+  font-weight: 600;
+  font-size: 14px;
+}
+.s2s-good { color: var(--up); }
+.s2s-warn { color: var(--warn); }
+.s2s-bad { color: var(--down); }
