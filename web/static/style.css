@@ -678,3 +678,44 @@ table.s2s-table tbody[data-tunnel]:hover > tr > td { background: var(--bg-2); }
 .s2s-good { color: var(--up); }
 .s2s-warn { color: var(--warn); }
 .s2s-bad { color: var(--down); }
+
+/* The Diagnose button. The shared .row-edit style is background: var(--bg-2)
+   with a thin --line border, which is nearly invisible against the page — and
+   var(--bg-2) is also what a hovered row becomes, so the button dissolved into
+   the row exactly when the pointer was over it. This is the primary action on
+   the row, so it gets a filled accent treatment that cannot be mistaken for
+   text. */
+table.s2s-table .row-edit {
+  background: var(--accent);
+  color: #0c1014;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+table.s2s-table .row-edit:hover:not(:disabled) {
+  background: #35bdbd;
+  border-color: #35bdbd;
+}
+table.s2s-table .row-edit:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+table.s2s-table .row-edit:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+/* Disabled while a diagnosis is running. Keeps the shape so the row does not
+   reflow, but stops reading as an invitation. */
+table.s2s-table .row-edit:disabled {
+  background: var(--bg-2);
+  color: var(--muted);
+  border-color: var(--line);
+  box-shadow: none;
+  cursor: default;
+}
+/* The action column should not stretch. */
+table.s2s-table td:last-child { width: 1%; white-space: nowrap; }
