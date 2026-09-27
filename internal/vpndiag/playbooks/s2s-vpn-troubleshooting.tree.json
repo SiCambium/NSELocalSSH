@@ -1,0 +1,430 @@
+{
+  "doc_id": "s2s-vpn-troubleshooting",
+  "title": "S2S VPN troubleshooting — IPsec tunnel diagnostics for Cambium NSE",
+  "doc_type": "playbook",
+  "applies_to": [
+    "NSE3000",
+    "NSE4000"
+  ],
+  "symptom_class": "IPsec site-to-site VPN — tunnel fails to establish, or is up but not passing traffic",
+  "model": "jev-binary-tree",
+  "source_md_sha": "4d4949f2f9a0d5660bb4eb9e2a4b36e0f01e577728f222a6b120a7c6f5b3b665",
+  "root": "n_sa_installed",
+  "evidence": {
+    "scope_noun": "tunnel",
+    "live_commands": {
+      "swanctl_list_sas": "swanctl --list-sas",
+      "swanctl_list_conns": "swanctl --list-conns",
+      "swanctl_counters": "swanctl --counters",
+      "s2s_vpn_log": "service show debug-logs vpn"
+    },
+    "max_state_chars": 15000,
+    "max_log_events": 60,
+    "enumerate": {
+      "file": "swanctl_list_conns",
+      "block_header_regex": "^(?P<name>\\S.*?): IKE",
+      "peer_regex": "^\\s*remote:\\s*(\\S+)",
+      "subnet_regex": "^\\s+(?:local|remote):\\s+(.+)$",
+      "state_from": {
+        "file": "swanctl_list_sas",
+        "block_header_regex": "^(?P<name>\\S.*?): #\\d+, (?P<state>[A-Z_]+),",
+        "state_group": "state"
+      }
+    },
+    "cmd_sources": [
+      {
+        "file": "swanctl_list_sas",
+        "label": "swanctl_list_sas (verbatim)",
+        "scope": "block",
+        "block_header_regex": "^(?P<name>\\S.*?): #\\d+, [A-Z_]+,"
+      },
+      {
+        "file": "swanctl_list_conns",
+        "label": "swanctl_list_conns (verbatim)",
+        "scope": "block",
+        "block_header_regex": "^(?P<name>\\S.*?): IKE"
+      },
+      {
+        "file": "swanctl_counters",
+        "label": "swanctl_counters (verbatim, key rows)",
+        "scope": "grep",
+        "grep_regex": "\\b(ike-|create-child|invalid|info-)"
+      }
+    ],
+    "log_sources": [
+      {
+        "file_glob": "s2s_vpn_log*",
+        "kind": "jsonl",
+        "msg_field": "msg",
+        "time_field": "time",
+        "event_regex": "ikesa-name:\\s*(?P<scope>.*?),\\s*msg:\\s*(?P<event>.*?)\\s*$",
+        "label": "s2s_vpn_log: DISTINCT IKE 'log event' messages for this tunnel, verbatim"
+      }
+    ]
+  },
+  "nodes": {
+    "n_sa_installed": {
+      "type": "noul",
+      "instructions": "Is an IPsec Child SA currently INSTALLED for this tunnel?",
+      "criteria": {
+        "true": "swanctl_list_sas shows a Child SA in INSTALLED state",
+        "false": "no INSTALLED Child SA — the tunnel has not established"
+      },
+      "yes": "n_drop_history",
+      "no": "n_no_ike"
+    },
+    "n_no_ike": {
+      "type": "noul",
+      "instructions": "Is the local NSE sending IKE_SA_INIT with NO response from the peer at all?",
+      "criteria": {
+        "true": "s2s_vpn_log shows repeated 'sending IKE_SA_INIT' / 'retransmit IKE_SA_INIT' / 'giving up after N retransmits' / 'peer not responding' with the SA stuck CONNECTING, and NO CHILD_SA was ever established for this tunnel",
+        "false": "the peer responded with some IKE message (even an error notify)"
+      },
+      "yes": "leaf_D1",
+      "no": "n_auth_failed"
+    },
+    "n_auth_failed": {
+      "type": "noul",
+      "instructions": "Did IKE authentication fail (AUTHENTICATION_FAILED)?",
+      "criteria": {
+        "true": "s2s_vpn_log shows N(AUTH_FAILED) / 'received AUTHENTICATION_FAILED notify' (IKE_SA_INIT succeeded, IKE_AUTH failed)",
+        "false": "no AUTHENTICATION_FAILED in the log"
+      },
+      "yes": "leaf_D2",
+      "no": "n_noprop_p1"
+    },
+    "n_noprop_p1": {
+      "type": "noul",
+      "instructions": "Is there a NO_PROPOSAL_CHOSEN at Phase 1 (on IKE_SA_INIT)?",
+      "criteria": {
+        "true": "s2s_vpn_log: N(NO_PROP) on the IKE_SA_INIT response",
+        "false": "not a Phase-1 NO_PROPOSAL_CHOSEN"
+      },
+      "yes": "leaf_D3",
+      "no": "n_noprop_p2"
+    },
+    "n_noprop_p2": {
+      "type": "noul",
+      "instructions": "Is there a NO_PROPOSAL_CHOSEN at Phase 2 — 'failed to establish CHILD_SA, keeping IKE_SA'?",
+      "criteria": {
+        "true": "s2s_vpn_log: NO_PROPOSAL_CHOSEN with 'failed to establish CHILD_SA, keeping IKE_SA'",
+        "false": "not a Phase-2 NO_PROPOSAL_CHOSEN"
+      },
+      "yes": "leaf_D4",
+      "no": "n_ts_unacc"
+    },
+    "n_ts_unacc": {
+      "type": "noul",
+      "instructions": "Is there a TS_UNACCEPTABLE (traffic-selector mismatch)?",
+      "criteria": {
+        "true": "s2s_vpn_log: 'received TS_UNACCEPTABLE notify, no CHILD_SA built'",
+        "false": "no TS_UNACCEPTABLE in the log"
+      },
+      "yes": "leaf_D5",
+      "no": "leaf_unknown_establish"
+    },
+    "n_drop_history": {
+      "type": "noul",
+      "instructions": "Does the log show a DPD / liveness FAILURE after the tunnel had established — 'sending DPD request' followed by 'giving up after N retransmits', or a DPD timeout — meaning the PEER became UNREACHABLE and the SA dropped (whether or not it later recovered)?",
+      "criteria": {
+        "true": "s2s_vpn_log shows, AFTER a CHILD_SA/IKE_SA had established, a DPD-liveness failure: 'sending DPD request' then 'giving up after N retransmits', or an explicit DPD timeout / 'IKE_SA ... was deleted' due to unresponsiveness — the peer went unreachable and the SA was torn down (it may have re-established afterward)",
+        "false": "no DPD/liveness failure — the tunnel stayed continuously up, OR the only teardown events are PEER-INITIATED graceful 'received DELETE for IKE_SA' / rekeys with immediate re-establishment and NO DPD timeout or retransmit give-up (benign churn, not a connectivity loss)"
+      },
+      "yes": "leaf_D7",
+      "no": "n_traffic_ok"
+    },
+    "n_traffic_ok": {
+      "type": "noul",
+      "instructions": "With the SA INSTALLED and no prior drops, is real end-to-end traffic reaching the destination — LAN-client traffic gets responses AND both SA counters increment symmetrically?",
+      "criteria": {
+        "true": "the destination is reachable end-to-end: real client traffic gets responses and the in/out SA counters both increment symmetrically",
+        "false": "SA counters are zero or one-directional, OR real LAN-client traffic to the destination fails even though the SA counters move"
+      },
+      "yes": "n_large_pkts",
+      "no": "n_geoip"
+    },
+    "n_large_pkts": {
+      "type": "noul",
+      "instructions": "Do small pings work but large packets fail (ping -s 1400 loss, SIP/large transfers fail) — MTU/fragmentation over the tunnel?",
+      "criteria": {
+        "true": "small pings succeed while large pings / SIP / large transfers fail — classic MTU/fragmentation",
+        "false": "packets of any size pass and large TCP transfers complete cleanly"
+      },
+      "yes": "leaf_D9",
+      "no": "leaf_healthy"
+    },
+    "n_geoip": {
+      "type": "noul",
+      "instructions": "Is decrypted inner traffic being dropped by the Geo-IP firewall (inner RFC1918 source failing the country check)?",
+      "criteria": {
+        "true": "the geoip_firewall forward chain drops the decrypted inner RFC1918 source; remote subnets are not in the Geo-IP allowlist",
+        "false": "no Geo-IP drop of decrypted traffic"
+      },
+      "yes": "leaf_D10",
+      "no": "n_pingi"
+    },
+    "n_pingi": {
+      "type": "noul",
+      "instructions": "Is the ONLY failing test an NSE-CLI ping issued WITHOUT 'ping -I <LAN-ip>' (wrong source interface) — while real LAN-client traffic is unaffected/untested?",
+      "criteria": {
+        "true": "the only failure is an NSE-originated ping run without -I (wrong source); real LAN-client traffic through the tunnel is unaffected or untested, and table 220 is empty due to 'no install-routes'",
+        "false": "real LAN-client traffic (not just an NSE-CLI ping) fails to traverse, OR the reproducer already used the correct -I LAN source and still fails"
+      },
+      "yes": "leaf_D8",
+      "no": "leaf_D6"
+    }
+  },
+  "leaves": {
+    "leaf_D1": {
+      "candidate": "D1"
+    },
+    "leaf_D2": {
+      "candidate": "D2"
+    },
+    "leaf_D3": {
+      "candidate": "D3"
+    },
+    "leaf_D4": {
+      "candidate": "D4"
+    },
+    "leaf_D5": {
+      "candidate": "D5"
+    },
+    "leaf_D6": {
+      "candidate": "D6"
+    },
+    "leaf_D7": {
+      "candidate": "D7"
+    },
+    "leaf_D8": {
+      "candidate": "D8"
+    },
+    "leaf_D9": {
+      "candidate": "D9"
+    },
+    "leaf_D10": {
+      "candidate": "D10"
+    },
+    "leaf_unknown_establish": {
+      "escalate": true,
+      "note": "Tunnel not established but no known IKE signature matched — escalate to full agent reasoning."
+    },
+    "leaf_healthy": {
+      "escalate": true,
+      "note": "SA installed, no prior drops, traffic flows cleanly, no MTU issue — no S2S fault signature; issue likely outside the S2S VPN. Escalate."
+    }
+  },
+  "candidates": {
+    "D1": {
+      "id": "D1",
+      "title": "No IKE response from the peer",
+      "mechanism": "the local NSE is sending IKE_SA_INIT to the peer but no\nresponse arrives. Either the peer is unreachable on UDP 500 / 4500, or\nNAT/firewall in between is dropping the packets, or the peer is configured\nwith a different remote address.",
+      "confirm": [
+        "Query `s2s_vpn_log` for repeated `sending IKE_SA_INIT` /\n  `retransmit IKE_SA_INIT` with no peer response in the failure window.",
+        "If a recent packet-capture artifact is in the case, use\n  `filter_pcap_artifact(display_filter='isakmp or udp.port == 4500')`\n  to confirm outbound IKE leaving but no inbound from the peer.\n  Otherwise ask the customer to run\n  `tcpdump -i <wan> 'udp and (port 500 or port 4500)'` live."
+      ],
+      "rule_out": [
+        "Any IKE response from the peer (even an error) means the peer is\n  reachable → not this; jump to D2-D5 by the error code."
+      ],
+      "fix": [
+        "Verify the peer's WAN IP / hostname in the tunnel config is correct.",
+        "Check upstream firewall / carrier filters for UDP 500 / 4500 blockage.",
+        "Confirm NAT traversal is enabled on both peers.",
+        "If the initiator is behind NAT and the tunnel doesn't auto-move to\n  4500, force NAT-T via the local-port / remote-port CLI (see D3 fix\n  block) — NAT-T detection isn't always reliable.\n\n---"
+      ],
+      "partial": false,
+      "evidence_sources": [
+        "s2s_vpn_log",
+        "filter_pcap_artifact",
+        "show_config"
+      ]
+    },
+    "D2": {
+      "id": "D2",
+      "title": "`AUTHENTICATION_FAILED` (PSK or Remote-ID mismatch)",
+      "mechanism": "IKE_SA_INIT succeeded, both peers exchanged proposals, but\nthe IKE_AUTH step failed because the pre-shared key OR the Remote-ID does\nnot match what the peer expects. Three distinct sub-causes, all\nindistinguishable from this log signature alone:\n\n1. **PSK mismatch** — different pre-shared keys on the two peers.\n2. **Remote-ID format mismatch** — string on one side, IP address on\n   the other (e.g., NSE configured with Remote-ID `203.0.113.1` while\n   peer sends ID as the string `\"hq-firewall\"`).\n3. **Remote-ID TYPE mismatch with matching string** — both sides\n   configure the SAME-looking literal (e.g., `\"cambium-aca\"`) but\n   serialize it as different IKEv2 ID types over the wire:\n   `ID_KEY_ID` on one side and `ID_FQDN` on the other. Visually\n   identical configs; same `N(AUTH_FAILED)` log signature; classic\n   two-dead-ends-then-customer-finds-it-themselves shape. Bit a real\n   customer (Zendesk #484317, NSE ↔ MikroTik, June 2026).",
+      "confirm": [
+        "query `s2s_vpn_log` (or whichever\ncollection holds strongSwan output in this build) for the exact log\nsignature:\n```\nlog event: level: 1, ikesa-name: <name>, msg: parsed IKE_AUTH response 1 [ N(AUTH_FAILED) ]\nlog event: level: 1, ikesa-name: <name>, msg: received AUTHENTICATION_FAILED notify error\n```\n\n**Important — log signature is the SAME for all three sub-causes.**\nThe strongSwan log does not surface the IDi/IDr type byte at INFO, so\nyou cannot distinguish PSK mismatch from ID-type mismatch from the\ntechdump alone. Walk through the fixes below in order; if PSK + ID\nformat both check out, suspect the ID TYPE."
+      ],
+      "rule_out": [
+        "IKE_AUTH succeeds (next log line should be `CHILD_SA … established` or\n  a NO_PROPOSAL_CHOSEN at Phase 2 — different problem)."
+      ],
+      "fix": [
+        "**PSK first** — compare PSK character-by-character on both peers.\n   Avoid special characters in the PSK (they cause subtle escaping\n   bugs across vendor implementations).",
+        "**Remote-ID format next** — verify Local-ID on one peer matches\n   Remote-ID on the other. Confirm both peers use the SAME format\n   (both IP, or both string). When the tunnel is between an NSE and a\n   third-party firewall, use the **IP address** format for\n   Local-ID / Remote-ID — better interoperability than strings.",
+        "**Remote-ID TYPE last (the sneaky one)** — if both peers visually\n   configure the SAME string (e.g., `\"cambium-aca\"`) and PSK + format\n   check out, the ID TYPE is probably mismatched on the wire. NSE\n   defaults differ from many third-party firewalls (MikroTik,\n   FortiGate, pfSense) in how a bare string serializes. Force the ID\n   type explicitly on both peers:",
+        "**strongSwan / NSE** syntax — use `@<string>` to force\n     `ID_FQDN`, `keyid:<string>` to force `ID_KEY_ID`, or\n     `userfqdn:<string>` for `ID_RFC822_ADDR`.",
+        "**MikroTik / RouterOS** — set `/ip ipsec identity ...\n     my-id-user=fqdn:<string>` or `my-id-user=key-id:<string>`\n     explicitly; the default is `key-id` for bare strings.",
+        "**FortiGate** — `set localid-type fqdn` (or `keyid`,\n     `address`) under the IKE phase-1 config.",
+        "**pfSense** — \"My identifier\" dropdown: pick \"Distinguished\n     name\" for KEY_ID, \"FQDN\" for FQDN — pfSense's \"User FQDN\"\n     is RFC822, different again.\n\n   Match both peers on the SAME ID type. Once aligned, the\n   `N(AUTH_FAILED)` clears.",
+        "**Certificate-based auth** — if you're using certs instead of PSK,\n   verify the cert chain on both peers, expiry dates, and that the\n   local cert's Subject matches the peer's configured Remote-ID.\n\n---"
+      ],
+      "partial": false,
+      "evidence_sources": [
+        "s2s_vpn_log",
+        "show_config"
+      ]
+    },
+    "D3": {
+      "id": "D3",
+      "title": "`NO_PROPOSAL_CHOSEN` at Phase 1 (IKE crypto mismatch)",
+      "mechanism": "IKE_SA_INIT proposals from one peer don't intersect the\nother peer's accepted set. Cause: encryption / integrity / DH group\nmismatch in the Phase 1 config.",
+      "confirm": [
+        "query `s2s_vpn_log` for the exact log\nsignature:\n```\nlog event: level: 1, ikesa-name: <name>, msg: parsed IKE_SA_INIT response 0 [ N(NO_PROP) ]\nlog event: level: 1, ikesa-name: <name>, msg: received NO_PROPOSAL_CHOSEN notify error\n```"
+      ],
+      "rule_out": [
+        "IKE_SA_INIT succeeds (next log is IKE_AUTH or an `IKE_SA … established`\n  message)."
+      ],
+      "fix": [
+        "Compare Phase 1 encryption, integrity, and DH-group settings on both\n  peers; ALL three must match (or have overlapping proposal sets).",
+        "The NSE-side acceptable proposals are visible in `show_config` under\n  `vpn ipsec <N> ike phase 1`. The peer's configured set is on the peer's\n  side — get it from the customer.",
+        "IKE version mismatch (one side IKEv2, other IKEv1) also surfaces here.\n  Verify `ike-version ikev2` on both peers; the NSE defaults to IKEv2.\n\n**NAT-T notes**:",
+        "If the initiator is behind NAT, NAT-T should auto-detect and move ESP\n  encapsulation from proto 50 to UDP 4500 after IKE_AUTH succeeds.",
+        "**NAT-T only moves ESP** (proto 50 → UDP 4500). It does NOT move IKE\n  itself — IKE stays on UDP 500 unless you explicitly bind it via the\n  local-port / remote-port CLI. To force the whole tunnel (IKE + ESP) onto\n  UDP 4500:\n  ```\n  vpn ipsec <N>\n    local-port 4500\n    remote-port 4500\n  ```\n  This is the right move when upstream firewalls block UDP 500 outright\n  but allow 4500.\n\n---"
+      ],
+      "partial": false,
+      "evidence_sources": [
+        "s2s_vpn_log",
+        "show_config"
+      ]
+    },
+    "D4": {
+      "id": "D4",
+      "title": "`NO_PROPOSAL_CHOSEN` at Phase 2 (Child SA crypto mismatch)",
+      "mechanism": "IKE Phase 1 succeeded (IKE_SA established) but the Child\nSA negotiation failed because the Phase 2 encryption / integrity / PFS\nDH-group proposals don't intersect.",
+      "confirm": [
+        "query `s2s_vpn_log` for the exact log\nsignature (note the `failed to establish CHILD_SA, keeping IKE_SA` line;\ndistinct from D3):\n```\nlog event: level: 0, ikesa-name: <name>, msg: IKE_SA <name>[1] established between …\nlog event: level: 1, ikesa-name: <name>, msg: received NO_PROPOSAL_CHOSEN notify, no CHILD_SA built\nlog event: level: 1, ikesa-name: <name>, msg: failed to establish CHILD_SA, keeping IKE_SA\n```\n\nSpecifically for **DH group mismatch in PFS**, the logs name the proposals\nverbatim — read both sides:\n```\nlog event: msg: received proposals: ESP:AES_CBC_192/HMAC_SHA2_256_128/MODP_1536/NO_EXT_SEQ, …\nlog event: msg: configured proposals: ESP:AES_CBC_192/HMAC_SHA2_256_128/MODP_3072/NO_EXT_SEQ, …\n```\n\nIn the example above, peer wants MODP_1536 (DH group 5) but local is\nconfigured for MODP_3072 (DH group 15). The mismatch is the DH group; the\nencryption/integrity actually match."
+      ],
+      "rule_out": [
+        "CHILD_SA is established (`CHILD_SA … established with SPIs` log present)."
+      ],
+      "fix": [
+        "Compare Phase 2 encryption, integrity, AND PFS DH-group on both peers.",
+        "Use the verbatim `received proposals` vs `configured proposals` log\n  pair to identify exactly which field doesn't match — don't guess.\n\n---"
+      ],
+      "partial": false,
+      "evidence_sources": [
+        "s2s_vpn_log"
+      ]
+    },
+    "D5": {
+      "id": "D5",
+      "title": "`TS_UNACCEPTABLE` (traffic selector mismatch)",
+      "mechanism": "Phase 1 and Phase 2 crypto succeeded, but the local/remote\nsubnet selectors don't mirror correctly. Peer A sends \"I cover X, you\nshould cover Y\"; if Peer B doesn't have Y as one of its local subnets\n(and X as a remote), it rejects with TS_UNACCEPTABLE.",
+      "confirm": [
+        "query `s2s_vpn_log` for the exact log\nsignature:\n```\nlog event: level: 1, ikesa-name: <name>, msg: received TS_UNACCEPTABLE notify, no CHILD_SA built\nlog event: level: 1, ikesa-name: <name>, msg: failed to establish CHILD_SA, keeping IKE_SA\n```"
+      ],
+      "rule_out": [
+        "CHILD_SA establishes with correct selectors visible in the\n  `CHILD_SA … established with SPIs … and TS A === B` log line."
+      ],
+      "fix": [
+        "Verify mirroring: Local-subnet on Peer A MUST equal Remote-subnet on\n  Peer B; Remote-subnet on Peer A MUST equal Local-subnet on Peer B.",
+        "`cmds/swanctl_list_conns` shows the configured selectors locally.",
+        "For full-tunnel deployments, Remote subnet is typically `0.0.0.0/0` —\n  see the full-tunnel section below for the routing knobs that need to\n  go with it.\n\n---"
+      ],
+      "partial": false,
+      "evidence_sources": [
+        "s2s_vpn_log",
+        "swanctl_list_conns",
+        "show_config"
+      ]
+    },
+    "D6": {
+      "id": "D6",
+      "title": "Tunnel established, traffic flows ONE-WAY or zero packets",
+      "mechanism": "`CHILD_SA … established with SPIs` is in the logs and\n`cmds/swanctl_list_sas` shows INSTALLED, but tx/rx counters tell\ndifferent stories. Either the encrypt-side path on one peer is broken, or\nthe decrypted packet is being dropped on the receiving side.",
+      "confirm": [
+        "`cmds/swanctl_list_sas` shows the SA `INSTALLED` AND the `in` and\n  `out` byte counters are asymmetric (e.g. `in` ticking, `out` zero or\n  stale) or both zero despite an active reproducer ping."
+      ],
+      "rule_out": [
+        "Both `in` and `out` SA counters incrementing during a reproducer AND\n  the destination host responds → not this; investigate application\n  layer."
+      ],
+      "fix": [
+        "this is a separate symptom class. Use the symptom-specific\nplaybook `vpn-tunnel-up-lan-hosts-unreachable.md` — it covers the 7\ncandidate causes (ACL deny, table 220 leak, geo-IP RFC1918 drop, SNAT\nexemption, local-subnets translation, ARP unreachable, post-FORWARD\ndrop) and their diagnostics in detail.\n\n---"
+      ],
+      "partial": false,
+      "evidence_sources": [
+        "swanctl_list_sas"
+      ]
+    },
+    "D7": {
+      "id": "D7",
+      "title": "Tunnel was working, now dropped (DPD / rekey failures)",
+      "mechanism": "Dead Peer Detection (DPD) sees the peer stop responding to\nINFORMATIONAL exchanges and tears down the SA. Or a rekey at the\nconfigured key-lifetime expires fails to negotiate and the tunnel drops.",
+      "confirm": [
+        "Query `s2s_vpn_log` around the time of the failure for\n  `DPD timeout` / `giving up after N retransmits` / `IKE_SA … was\n  deleted`.",
+        "Rekey failures show as `rekey CHILD_SA …` followed by another error\n  pattern from D2–D5."
+      ],
+      "rule_out": [
+        "`cmds/swanctl_list_sas` shows the SA `installed Ns ago, rekeying in\n  Ms` with both N and M well within their lifetimes → not currently in\n  a rekey window."
+      ],
+      "fix": [
+        "For DPD: investigate WAN-side packet loss / carrier instability;\n  consider `dead-peer-detection interval` adjustment if the peer is on\n  a known-flaky link.",
+        "For rekey failures: rare on stable configs; if reproducible, check\n  `ike phase 1 key-lifetime` / `ike phase 2 key-lifetime` are\n  compatible with the peer's values and that the crypto proposals\n  haven't been changed mid-flight.\n\n---"
+      ],
+      "partial": false,
+      "evidence_sources": [
+        "s2s_vpn_log",
+        "swanctl_list_sas"
+      ]
+    },
+    "D8": {
+      "id": "D8",
+      "title": "Source-interface selection (the `ping -I` catch)",
+      "mechanism": "NSE-generated traffic (including pings from the NSE CLI)\ngoes through the kernel's source-IP selection. Without an explicit source,\nthe kernel picks the egress interface's IP — which for a ping to a\nremote-subnet host is typically the WAN, not the LAN gateway that the\ntunnel selectors cover. The resulting packet's source doesn't match any\nxfrm OUT policy and exits the WAN unencrypted.\n\nThis is especially relevant when **`no install-routes`** is configured\n(see full-tunnel section below) — no routes get installed in table 220,\nso even LAN-targeted pings from the NSE itself won't go through the\ntunnel without `-I`.",
+      "confirm": [
+        "Ping from the NSE CLI without `-I` fails; ping with\n  `-I <correct-LAN-IP>` succeeds."
+      ],
+      "rule_out": [],
+      "fix": [
+        "always reproduce with the correct source interface:\n```\nping -I <local-LAN-interface-IP> <remote-IP>\n```\nWhere `<local-LAN-interface-IP>` is the IP on the LAN-side bridge that\nis covered by the tunnel's local-subnets selector.\n\n---"
+      ],
+      "partial": true,
+      "evidence_sources": [
+        "ping -I reproducer",
+        "ip_route_list_table_220"
+      ]
+    },
+    "D9": {
+      "id": "D9",
+      "title": "MTU / fragmentation / SIP issues over a working tunnel",
+      "mechanism": "ESP encapsulation adds bytes (typically ~50-80 depending\non ciphers). If the path MTU between the peers is smaller than expected,\nlarger packets get fragmented or silently dropped. SIP in particular\nsends large signalling packets and is sensitive to PMTU issues.",
+      "confirm": [
+        "Tunnel is healthy (SA INSTALLED in `cmds/swanctl_list_sas`, counters\n  ticking) AND small pings succeed AND large pings (`ping -s 1400`) fail\n  or have packet loss.",
+        "Packet capture (`filter_pcap_artifact` if a capture is loaded; else\n  ask customer for live tcpdump) shows `Don't Fragment` set with ICMP\n  \"fragmentation needed\" responses being dropped by an intermediate\n  router.",
+        "SIP-specific: REGISTER fails or call setup fails despite the tunnel\n  being up; ICMP and small TCP work fine."
+      ],
+      "rule_out": [
+        "Pings of any size succeed AND large TCP transfers work without packet\n  loss → MTU is not the issue."
+      ],
+      "fix": [
+        "Enable TCP MSS clamping on the tunnel — clamps MSS in the SYN/SYN-ACK\n  to a size that won't fragment over the tunnel:\n  ```\n  !\n  vpn-server\n   tcp-mss-clamp\n  exit\n  !\n  ```\n  Particularly important for SIP and any TCP-heavy traffic over the\n  tunnel.",
+        "For UDP / ICMP fragmentation issues: lower the MTU on the LAN-side\n  interfaces, or investigate the path-MTU between peers.\n\n---"
+      ],
+      "partial": false,
+      "evidence_sources": [
+        "swanctl_list_sas",
+        "filter_pcap_artifact",
+        "ping -s"
+      ]
+    },
+    "D10": {
+      "id": "D10",
+      "title": "Geo-IP filter blocking decrypted inner traffic",
+      "mechanism": "NSE uses policy-based IPsec — no virtual tunnel\ninterface. After xfrm decrypts an ESP packet, the inner packet's ingress\ninterface remains the physical WAN. If the geoip_firewall forward chain\ndoesn't exempt IPsec-decrypted traffic (`meta ipsec missing` guard),\nthe inner RFC1918 source IP fails the country-IP check and is dropped.\n\nSee `vpn-tunnel-up-lan-hosts-unreachable.md` candidate D3 for full\ndetail — this is a known bug in `utm_geoipfilter`'s `genFilterRules`\ntemplate. Customer-side workaround: add the remote RFC1918 subnets to\nthe Geo-IP Inbound Allowlist.\n\n---",
+      "confirm": [],
+      "rule_out": [],
+      "fix": [],
+      "partial": true,
+      "evidence_sources": [
+        "ip_xfrm_policy",
+        "nft (geoip)",
+        "show_config"
+      ]
+    }
+  },
+  "defers": {
+    "D6": "vpn-tunnel-up-lan-hosts-unreachable",
+    "D10": "vpn-tunnel-up-lan-hosts-unreachable"
+  }
+}
