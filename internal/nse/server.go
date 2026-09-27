@@ -489,13 +489,26 @@ func (s *Server) handleRouting(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleDHCP(w http.ResponseWriter, _ *http.Request) {
-	var pools []DHCPPool
-	for i := 1; i <= 8; i++ {
-		raw, ok := s.cli(w, "show dhcp-pool "+itoa(i), 20*time.Second)
+	// The config is read first so the pools it declares drive the queries.
+	//
+	// This used to loop a fixed 1..8 and query every id regardless, which was
+	// wrong in both directions: a device with more than eight pools had the rest
+	// invisible — the same mistake the fixed eth1..eth6 range made — and a
+	// device with two pools paid six pointless round-trips for ids that answer
+	// "Pool Status: NA".
+	cfgRaw, ok := s.cli(w, "show config", 25*time.Second)
+	if !ok {
+		return
+	}
+	lan := ParseLANConfig(cfgRaw)
+
+	pools := []DHCPPool{}
+	for _, cfgPool := range lan.DHCPPools {
+		raw, ok := s.cli(w, "show dhcp-pool "+itoa(cfgPool.Pool), 20*time.Second)
 		if !ok {
 			return
 		}
-		if p, found := ParseDHCPPool(raw, i); found {
+		if p, found := ParseDHCPPool(raw, cfgPool.Pool); found {
 			pools = append(pools, p)
 		}
 	}
@@ -503,14 +516,6 @@ func (s *Server) handleDHCP(w http.ResponseWriter, _ *http.Request) {
 	if !ok {
 		return
 	}
-	if pools == nil {
-		pools = []DHCPPool{}
-	}
-	cfgRaw, ok := s.cli(w, "show config", 25*time.Second)
-	if !ok {
-		return
-	}
-	lan := ParseLANConfig(cfgRaw)
 	writeJSON(w, map[string]any{
 		"pools":         pools,
 		"wan_client":    ParseIPDHCP(wan),
