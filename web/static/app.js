@@ -302,11 +302,20 @@ function render(tab, data) {
     applyDeviceFilter();
   }
   if (tab === "tunnels") {
-    el.innerHTML = renderTunnels(data);
-    // The dashboard poll rewrites this panel, so the separately-loaded
-    // site-to-site table has to be refilled each time. force=true because the
-    // markup it wrote has just been discarded.
-    loadS2STunnels(true);
+    // The site-to-site section must survive a poll. Replacing the whole panel
+    // wiped both the tunnel table and any diagnosis showing in it — a
+    // diagnosis takes several seconds, so a poll landing mid-request destroyed
+    // the result the user was waiting for. So the polled content gets its own
+    // child and the site-to-site host is a sibling that is built once.
+    let live = el.querySelector("#tunnels-live");
+    if (!live) {
+      el.innerHTML = '<div id="tunnels-live"></div>' +
+        '<h2>Site-to-site IPsec</h2><div id="s2s-tunnels"><p class="muted">Loading tunnels…</p></div>' +
+        '<div id="s2s-diagnosis"></div>';
+      live = el.querySelector("#tunnels-live");
+    }
+    live.innerHTML = renderTunnels(data);
+    loadS2STunnels(false);
   }
   if (tab === "tailscale") el.innerHTML = renderTailscale(data);
   if (tab === "firewallcounters") el.innerHTML = renderFirewallCounters(data);
@@ -1070,9 +1079,6 @@ function renderTunnels(d) {
     ${vpnBlocks}
     <p class="muted">Active session tables come from <span class="mono">show vpn-sessions …</span>. Empty JSON means the service is up but no clients are connected, or the NSE returned no session payload.</p>
 
-    <h2>Site-to-site IPsec</h2>
-    <div id="s2s-tunnels"><p class="muted">Loading tunnels…</p></div>
-    <div id="s2s-diagnosis"></div>
   `;
 }
 
@@ -1080,10 +1086,28 @@ function renderTunnels(d) {
 // them costs a `show config` plus an SA snapshot, so it is not folded into the
 // dashboard poll — it runs once when the tab is opened.
 let s2sLoaded = false;
+let s2sLoading = false;
+
+// resetS2S discards the tunnel list and any diagnosis shown. Called on a device
+// switch: both describe one specific device, and a diagnosis left on screen
+// after switching would be actively misleading.
+function resetS2S() {
+  s2sLoaded = false;
+  s2sLoading = false;
+  const diag = document.getElementById("s2s-diagnosis");
+  if (diag) diag.innerHTML = "";
+  const host = document.getElementById("s2s-tunnels");
+  if (host) host.innerHTML = '<p class="muted">Loading tunnels…</p>';
+}
 
 async function loadS2STunnels(force) {
   const host = document.getElementById("s2s-tunnels");
-  if (!host || (s2sLoaded && !force)) return;
+  if (!host) return;
+  // Listing costs a `show config` plus an SA snapshot, both over the shared SSH
+  // lock, so this must not run per poll. It loads once per tab visit, or when
+  // something explicitly invalidates it.
+  if (s2sLoading || (s2sLoaded && !force)) return;
+  s2sLoading = true;
   s2sLoaded = true;
   try {
     const res = await fetch("/api/vpn/tunnels");
@@ -1092,6 +1116,9 @@ async function loadS2STunnels(force) {
     renderS2STunnels(d);
   } catch (e) {
     host.innerHTML = `<p class="apply-error">${esc(e.message)}</p>`;
+    s2sLoaded = false; // let a later visit retry
+  } finally {
+    s2sLoading = false;
   }
 }
 
@@ -1585,6 +1612,9 @@ async function openConnection(id) {
     if (!res.ok) throw new Error(data.detail || res.statusText);
     // Every cached panel belongs to the site we just left.
     Object.keys(cache).forEach((k) => delete cache[k]);
+    // Including the site-to-site tunnel list and any diagnosis on screen, which
+    // are loaded outside the poll and would otherwise describe the old device.
+    resetS2S();
     selectedSlot = data.active_id || id;
     await loadSettings();
     if (data.connected) {
@@ -1918,7 +1948,12 @@ tabs.forEach((b) => b.addEventListener("click", () => activate(b.dataset.tab)));
 document.querySelectorAll(".menu button").forEach((b) => {
   b.addEventListener("click", () => showPage(b.dataset.page));
 });
-document.getElementById("refresh").addEventListener("click", () => load(current, true));
+document.getElementById("refresh").addEventListener("click", () => {
+  // Refresh is the operator asking for current data, so the site-to-site
+  // section refetches as well — a poll deliberately does not.
+  if (current === "tunnels") loadS2STunnels(true);
+  load(current, true);
+});
 
 // The "Open in Browser" button only makes sense inside the native app
 // window, where window.nseOpenInBrowser is bound by cmd/nse-app. It's
