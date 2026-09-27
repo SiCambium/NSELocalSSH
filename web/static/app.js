@@ -1259,35 +1259,81 @@ function listOrEmpty(items) {
 
 function renderDiagnosis(d) {
   const r = d.result;
-  // Cost is shown whenever a call was actually billed, including the cases
-  // below where it bought no usable answer.
   const cost = d.cost_usd
     ? `<p class="muted">Cost ${esc(d.cost_usd.toFixed(6))} USD</p>`
     : "";
 
   if (!r) {
-    return `<h3>No suggested fix</h3><p class="muted">${esc(d.reason || "No cause was suggested.")}</p>${cost}`;
+    return `<h2>Diagnosis &mdash; ${esc(d.tunnel)}</h2>
+      <h3>No analysis</h3><p class="muted">${esc(d.reason || "No cause was suggested.")}</p>${cost}
+      ${evidenceBlock(d)}`;
   }
+
   const c = r.candidate || {};
-  const fix = (c.fix || []).map(trimFixText).filter(Boolean);
-  if (!fix.length) {
-    // A candidate can land with no fix text of its own (the geo-ip one keeps
-    // its remedy inside the mechanism prose), and an escalate leaf has no
-    // candidate at all. Say which rather than rendering an empty list.
-    return `<h3>No suggested fix</h3><p class="muted">${esc(
-      r.candidate_id
-        ? "The playbook identified a cause but carries no fix text for it."
-        : r.note || "No cause was identified."
-    )}</p>${cost}`;
-  }
-  return `<h3>Suggested fix</h3>${listOrEmpty(fix)}${cost}`;
+  const fix = cleanList(c.fix);
+  const confirm = cleanList(c.confirm);
+  const ruleOut = cleanList(c.rule_out);
+
+  // Probabilities are deliberately not shown. The confidence they carry is
+  // still reported, as words: a decision close to a coin flip sets escalate,
+  // and hiding that would make a guess look like a finding.
+  const lowConf = r.escalate
+    ? `<p class="warn">Low confidence &mdash; treat this as a lead and verify it independently before changing anything.</p>`
+    : "";
+
+  const reasoning = (r.path || []).length
+    ? `<h4>What was checked</h4><ul>${r.path
+        .map((s) => `<li>${esc(s.instructions)} &mdash; <strong>${esc(s.branch)}</strong></li>`)
+        .join("")}</ul>`
+    : "";
+
+  return `
+    <h2>Diagnosis &mdash; ${esc(d.tunnel)}</h2>
+    <p class="muted">Advisory. A reading of the evidence below, not a verified verdict.</p>
+    <h3>${esc(c.title || r.candidate_id || "No cause identified")}</h3>
+    ${lowConf}
+    ${c.mechanism ? `<p>${esc(sentenceCase(trimPlaybookText(c.mechanism)))}</p>` : ""}
+    ${!r.candidate_id && r.note ? `<p>${esc(r.note)}</p>` : ""}
+    ${fix.length ? `<h4>Suggested fix</h4>${listOrEmpty(fix)}` : ""}
+    ${confirm.length ? `<h4>How to confirm</h4>${listOrEmpty(confirm)}` : ""}
+    ${ruleOut.length ? `<h4>Rule out first</h4>${listOrEmpty(ruleOut)}` : ""}
+    ${reasoning}
+    ${
+      r.defer_to
+        ? `<p class="muted">A deeper playbook exists for this cause (<span class="mono">${esc(r.defer_to)}</span>) but is not bundled with this build.</p>`
+        : ""
+    }
+    ${cost}
+    ${evidenceBlock(d)}
+  `;
 }
 
-// trimFixText drops the trailing "---" that the playbook's markdown compiler
-// leaves on the last entry of a fix block. It is a horizontal rule from the
-// source document, not part of the instruction.
-function trimFixText(s) {
+// The evidence stays available but collapsed: it is what the analysis rests on,
+// so an operator must be able to check it, without it dominating the panel.
+function evidenceBlock(d) {
+  const ev = d.evidence || "";
+  if (!ev) return "";
+  return `<details>
+    <summary>Evidence this is based on (${esc(String(ev.length))} characters)</summary>
+    <pre class="debug-out">${esc(ev)}</pre>
+  </details>`;
+}
+
+function cleanList(items) {
+  return (items || []).map(trimPlaybookText).filter(Boolean);
+}
+
+// trimPlaybookText drops the trailing "---" that the playbook's markdown
+// compiler leaves on the last entry of a block. It is a horizontal rule from
+// the source document, not part of the text.
+function trimPlaybookText(s) {
   return String(s).replace(/\s*-{3,}\s*$/, "").trim();
+}
+
+// Several mechanism strings begin lower-case because they continue a heading in
+// the source document; on their own they read as a fragment.
+function sentenceCase(s) {
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
 }
 
 function renderTailscale(d) {
