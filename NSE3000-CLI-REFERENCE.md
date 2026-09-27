@@ -532,19 +532,50 @@ often appears only in the message body.
 Checked for secrets across the full 735 KB: no `psk`, `secret`, `password`,
 `private-key`, `$crypt$`, or base64-shaped values. This log is safe to display.
 
-### IPsec SA state and counters — CONFIRMED ABSENT
+### `show site-to-site-vpn statistics <site name | all>` — the SA-state source
 
-There is no way to read Child-SA state, IKE SA state, or SA byte counters from
-this CLI. All rejected with `%Error processing cli command`:
+This is the swanctl-shaped view, and the **only** way to read SA state here.
+Note the mandatory subcommand: bare `show site-to-site-vpn` is rejected, and
+`show site-to-site-vpn statistics` with no argument answers `Specify arguments`.
+
+**It is a snapshot refreshed roughly every 5 minutes, not a live read.** Treat
+it exactly as `service show cloud-json-config` is treated elsewhere in this
+project: a periodically regenerated view that can contradict reality. The
+difference matters here because `service show debug-logs vpn` *is* live, so the
+two sources can disagree by up to five minutes — a tunnel that just came up
+still reads as absent, and one that just dropped still reads as installed. When
+they disagree, the log is authoritative.
+
+Observed on a device whose only tunnel had never established: both
+`statistics all` and `statistics azure` returned **nothing at all** between the
+echoed command and the prompt — no header, no "no SAs" message.
+
+```
+show site-to-site-vpn statistics all
+NSE-Vivek(config)#
+```
+
+So empty output means no established SA. Distinguish that from *unavailable*:
+an empty body is a real answer ("no SA"), whereas a command that failed is not,
+and conflating them turns "cannot tell" into a confident "tunnel is down".
+
+**UNCONFIRMED: the populated format.** No capture yet of this command against
+an established tunnel, so the field layout and whether it carries byte counters
+is not known.
+
+### Other IPsec SA commands — CONFIRMED ABSENT
+
+Nothing else exposes Child-SA state, IKE SA state, or SA byte counters. All
+rejected with `%Error processing cli command`:
 
 ```
 show ipsec              show crypto ipsec sa     service show ipsec
 show ipsec sa           show site-to-site-vpn    service show ipsec sa
-show ipsec status       show site-to-site        service show swanctl
-show ipsec tunnel       show s2s                 service show strongswan
-show ipsec statistics   show tunnel              service show charon
-                        show tunnels             service show vpn
-                                                 service show xfrm
+show ipsec status         (bare - see above)     service show swanctl
+show ipsec tunnel       show site-to-site        service show strongswan
+show ipsec statistics   show s2s                 service show charon
+                        show tunnel              service show vpn
+                        show tunnels             service show xfrm
 ```
 
 strongSwan itself **is** running — `/usr/libexec/ipsec/charon` appears in

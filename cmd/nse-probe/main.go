@@ -38,40 +38,26 @@ func main() {
 	fmt.Fprintf(os.Stderr, "probing %s as %s (read-only)\n", cfg.Addr(), cfg.User)
 
 	probes := []probe{
-		// Confirmed to exist — baseline, and the log source the playbook needs.
-		{"show vpn", 20 * time.Second},
-		{"show vpn-sessions ipsec", 20 * time.Second},
-		{"service show debug-logs vpn", 25 * time.Second},
+		// CONFIRMED sources.
+		{"show site-to-site-vpn statistics all", 25 * time.Second}, // SA state, ~5min stale
+		{"service show debug-logs vpn", 25 * time.Second},          // live IKE events
+		{"show config", 25 * time.Second},                          // tunnel enumeration
 
-		// Child-SA state candidates.
-		{"show ipsec", 10 * time.Second},
-		{"show ipsec sa", 10 * time.Second},
-		{"show ipsec status", 10 * time.Second},
-		{"show ipsec tunnel", 10 * time.Second},
-		{"show crypto ipsec sa", 10 * time.Second},
-		{"show vpn ipsec", 10 * time.Second},
-		{"show vpn ipsec sa", 10 * time.Second},
+		// Note the mandatory subcommand: bare `show site-to-site-vpn` errors,
+		// and `statistics` with no argument answers "Specify arguments". Probing
+		// only the bare form is what made this look unsupported the first time.
 		{"show site-to-site-vpn", 10 * time.Second},
-		{"show site-to-site", 10 * time.Second},
-		{"show s2s", 10 * time.Second},
-		{"show tunnel", 10 * time.Second},
-		{"show tunnels", 10 * time.Second},
+		{"show site-to-site-vpn statistics", 10 * time.Second},
 
-		// The `service show <x>` family is the CLI's curated window onto Linux
-		// state; if swanctl output is exposed anywhere, it is most likely here.
-		{"service show ipsec", 15 * time.Second},
-		{"service show ipsec sa", 15 * time.Second},
-		{"service show swanctl", 15 * time.Second},
-		{"service show strongswan", 15 * time.Second},
-		{"service show charon", 15 * time.Second},
-		{"service show vpn", 15 * time.Second},
-		{"service show xfrm", 15 * time.Second},
-		{"service show ip xfrm state", 15 * time.Second},
-
-		// Counter candidates for n_traffic_ok.
-		{"show vpn statistics", 10 * time.Second},
-		{"show ipsec statistics", 10 * time.Second},
-		{"service show ip -s link", 15 * time.Second},
+		// CONFIRMED ABSENT — kept so the negative result stays reproducible.
+		{"show ipsec sa", 10 * time.Second},
+		{"show crypto ipsec sa", 10 * time.Second},
+		{"service show swanctl", 10 * time.Second},
+		{"service show strongswan", 10 * time.Second},
+		{"service show charon", 10 * time.Second},
+		// Trap: these do not error, they return the remote-access client table.
+		{"show vpn", 15 * time.Second},
+		{"show vpn ipsec sa", 15 * time.Second},
 	}
 
 	type result struct {
