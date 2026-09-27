@@ -68,8 +68,9 @@ jobs:
             || gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag \
             || true
           gh release upload "${GITHUB_REF_NAME}" build/* --clobber
+      # Uploaded on tag builds too, not just branch builds: the checksums
+      # job below sums these rather than re-downloading the release.
       - uses: actions/upload-artifact@v4
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
           name: nse-status-portable
           path: build/*
@@ -98,8 +99,9 @@ jobs:
             || gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag \
             || true
           gh release upload "${GITHUB_REF_NAME}" build/NSE-Status-macOS-universal.zip --clobber
+      # Uploaded on tag builds too, not just branch builds: the checksums
+      # job below sums these rather than re-downloading the release.
       - uses: actions/upload-artifact@v4
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
           name: nse-app-macos
           path: build/NSE-Status-macOS-universal.zip
@@ -131,8 +133,9 @@ jobs:
             gh release create "${env:GITHUB_REF_NAME}" --generate-notes --verify-tag
           }
           gh release upload "${env:GITHUB_REF_NAME}" build/NSE-Status-windows-amd64.exe --clobber
+      # Uploaded on tag builds too, not just branch builds: the checksums
+      # job below sums these rather than re-downloading the release.
       - uses: actions/upload-artifact@v4
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
           name: nse-app-windows
           path: build/NSE-Status-windows-amd64.exe
@@ -168,28 +171,51 @@ jobs:
             || gh release create "${GITHUB_REF_NAME}" --generate-notes --verify-tag \
             || true
           gh release upload "${GITHUB_REF_NAME}" build/NSE-Status-linux-amd64 --clobber
+      # Uploaded on tag builds too, not just branch builds: the checksums
+      # job below sums these rather than re-downloading the release.
       - uses: actions/upload-artifact@v4
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
           name: nse-app-linux
           path: build/NSE-Status-linux-amd64
 
-  # Runs last, over the assets actually attached to the release, so the
-  # sums cover exactly what a user downloads rather than a local build.
+  # Runs last, over the same build outputs the release was uploaded from.
+  #
+  # This used to `gh release download` the published assets instead, on the
+  # reasoning that the sums should cover "exactly what a user downloads".
+  # That was wrong twice over.
+  #
+  # It inflated the download counter by one on every asset of every
+  # release, permanently and invisibly: of this project's first 205
+  # recorded downloads, 117 were this job and list-walking bots rather
+  # than people, which made the release stats useless for judging whether
+  # anyone was actually using a build.
+  #
+  # And it made the sums weaker, not stronger. Hashing the bytes *after*
+  # upload means a corrupted upload gets a checksum matching its own
+  # corruption, and a user who dutifully runs `sha256sum -c` is told
+  # everything is fine. Hashing the build output means a corrupted upload
+  # fails verification — which is the whole reason to publish sums.
   checksums:
     name: Publish SHA256SUMS
     needs: [portable, macos-app, windows-app, linux-app]
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # attach SHA256SUMS to the release
+      actions: read # download-artifact reads this run's own artifacts
     steps:
       # No checkout needed — gh works from GITHUB_REPOSITORY alone.
-      - name: Download the release assets, sum them, attach the list
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Sum the build outputs and attach the list
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          mkdir -p dist && cd dist
-          gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --pattern '*'
+          cd dist
+          ls -l
           # SHA256SUMS is excluded by name, not just deleted first: the
           # `> SHA256SUMS` redirection creates the file before the pipeline
           # runs, so find would otherwise pick up the file being written
@@ -203,6 +229,15 @@ jobs:
           # than publish it.
           if grep -q ' SHA256SUMS$' SHA256SUMS; then
             echo "SHA256SUMS lists itself"; exit 1
+          fi
+          # Summing artifacts instead of the release introduces a failure
+          # the old version could not have: if an artifact is missing, the
+          # sums are merely short rather than absent, and a user verifying
+          # a file that is not listed gets no warning at all. 9 portable
+          # binaries + 3 desktop builds = 12.
+          count="$(wc -l < SHA256SUMS)"
+          if [ "$count" -lt 12 ]; then
+            echo "only $count files summed, expected at least 12"; exit 1
           fi
           cat SHA256SUMS
           gh release upload "${GITHUB_REF_NAME}" SHA256SUMS --repo "${GITHUB_REPOSITORY}" --clobber

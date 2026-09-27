@@ -1,0 +1,319 @@
+{
+  "doc_id": "wireguard-vpn-troubleshooting",
+  "title": "WireGuard VPN troubleshooting — binary decision tree (client vs server; overlay-WAN vs remote-access)",
+  "doc_type": "playbook_tree",
+  "applies_to": "NSE3000, NSE4000",
+  "symptom_class": "wireguard-vpn",
+  "model": "typesafe/jev-1.13",
+  "root": "n_role",
+  "evidence": {
+    "scope_noun": "peer",
+    "live_commands": {
+      "wg_show": "wg show",
+      "wg_showconf_wg0": "wg showconf wg0",
+      "show_config": "show config",
+      "show_feature_license": "show feature-license"
+    },
+    "max_state_chars": 15000,
+    "max_log_events": 60,
+    "enumerate": {
+      "file": "wg_show",
+      "block_header_regex": "^peer:\\s*(?P<name>\\S+)",
+      "peer_regex": "^\\s*endpoint:\\s*(\\S+)",
+      "subnet_regex": "^\\s*allowed ips:\\s*(.+)$"
+    },
+    "cmd_sources": [
+      {
+        "file": "wg_show",
+        "label": "wg show (verbatim, this peer + interface)",
+        "scope": "block",
+        "block_header_regex": "^peer:\\s*(?P<name>\\S+)",
+        "include_preamble": true
+      },
+      {
+        "file": "wg_showconf_wg0",
+        "label": "wg showconf wg0 (verbatim)",
+        "scope": "none"
+      },
+      {
+        "file": "show_config",
+        "label": "show_config (WireGuard-relevant lines)",
+        "scope": "grep",
+        "grep_regex": "wireguard|vpn-server|vpn-client|interface vwan|wireguard-user|allowed-subnets|snat|listen|keepalive"
+      },
+      {
+        "file": "show_feature_license",
+        "label": "show_feature_license",
+        "scope": "none"
+      }
+    ],
+    "log_sources": []
+  },
+  "nodes": {
+    "n_role": {
+      "type": "noul",
+      "instructions": "Is the NSE acting as the WireGuard SERVER (listening for remote-access peers) for this scope, rather than as a WireGuard client?",
+      "criteria": {
+        "true": "show_config has a `vpn-server` section with `wireguard` / `wireguard-user` blocks — the NSE listens for remote peers",
+        "false": "show_config configures the NSE as a WireGuard CLIENT: `interface vwan` (overlay-WAN) or `vpn-client wireguard`"
+      },
+      "yes": "n_s_handshake",
+      "no": "n_vwan"
+    },
+    "n_vwan": {
+      "type": "noul",
+      "instructions": "Is this WireGuard client configured as an overlay / virtual-WAN interface?",
+      "criteria": {
+        "true": "show_config contains `interface vwan` (overlay-WAN over CGNAT)",
+        "false": "a plain `vpn-client wireguard` client, not overlay-WAN"
+      },
+      "yes": "n_license",
+      "no": "n_c_handshake"
+    },
+    "n_license": {
+      "type": "noul",
+      "instructions": "Is the overlay-wan feature license active on this device?",
+      "criteria": {
+        "true": "show_feature_license shows `overlay-wan : Enabled`",
+        "false": "overlay-wan is absent or Disabled in show_feature_license (subscription missing/expired)"
+      },
+      "yes": "n_c_handshake",
+      "no": "leaf_A1"
+    },
+    "n_c_handshake": {
+      "type": "noul",
+      "instructions": "Does `wg show` report a recent `latest handshake` for the relay/peer with non-zero transfer?",
+      "criteria": {
+        "true": "wg show shows a recent 'latest handshake' AND non-zero transfer for the peer — the tunnel is up",
+        "false": "the peer shows 'latest handshake: (never)' or has no handshake/endpoint — not establishing"
+      },
+      "yes": "n_c_mtu",
+      "no": "n_c_udp"
+    },
+    "n_c_udp": {
+      "type": "noul",
+      "instructions": "Is the client sending handshake initiations but receiving no reply (outbound UDP to the relay blocked)?",
+      "criteria": {
+        "true": "wg show shows handshakes never completing with transfer 'X sent, 0 received' — initiations leave, nothing returns",
+        "false": "not a one-way-send pattern"
+      },
+      "yes": "leaf_A2",
+      "no": "n_c_timeskew"
+    },
+    "n_c_timeskew": {
+      "type": "noul",
+      "instructions": "Is the NSE clock materially skewed, causing handshakes to be rejected as stale?",
+      "criteria": {
+        "true": "the NSE date/time is >5 min off real time, or logs show 'stale handshake' / 'replay' rejections",
+        "false": "clock is correct / NTP synced"
+      },
+      "yes": "leaf_A5",
+      "no": "n_c_keepalive"
+    },
+    "n_c_keepalive": {
+      "type": "noul",
+      "instructions": "Is connectivity intermittent with rapidly cycling handshakes (CGNAT closing the UDP mapping because PersistentKeepalive is too long)?",
+      "criteria": {
+        "true": "handshakes succeed then drop within seconds-to-minutes of idle; keepalive at/above 25s on a CGNAT carrier",
+        "false": "no rapid handshake cycling"
+      },
+      "yes": "leaf_A3",
+      "no": "leaf_client_establish_unknown"
+    },
+    "n_c_mtu": {
+      "type": "noul",
+      "instructions": "Tunnel is healthy but large packets fail (small pings ok, large ping -s1400 / SIP / large transfers fail)?",
+      "criteria": {
+        "true": "recent handshakes + counters ticking, but large packets are lost while small ones succeed (MTU/fragmentation)",
+        "false": "no size-dependent failure"
+      },
+      "yes": "leaf_A4",
+      "no": "leaf_client_healthy"
+    },
+    "n_s_handshake": {
+      "type": "noul",
+      "instructions": "Does `wg show` report a recent `latest handshake` for the affected user/peer with counters ticking?",
+      "criteria": {
+        "true": "recent handshake + transfer for the peer — control-plane is up",
+        "false": "the peer shows 'latest handshake: (never)' — never connected"
+      },
+      "yes": "n_s_allowedips",
+      "no": "n_s_inbound_permit"
+    },
+    "n_s_inbound_permit": {
+      "type": "noul",
+      "instructions": "Does the firewall config include an inbound WAN permit for the WireGuard listen port?",
+      "criteria": {
+        "true": "show_config / nft has an inbound permit for UDP <wg listen port> on the WAN — packets can reach the server, so a no-handshake is a config/key mismatch",
+        "false": "no inbound permit for the WG port on the WAN — inbound UDP is blocked"
+      },
+      "yes": "leaf_B1",
+      "no": "leaf_B2"
+    },
+    "n_s_allowedips": {
+      "type": "noul",
+      "instructions": "Do the user's AllowedIPs / allowed-subnets NOT include the LAN subnet the client is trying to reach (or the route isn't installed)?",
+      "criteria": {
+        "true": "the configured allowed-subnets / AllowedIPs for this peer omit the destination subnet, or no wg route is installed for it",
+        "false": "AllowedIPs includes the destination and the route is installed"
+      },
+      "yes": "leaf_B3",
+      "no": "n_s_peruser"
+    },
+    "n_s_peruser": {
+      "type": "noul",
+      "instructions": "Does this user have a per-user allowed-subnets whitelist that EXCLUDES the destination (works for another user with broader access)?",
+      "criteria": {
+        "true": "a per-user allowed-subnets list is set and the destination is not in it (whitelist-only, not additive)",
+        "false": "no restrictive per-user list, or the destination is included"
+      },
+      "yes": "leaf_B5",
+      "no": "n_s_snat"
+    },
+    "n_s_snat": {
+      "type": "noul",
+      "instructions": "Is there asymmetric reachability with an internally-inconsistent SNAT config on the WG tunnel (masquerade without a matching exempt/ACL, or SNAT contradicting stated intent)?",
+      "criteria": {
+        "true": "a SNAT rule masquerades the source but the destination has no corresponding exempt/permit, causing asymmetric reachability (a genuine SNAT problem)",
+        "false": "SNAT config is consistent, or no SNAT is involved"
+      },
+      "yes": "leaf_B4",
+      "no": "n_s_mtu"
+    },
+    "n_s_mtu": {
+      "type": "noul",
+      "instructions": "Do large packets fail, or is the clock skewed (MTU/PMTU or time-skew on the remote-access tunnel)?",
+      "criteria": {
+        "true": "large packets lost while small succeed (MTU), or the NSE clock is materially skewed (handshake time validation)",
+        "false": "no size-dependent loss and the clock is correct"
+      },
+      "yes": "leaf_B7",
+      "no": "leaf_B6"
+    }
+  },
+  "leaves": {
+    "leaf_A1": {
+      "candidate": "A1"
+    },
+    "leaf_A2": {
+      "candidate": "A2"
+    },
+    "leaf_A3": {
+      "candidate": "A3"
+    },
+    "leaf_A4": {
+      "candidate": "A4"
+    },
+    "leaf_A5": {
+      "candidate": "A5"
+    },
+    "leaf_client_establish_unknown": {
+      "candidate": null,
+      "escalate": true,
+      "note": "Client tunnel not establishing but no A2/A5/A3 signature matched — run the Case A differential (subscription, outbound-UDP reachability, keepalive, MTU, time skew) manually with bilateral evidence."
+    },
+    "leaf_client_healthy": {
+      "candidate": null,
+      "escalate": true,
+      "note": "Client tunnel is up with no MTU issue — the problem is post-WG (routing/NAT/firewall). Run the differential; see vpn-tunnel-up-lan-hosts-unreachable."
+    },
+    "leaf_B1": {
+      "candidate": "B1"
+    },
+    "leaf_B2": {
+      "candidate": "B2"
+    },
+    "leaf_B3": {
+      "candidate": "B3"
+    },
+    "leaf_B4": {
+      "candidate": "B4"
+    },
+    "leaf_B5": {
+      "candidate": "B5"
+    },
+    "leaf_B6": {
+      "candidate": "B6"
+    },
+    "leaf_B7": {
+      "candidate": "B7"
+    }
+  },
+  "candidates": {
+    "A1": {
+      "id": "A1",
+      "title": "Security Plus subscription missing or expired",
+      "mechanism": "Overlay WAN over CGNAT is a Security Plus feature; when the subscription lapses the relay control plane stops accepting the NSE and the WireGuard tunnel never establishes.",
+      "fix": "Renew/upgrade the device's Security Plus subscription via cnMaestro X. Short-term: fall back to IPsec S2S if one end has a public IP."
+    },
+    "A2": {
+      "id": "A2",
+      "title": "Outbound UDP to the overlay relay blocked",
+      "mechanism": "The overlay tunnel runs outbound from the NSE to Cambium's relay over UDP; some carriers (CGNAT cellular, corporate upstreams) block outbound UDP or specific port ranges.",
+      "fix": "Verify the relay endpoint is reachable; check the carrier for outbound-UDP/port blocking; if a port range is blocked switch the WireGuard port (UDP 443 emulation if available); escalate to the carrier if policy-enforced."
+    },
+    "A3": {
+      "id": "A3",
+      "title": "NAT keepalive interval too long (CGNAT mapping closed)",
+      "mechanism": "CGNAT UDP mappings time out aggressively; if PersistentKeepalive is longer than the carrier's UDP timeout the mapping closes between keepalives and the tunnel goes dark until the next one.",
+      "fix": "Lower PersistentKeepalive to 10-15s on the overlay-wan config to survive aggressive CGNAT UDP timeouts."
+    },
+    "A4": {
+      "id": "A4",
+      "title": "MTU / fragmentation over the overlay path",
+      "mechanism": "WireGuard adds ~60 bytes; over constrained paths the effective overlay MTU drops below 1500 and large packets fragment or are silently dropped.",
+      "fix": "Lower the WireGuard interface MTU (try 1380, or 1280 over CGNAT/cellular) and enable TCP MSS clamping."
+    },
+    "A5": {
+      "id": "A5",
+      "title": "Time skew breaks handshake validation",
+      "mechanism": "WireGuard handshakes carry a timestamp; a materially skewed NSE clock makes the relay reject every handshake as stale.",
+      "fix": "Force NTP sync immediately; verify NTP servers are reachable; configure multiple NTP servers on a path the tunnel doesn't depend on."
+    },
+    "B1": {
+      "id": "B1",
+      "title": "Client config doesn't match NSE-side config",
+      "mechanism": "Mismatched PublicKey, wrong Endpoint host:port, or non-overlapping AllowedIPs mean the tunnel never establishes for that user.",
+      "fix": "Re-issue the user's config from the NSE (cnMaestro → Remote VPN → WireGuard → user → Generate Config) and have them re-import; verify Endpoint host:port matches the NSE WAN IP + listen port; compare PublicKey byte-for-byte."
+    },
+    "B2": {
+      "id": "B2",
+      "title": "Inbound UDP blocked at the NSE WAN",
+      "mechanism": "WireGuard listens on UDP; if the WAN firewall has no inbound permit for the listen port, a Geo-IP rule filters the source, or the ISP drops unsolicited inbound UDP, the client never reaches the server.",
+      "fix": "Add an inbound WAN permit for UDP <wireguard_port>; check the Geo-IP allow list for the client's country; if the upstream ISP blocks unsolicited inbound UDP, use Overlay WAN (Case A) instead."
+    },
+    "B3": {
+      "id": "B3",
+      "title": "AllowedIPs / install-routes missing or wrong",
+      "mechanism": "AllowedIPs is both the cryptokey routing table and the route-install hint; if the NSE side omits the LAN subnets the client wants, traffic is received-but-not-routed.",
+      "fix": "In cnMaestro add the LAN subnets to the user's Allowed Subnets; update the client-side [Peer] AllowedIPs to include the NSE LAN subnets; verify the route is installed in the main table."
+    },
+    "B4": {
+      "id": "B4",
+      "title": "SNAT intent mismatch (THE CANONICAL FIXATION CASE)",
+      "mechanism": "Some deployments intentionally SNAT WG-tunnel traffic to the NSE address for simpler LAN-side routing; others expect transparency. The agent must NOT assume SNAT should be removed.",
+      "fix": "CLARIFY the intended NAT behavior FIRST. If SNAT wanted: verify exempt entries cover the right (src,dst) pairs and fire before WAN-masquerade. If transparent wanted: add the SNAT exempt for <LAN_subnet>.<client_subnet> AND ensure LAN devices route the client subnet via the NSE."
+    },
+    "B5": {
+      "id": "B5",
+      "title": "Per-user restrictions blocking expected access",
+      "mechanism": "A per-user allowed-subnets list is whitelist-only (not additive to a global default); traffic to any subnet not in the list is silently dropped.",
+      "fix": "Update the user's allowed-subnets in cnMaestro to include the required destination subnet (confirm intent to broaden access)."
+    },
+    "B6": {
+      "id": "B6",
+      "title": "Tunnel UP, counters ticking, but specific destinations unreachable",
+      "mechanism": "WireGuard is healthy but a specific destination is unreachable — same post-decrypt forward-chain failure class as IPsec.",
+      "fix": "Defer to the vpn-tunnel-up-lan-hosts-unreachable playbook (ACL deny, table-220 leak, geo-IP RFC1918 drop, SNAT exempt missing, ARP unreachable, post-FORWARD drop)."
+    },
+    "B7": {
+      "id": "B7",
+      "title": "Time skew or PMTU (mirrors A4 and A5)",
+      "mechanism": "MTU/fragmentation and handshake-time-validation apply identically to remote-access WireGuard.",
+      "fix": "MTU: lower the WG interface MTU / enable MSS clamping (see A4). Time skew: force NTP sync (see A5)."
+    }
+  },
+  "defers": {
+    "B6": "vpn-tunnel-up-lan-hosts-unreachable"
+  }
+}

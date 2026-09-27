@@ -591,3 +591,25 @@ tailscale accept-routes
 		}
 	}
 }
+
+// TestParseDHCPPoolRejectsNA pins the phantom-pool bug. The device answers
+// "Pool Status: NA" for an id that does not exist, and treating that as a real
+// pool put six empty pools on the DHCP tab of a device configured with two.
+func TestParseDHCPPoolRejectsNA(t *testing.T) {
+	na := "show dhcp-pool 7\nPool Status: NA\nNSE-00009C(config)# "
+	if _, found := ParseDHCPPool(na, 7); found {
+		t.Error(`"Pool Status: NA" means the pool does not exist and must not be reported as found`)
+	}
+
+	up := "show dhcp-pool 1\nPool Status: UP\nPool Interface: br0.2000\nAllocated leases: 151\nNSE-00009C(config)# "
+	got, found := ParseDHCPPool(up, 1)
+	if !found {
+		t.Fatal("a real pool must still be found")
+	}
+	if got.Status != "UP" || got.Interface != "br0.2000" || got.Allocated != "151" {
+		t.Errorf("parsed %+v", got)
+	}
+	if got.Leases == nil {
+		t.Error("Leases must be an empty slice, not nil, so it encodes as [] not null")
+	}
+}

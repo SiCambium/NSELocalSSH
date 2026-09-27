@@ -1,0 +1,38 @@
+service show debug-logs vpn
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: sending packet: from 192.168.29.213[500] to 198.51.100.9[500] (464 bytes) ","time": "2026-09-27T08:36:09+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: retransmit 5 of request with message ID 0 ","time": "2026-09-27T08:36:09+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: sending packet: from 192.168.29.213[500] to 198.51.100.9[500] (464 bytes) ","time": "2026-09-27T08:35:27+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: retransmit 4 of request with message ID 0 ","time": "2026-09-27T08:35:27+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: sending packet: from 192.168.29.213[500] to 198.51.100.9[500] (464 bytes) ","time": "2026-09-27T08:35:04+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: retransmit 3 of request with message ID 0 ","time": "2026-09-27T08:35:04+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: sending packet: from 192.168.29.213[500] to 198.51.100.9[500] (464 bytes) ","time": "2026-09-27T08:34:51+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: retransmit 2 of request with message ID 0 ","time": "2026-09-27T08:34:51+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: generating IKE_SA_INIT request 0 [ SA KE No N(NATD_S_IP) N(NATD_D_IP) N(FRAG_SUP) N(HASH_ALG) N(REDIR_SUP) ] ","time": "2026-09-27T08:34:39+05:30"}
+{"level": "debug","msg": "log event: level: 0, ikesa-name: azure, msg: initiating IKE_SA azure[8828] to 198.51.100.9 ","time": "2026-09-27T08:34:39+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: peer not responding, trying again (2/0) ","time": "2026-09-27T08:34:39+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: giving up after 5 retransmits ","time": "2026-09-27T08:34:39+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: generating IKE_SA_INIT request 0 [ SA KE No N(NATD_S_IP) N(NATD_D_IP) N(FRAG_SUP) N(HASH_ALG) N(REDIR_SUP) ] ","time": "2026-09-27T08:31:54+05:30"}
+{"level": "debug","msg": "log event: level: 0, ikesa-name: azure, msg: initiating IKE_SA azure[8828] to 198.51.100.9 ","time": "2026-09-27T08:31:54+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: %!s(<nil>), msg: vici initiate CHILD_SA 'azure' ","time": "2026-09-27T08:31:54+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: destroying IKE_SA in state CONNECTING without notification ","time": "2026-09-27T08:31:54+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: %!s(<nil>), msg: vici terminate IKE_SA 'azure' ","time": "2026-09-27T08:31:54+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: generating IKE_SA_INIT request 0 [ SA KE No N(NATD_S_IP) N(NATD_D_IP) N(FRAG_SUP) N(HASH_ALG) N(REDIR_SUP) ] ","time": "2026-09-27T08:31:24+05:30"}
+{"level": "debug","msg": "log event: level: 0, ikesa-name: azure, msg: initiating IKE_SA azure[8827] to 198.51.100.9 ","time": "2026-09-27T08:31:24+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: peer not responding, trying again (3/0) ","time": "2026-09-27T08:31:24+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: giving up after 5 retransmits ","time": "2026-09-27T08:31:24+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: generating IKE_SA_INIT request 0 [ SA KE No N(NATD_S_IP) N(NATD_D_IP) N(FRAG_SUP) N(HASH_ALG) N(REDIR_SUP) ] ","time": "2026-09-27T08:28:39+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: peer not responding, trying again (2/0) ","time": "2026-09-27T08:28:39+05:30"}
+{"level": "debug","msg": "log event: level: 0, ikesa-name: azure, msg: initiating IKE_SA azure[8827] to 198.51.100.9 ","time": "2026-09-27T08:28:39+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: giving up after 5 retransmits ","time": "2026-09-27T08:28:39+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: %!s(<nil>), msg: vici initiate CHILD_SA 'azure' ","time": "2026-09-27T08:25:54+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: destroying IKE_SA in state CONNECTING without notification ","time": "2026-09-27T08:25:54+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: %!s(<nil>), msg: vici terminate IKE_SA 'azure' ","time": "2026-09-27T08:25:54+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: peer not responding, trying again (3/0) ","time": "2026-09-27T08:25:24+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: giving up after 5 retransmits ","time": "2026-09-27T08:25:24+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: %!s(<nil>), msg: vici initiate CHILD_SA 'azure' ","time": "2026-09-27T08:19:54+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: destroying IKE_SA in state CONNECTING without notification ","time": "2026-09-27T08:19:54+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: %!s(<nil>), msg: vici terminate IKE_SA 'azure' ","time": "2026-09-27T08:19:54+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: %!s(<nil>), msg: vici initiate CHILD_SA 'azure' ","time": "2026-09-27T08:13:54+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: azure, msg: destroying IKE_SA in state CONNECTING without notification ","time": "2026-09-27T08:13:54+05:30"}
+{"level": "debug","msg": "log event: level: 1, ikesa-name: %!s(<nil>), msg: vici terminate IKE_SA 'azure' ","time": "2026-09-27T08:13:54+05:30"}
+NSE-00009C(config)# 

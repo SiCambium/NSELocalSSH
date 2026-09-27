@@ -32,6 +32,27 @@ button {
 button:hover { border-color: var(--accent); }
 button:disabled { opacity: 0.6; cursor: default; }
 
+/* Same defect as the button rule above, and it has now bitten three times:
+   `color: inherit` on line 17 makes a bare input light-on-white — the UA's
+   default background with this app's text colour, i.e. invisible. Giving text
+   inputs a background here fixes the class rather than each instance; the
+   styled contexts (.settings-form, .panel-search) set their own and still win.
+   Checkboxes and radios are excluded deliberately: they render via
+   accent-color and a background would square them off. */
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+input:not([type="checkbox"]):not([type="radio"]):focus,
+select:focus,
+textarea:focus { border-color: var(--accent); outline: none; }
+input::placeholder, textarea::placeholder { color: var(--muted); }
+
 .top {
   display: grid;
   grid-template-columns: minmax(340px, 1fr) auto minmax(280px, 1fr);
@@ -356,7 +377,10 @@ td.mono, .mono { font-family: var(--mono); }
 }
 
 .conn-current-kicker {
-  font-size: 10px;
+  /* 11px, not 10: at 10 this was the smallest text in the app, and it is
+     uppercase and letter-spaced, which costs legibility again. Contrast was
+     never the problem here (5.6:1) — size was. */
+  font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted);
@@ -578,3 +602,167 @@ tr[hidden] { display: none; }
   box-sizing: border-box;
 }
 .conn-row-tag.is-down { color: var(--down); }
+
+/* First-load placeholder for a panel that takes a moment to fill. The pulse is
+   the only motion in the app: a static line of text is indistinguishable from
+   a panel that has simply failed to render. */
+.loading-note {
+  padding: 24px 0;
+  animation: loading-pulse 1.4s ease-in-out infinite;
+}
+@keyframes loading-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-note { animation: none; }
+}
+
+/* An inline diagnosis sits inside the tunnel table, beneath the row it belongs
+   to. Indented and tinted so it reads as attached to that row rather than as
+   another tunnel. */
+tr.s2s-diag > td {
+  background: var(--bg-2);
+  border-left: 3px solid var(--accent);
+  padding: 4px 16px 16px;
+}
+tr.s2s-diag h3 { margin-top: 12px; }
+tbody[data-tunnel] + tbody[data-tunnel] > tr:first-child > td { border-top: 1px solid var(--line); }
+
+/* The site-to-site tunnel table. Styled on its own rather than by loosening the
+   global table rules: the dashboard's other tables are deliberately dense
+   summaries, whereas this one is read carefully when something is broken.
+   Larger type, room to breathe, and one value per line instead of values
+   comma-joined into a single cramped cell. */
+table.s2s-table { font-size: 14px; }
+table.s2s-table th,
+table.s2s-table td {
+  padding: 11px 14px;
+  vertical-align: top;
+}
+table.s2s-table th { font-size: 11px; }
+table.s2s-table tbody[data-tunnel]:hover > tr > td { background: var(--bg-2); }
+
+/* Tunnel names are identifiers but often long and hyphenated, so they read
+   better in the UI face than in monospace. */
+.s2s-name {
+  font-weight: 600;
+  font-size: 15px;
+  word-break: break-word;
+}
+
+/* Values that benefit from digit alignment — addresses, subnets, byte counts —
+   each on its own line. */
+.s2s-num {
+  display: block;
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: nowrap;
+}
+
+/* Secondary detail under a value: the raw SA states, a NAT-T marker, an em dash
+   for an absent value. */
+.s2s-sub {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.s2s-warn-text { color: var(--warn); }
+
+/* Status word. Deliberately the largest thing in the row after the name: it is
+   what a reader scans a long list for. */
+.s2s-state {
+  display: block;
+  font-weight: 600;
+  font-size: 14px;
+}
+.s2s-good { color: var(--up); }
+.s2s-warn { color: var(--warn); }
+.s2s-bad { color: var(--down); }
+
+/* The Diagnose button. The shared .row-edit style is background: var(--bg-2)
+   with a thin --line border, which is nearly invisible against the page — and
+   var(--bg-2) is also what a hovered row becomes, so the button dissolved into
+   the row exactly when the pointer was over it. This is the primary action on
+   the row, so it gets a filled accent treatment that cannot be mistaken for
+   text. */
+table.s2s-table .row-edit {
+  background: var(--accent);
+  color: #0c1014;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+table.s2s-table .row-edit:hover:not(:disabled) {
+  background: #35bdbd;
+  border-color: #35bdbd;
+}
+table.s2s-table .row-edit:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+table.s2s-table .row-edit:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+/* Disabled while a diagnosis is running. Keeps the shape so the row does not
+   reflow, but stops reading as an invitation. */
+table.s2s-table .row-edit:disabled {
+  background: var(--bg-2);
+  color: var(--muted);
+  border-color: var(--line);
+  box-shadow: none;
+  cursor: default;
+}
+/* The action column should not stretch. */
+table.s2s-table td:last-child { width: 1%; white-space: nowrap; }
+
+/* Below about 1100px the header's three-column grid cannot fit: its
+   minmax(340px,...) + menu + minmax(280px,...) plus gaps and padding set a hard
+   floor near 1090px, so the whole PAGE scrolled sideways and content was cut
+   off — at 1024, a common laptop width, not just on phones. Tables scrolling
+   inside .table-wrap is by design; the page itself scrolling is not.
+   Stack the header instead. */
+@media (max-width: 1100px) {
+  .top {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    padding: 12px 16px;
+  }
+  /* Grid children default to min-width:auto, which refuses to shrink below
+     their content — the reason the floor existed at all. */
+  .top > *,
+  .brand {
+    min-width: 0;
+  }
+  .menu,
+  .top-meta {
+    justify-self: stretch;
+  }
+  .menu {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .top-meta {
+    justify-content: flex-start;
+  }
+  /* A long connection name must truncate rather than widen the header. */
+  #conn-current-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 40vw;
+  }
+  main {
+    padding: 16px 16px 32px;
+  }
+  .tabs {
+    padding: 0 8px;
+  }
+}

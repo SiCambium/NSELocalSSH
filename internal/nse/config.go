@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -306,13 +307,19 @@ func WriteEnvFile(path string, updates map[string]string) error {
 		}
 		out = append(out, line)
 	}
-	for _, k := range []string{"NSE_HOST", "NSE_USER", "NSE_PASSWORD", "NSE_PORT"} {
-		if seen[k] {
-			continue
+	// Append any requested key the file did not already contain. This used to
+	// be a hardcoded list of the four NSE_* keys, which meant a newly supported
+	// setting was silently dropped on a file that predated it — the save
+	// reported success and persisted nothing. Sorted so the file is stable.
+	var added []string
+	for k := range updates {
+		if !seen[k] {
+			added = append(added, k)
 		}
-		if v, ok := updates[k]; ok {
-			out = append(out, k+"="+envEncode(v))
-		}
+	}
+	sort.Strings(added)
+	for _, k := range added {
+		out = append(out, k+"="+envEncode(updates[k]))
 	}
 	return os.WriteFile(path, []byte(strings.Join(out, "\n")+"\n"), 0o600)
 }

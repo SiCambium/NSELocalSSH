@@ -1,0 +1,49 @@
+{
+  "note": "Real Jev decide() call captured from the running system. Two nodes shown; the real request sends ALL tree nodes in one call.",
+  "endpoint": "POST https://openrouter.ai/api/alpha/decisions",
+  "request_sketch": {
+    "model": "typesafe/jev-1.13",
+    "state": {
+      "case_evidence": "<the assembled scoped evidence text \u2014 see gather_state>"
+    },
+    "questions": {
+      "n_role": {
+        "type": "noul",
+        "instructions": "<node.instructions>",
+        "criteria": {
+          "true": "...",
+          "false": "..."
+        }
+      },
+      "n_vwan": {
+        "type": "noul",
+        "instructions": "<node.instructions>",
+        "criteria": {
+          "true": "...",
+          "false": "..."
+        }
+      }
+    }
+  },
+  "response_sketch": {
+    "answers": {
+      "n_role": {
+        "type": "noul",
+        "noul": 0.95
+      },
+      "n_vwan": {
+        "type": "noul",
+        "noul": 0.09
+      },
+      "n_license": {
+        "type": "noul",
+        "noul": 0.05
+      }
+    },
+    "usage": {
+      "input_tokens": 2254,
+      "output_tokens": 275,
+      "cost": 9.4668e-05
+    }
+  }
+}
