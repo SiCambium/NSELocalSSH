@@ -301,7 +301,13 @@ function render(tab, data) {
     // a filter set a minute ago still holds.
     applyDeviceFilter();
   }
-  if (tab === "tunnels") el.innerHTML = renderTunnels(data);
+  if (tab === "tunnels") {
+    el.innerHTML = renderTunnels(data);
+    // The dashboard poll rewrites this panel, so the separately-loaded
+    // site-to-site table has to be refilled each time. force=true because the
+    // markup it wrote has just been discarded.
+    loadS2STunnels(true);
+  }
   if (tab === "tailscale") el.innerHTML = renderTailscale(data);
   if (tab === "firewallcounters") el.innerHTML = renderFirewallCounters(data);
   if (tab === "traffic") el.innerHTML = renderTraffic(data);
@@ -1063,6 +1069,178 @@ function renderTunnels(d) {
     </div>
     ${vpnBlocks}
     <p class="muted">Active session tables come from <span class="mono">show vpn-sessions …</span>. Empty JSON means the service is up but no clients are connected, or the NSE returned no session payload.</p>
+
+    <h2>Site-to-site IPsec</h2>
+    <div id="s2s-tunnels"><p class="muted">Loading tunnels…</p></div>
+    <div id="s2s-diagnosis"></div>
+  `;
+}
+
+// Site-to-site tunnels load separately from the rest of the VPN tab. Listing
+// them costs a `show config` plus an SA snapshot, so it is not folded into the
+// dashboard poll — it runs once when the tab is opened.
+let s2sLoaded = false;
+
+async function loadS2STunnels(force) {
+  const host = document.getElementById("s2s-tunnels");
+  if (!host || (s2sLoaded && !force)) return;
+  s2sLoaded = true;
+  try {
+    const res = await fetch("/api/vpn/tunnels");
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || res.statusText);
+    renderS2STunnels(d);
+  } catch (e) {
+    host.innerHTML = `<p class="apply-error">${esc(e.message)}</p>`;
+  }
+}
+
+function saCell(sa) {
+  if (!sa) return '<span class="muted">no SA</span>';
+  const ike = sa.ike_state === "ESTABLISHED"
+    ? `<span class="badge-on">${esc(sa.ike_state)}</span>`
+    : `<span class="warn-text">${esc(sa.ike_state || "?")}</span>`;
+  const child = sa.child_state
+    ? (sa.child_state === "INSTALLED"
+        ? ` / <span class="badge-on">${esc(sa.child_state)}</span>`
+        : ` / <span class="warn-text">${esc(sa.child_state)}</span>`)
+    : "";
+  return ike + child;
+}
+
+function trafficCell(sa) {
+  if (!sa) return "—";
+  const inB = Number(sa.in_bytes || 0);
+  const outB = Number(sa.out_bytes || 0);
+  // Traffic in one direction only means the SA is up but return traffic is not
+  // arriving — worth calling out rather than leaving as two numbers.
+  const oneWay = (inB > 0) !== (outB > 0);
+  const txt = `${bytes(inB)} in / ${bytes(outB)} out`;
+  return oneWay ? `<span class="warn-text">${txt} — one-way</span>` : txt;
+}
+
+function renderS2STunnels(d) {
+  const host = document.getElementById("s2s-tunnels");
+  const rows = d.tunnels || [];
+  if (!rows.length) {
+    host.innerHTML = '<p class="muted">No site-to-site tunnels are configured.</p>';
+    return;
+  }
+  const advisory = d.advisory_enabled === true;
+  const gate = advisory
+    ? ""
+    : `<p class="muted">Diagnosis will gather and show the evidence locally. ${
+        d.api_key_set
+          ? "Turn on <strong>Ask OpenRouter for a likely cause</strong> in Settings"
+          : "Add an OpenRouter API key in Settings"
+      } to also get a suggested cause.</p>`;
+
+  host.innerHTML = `
+    <div class="table-wrap"><table>
+      <thead><tr><th>Tunnel</th><th>IKE / Child SA</th><th>Traffic</th><th>Peer</th><th>Remote subnets</th><th></th></tr></thead>
+      <tbody>${rows
+        .map(
+          (r) => `<tr>
+        <td class="mono">${esc(r.name)}</td>
+        <td>${saCell(r.sa)}</td>
+        <td class="mono">${trafficCell(r.sa)}</td>
+        <td class="mono">${r.sa ? esc(r.sa.remote_addr || "—") + (r.sa.nat_t ? " (NAT-T)" : "") : "—"}</td>
+        <td class="mono">${esc((r.sa && (r.sa.remote_subnets || []).join(", ")) || "—")}</td>
+        <td><button type="button" class="row-edit" data-diagnose="${esc(r.name)}">Diagnose</button></td>
+      </tr>${
+        r.geoip && r.geoip.possible
+          ? `<tr><td colspan="6" class="warn">Geo-IP may be dropping this tunnel's decrypted traffic: ${esc(r.geoip.reason)}</td></tr>`
+          : ""
+      }`
+        )
+        .join("")}</tbody>
+    </table></div>
+    <p class="muted">SA state is a snapshot: ${esc(d.sa_snapshot_note || "")}. Configuration comes from <span class="mono">show config</span>.</p>
+    ${gate}
+  `;
+  host.querySelectorAll("[data-diagnose]").forEach((b) => {
+    b.addEventListener("click", () => diagnoseTunnel(b.dataset.diagnose, b));
+  });
+}
+
+async function diagnoseTunnel(name, btn) {
+  const out = document.getElementById("s2s-diagnosis");
+  const was = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Diagnosing…";
+  out.innerHTML = `<p class="muted">Gathering evidence for ${esc(name)}. This reads the full IKE log, so it takes a few seconds.</p>`;
+  try {
+    const res = await fetch("/api/vpn/diagnose", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tunnel: name }),
+    });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || res.statusText);
+    out.innerHTML = renderDiagnosis(d);
+  } catch (e) {
+    out.innerHTML = `<p class="apply-error">${esc(e.message)}</p>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = was;
+  }
+}
+
+function listOrEmpty(items) {
+  const v = items || [];
+  if (!v.length) return "";
+  return `<ul>${v.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`;
+}
+
+function renderDiagnosis(d) {
+  const r = d.result;
+  let verdict = "";
+  if (r) {
+    const c = r.candidate || {};
+    // Framed as advisory throughout: this is a strong prior from a probabilistic
+    // read of the evidence, not a verified finding.
+    verdict = `
+      <h3>Likely cause: ${esc(c.title || r.candidate_id || "none identified")}</h3>
+      ${r.escalate ? `<p class="warn">Low confidence &mdash; verify this independently. ${esc(r.reason || "")}</p>` : ""}
+      ${c.mechanism ? `<p>${esc(c.mechanism)}</p>` : ""}
+      ${c.fix && c.fix.length ? `<h4>Suggested fix</h4>${listOrEmpty(c.fix)}` : ""}
+      ${c.confirm && c.confirm.length ? `<h4>How to confirm</h4>${listOrEmpty(c.confirm)}` : ""}
+      ${c.rule_out && c.rule_out.length ? `<h4>Rule out first</h4>${listOrEmpty(c.rule_out)}` : ""}
+      ${r.defer_to ? `<p class="muted">A deeper playbook exists for this cause (<span class="mono">${esc(r.defer_to)}</span>) but is not bundled with this build.</p>` : ""}
+      ${!r.candidate_id && r.note ? `<p>${esc(r.note)}</p>` : ""}
+      <h4>How it got there</h4>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Question</th><th>Probability</th><th>Answer</th></tr></thead>
+        <tbody>${(r.path || [])
+          .map(
+            (s) => `<tr>
+              <td>${esc(s.instructions)}</td>
+              <td class="mono">${s.noul === null || s.noul === undefined ? "unanswered" : esc(String(s.noul))}</td>
+              <td>${esc(s.branch)}</td>
+            </tr>`
+          )
+          .join("")}</tbody>
+      </table></div>
+      <p class="muted">Closest call on this path: ${
+        r.min_confidence === null || r.min_confidence === undefined
+          ? "n/a"
+          : esc(String(r.min_confidence))
+      } away from a coin flip. Every step of the playbook was evaluated, not just these.</p>
+      ${d.cost_usd ? `<p class="muted">Cost ${esc(d.cost_usd.toFixed(6))} USD for ${esc(String(d.input_tokens || 0))} input tokens.</p>` : ""}
+    `;
+  } else {
+    verdict = `<h3>Evidence only</h3><p class="muted">${esc(d.reason || "No cause was suggested.")}</p>`;
+  }
+
+  return `
+    <h2>Diagnosis &mdash; ${esc(d.tunnel)}</h2>
+    <p class="muted">Advisory. A strong prior from the evidence below, not a verified verdict &mdash; read the evidence before acting on it.</p>
+    ${verdict}
+    <details>
+      <summary>Evidence sent for analysis (${esc(String((d.evidence || "").length))} characters)</summary>
+      <pre class="debug-out">${esc(d.evidence || "")}</pre>
+      ${listOrEmpty(d.notes)}
+    </details>
   `;
 }
 
@@ -1267,6 +1445,8 @@ async function loadSettings() {
     if (!connById(selectedSlot)) selectedSlot = data.active_id || 0;
     fillConnForm(connById(selectedSlot));
     applyLiveConntrack(data.live_conntrack);
+    applyVPNDiagnose(data.vpn_diagnose);
+    applyAPIKeyState(data.api_key_set);
     document.getElementById("settings-file").textContent = data.file ? `Saved in ${data.file}` : "";
     note.textContent = "";
   } catch (e) {
@@ -1620,6 +1800,11 @@ async function persistLiveConntrack(on) {
 document.getElementById("set-live-conntrack").addEventListener("change", (ev) => {
   persistLiveConntrack(ev.target.checked);
 });
+document.getElementById("set-vpn-diagnose").addEventListener("change", (ev) => {
+  persistVPNDiagnose(ev.target.checked);
+});
+document.getElementById("api-key-save").addEventListener("click", saveAPIKey);
+document.getElementById("api-key-clear").addEventListener("click", clearAPIKey);
 document.getElementById("panel-conntrack").addEventListener("change", (ev) => {
   const liveBox = ev.target.closest("#conntrack-live");
   if (liveBox) {
@@ -1629,6 +1814,86 @@ document.getElementById("panel-conntrack").addEventListener("change", (ev) => {
   const lookupBox = ev.target.closest("#conntrack-iplookup");
   if (lookupBox) persistIPLookup(lookupBox.checked);
 });
+
+// applyVPNDiagnose mirrors the pref into the Settings checkbox. Kept separate
+// from the save so the initial /api/settings read and a user toggle share it.
+function applyVPNDiagnose(on) {
+  const box = document.getElementById("set-vpn-diagnose");
+  if (box) box.checked = !!on;
+}
+
+function applyAPIKeyState(isSet) {
+  const note = document.getElementById("api-key-note");
+  if (note) note.textContent = isSet ? "A key is saved." : "No key saved — diagnosis will show evidence only.";
+  const field = document.getElementById("set-api-key");
+  if (field) field.value = "";
+}
+
+async function persistVPNDiagnose(on) {
+  applyVPNDiagnose(on);
+  const err = document.getElementById("error");
+  err.hidden = true;
+  try {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "prefs", vpn_diagnose: on }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    delete cache.tunnels;
+  } catch (e) {
+    err.hidden = false;
+    err.textContent = e.message;
+    applyVPNDiagnose(!on);
+  }
+}
+
+// The key is write-only: an empty field means "keep the current key", so the
+// save is a no-op rather than a silent deletion. Removing one is its own button.
+async function saveAPIKey() {
+  const field = document.getElementById("set-api-key");
+  const note = document.getElementById("api-key-note");
+  const value = field.value.trim();
+  if (!value) {
+    note.textContent = "Nothing entered — the existing key was left alone.";
+    return;
+  }
+  note.textContent = "Saving…";
+  try {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "api_key", api_key: value }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    applyAPIKeyState(data.api_key_set);
+    note.textContent = "Key saved.";
+    delete cache.tunnels;
+  } catch (e) {
+    note.textContent = e.message;
+  }
+}
+
+async function clearAPIKey() {
+  const note = document.getElementById("api-key-note");
+  note.textContent = "Removing…";
+  try {
+    const res = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "api_key_clear" }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    applyAPIKeyState(data.api_key_set);
+    note.textContent = "Key removed.";
+    delete cache.tunnels;
+  } catch (e) {
+    note.textContent = e.message;
+  }
+}
 
 async function persistIPLookup(on) {
   const err = document.getElementById("error");
@@ -1733,6 +1998,8 @@ fetch("/api/settings")
   .then((d) => {
     renderProfileSlots(d);
     applyLiveConntrack(d.live_conntrack);
+    applyVPNDiagnose(d.vpn_diagnose);
+    applyAPIKeyState(d.api_key_set);
     if (!d.password_set && !location.hash) showPage("connections");
   })
   .catch(() => {});

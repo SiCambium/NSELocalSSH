@@ -3,6 +3,7 @@ package nse
 import (
 	"encoding/json"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -21,6 +22,12 @@ type settingsRequest struct {
 	Port          string `json:"port"`
 	LiveConntrack *bool  `json:"live_conntrack"`
 	IPLookup      *bool  `json:"ip_lookup"`
+	VPNDiagnose   *bool  `json:"vpn_diagnose"`
+
+	// APIKey is write-only, like Password: an empty string means "keep the
+	// existing key", and it is never read back — see handleGetSettings, which
+	// reports only whether one is set.
+	APIKey *string `json:"api_key"`
 }
 
 func (s *Server) settingsFile() string {
@@ -73,6 +80,10 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 		"profiles":       publicConnections(store),
 		"live_conntrack": ReadPrefs(s.prefsFile()).LiveConntrack,
 		"ip_lookup":      ReadPrefs(s.prefsFile()).IPLookup,
+		"vpn_diagnose":   ReadPrefs(s.prefsFile()).VPNDiagnose,
+		// Never the key itself, only whether one exists — the same treatment
+		// the device password gets.
+		"api_key_set": strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY")) != "",
 	})
 }
 
@@ -120,14 +131,60 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 		s.saveProfile(w, store, id, req, cfg)
 	case "prefs":
 		s.savePrefs(w, req)
+	case "api_key":
+		s.saveAPIKey(w, req)
+	case "api_key_clear":
+		s.clearAPIKey(w)
 	default:
 		writeSettingsError(w, http.StatusBadRequest, "unknown action")
 	}
 }
 
+// saveAPIKey stores the OpenRouter key used for AI-assisted VPN diagnosis.
+//
+// Write-only, like the device password: an empty value means "keep what is
+// there" rather than "clear it", and clearing is an explicit action. The key
+// lands in the same 0600 .env as the device credentials and is never returned.
+func (s *Server) saveAPIKey(w http.ResponseWriter, req settingsRequest) {
+	if req.APIKey == nil {
+		writeSettingsError(w, http.StatusBadRequest, "api_key is required")
+		return
+	}
+	key := strings.TrimSpace(*req.APIKey)
+	if key == "" {
+		// Distinguish "leave it alone" from "remove it": the frontend sends the
+		// clear action when the operator means to remove the key.
+		writeJSON(w, map[string]any{"ok": true, "api_key_set": os.Getenv("OPENROUTER_API_KEY") != ""})
+		return
+	}
+	// A value carrying a newline would corrupt the .env and could smuggle a
+	// second assignment into it.
+	if strings.ContainsAny(key, "\r\n") {
+		writeSettingsError(w, http.StatusBadRequest, "the API key cannot contain a line break")
+		return
+	}
+	if err := WriteEnvFile(s.settingsFile(), map[string]string{"OPENROUTER_API_KEY": key}); err != nil {
+		writeSettingsError(w, http.StatusInternalServerError, "could not save the API key: "+err.Error())
+		return
+	}
+	// Take effect without a restart, matching how the device credentials behave.
+	os.Setenv("OPENROUTER_API_KEY", key)
+	writeJSON(w, map[string]any{"ok": true, "api_key_set": true})
+}
+
+// clearAPIKey removes the stored key.
+func (s *Server) clearAPIKey(w http.ResponseWriter) {
+	if err := WriteEnvFile(s.settingsFile(), map[string]string{"OPENROUTER_API_KEY": ""}); err != nil {
+		writeSettingsError(w, http.StatusInternalServerError, "could not clear the API key: "+err.Error())
+		return
+	}
+	os.Unsetenv("OPENROUTER_API_KEY")
+	writeJSON(w, map[string]any{"ok": true, "api_key_set": false})
+}
+
 func (s *Server) savePrefs(w http.ResponseWriter, req settingsRequest) {
-	if req.LiveConntrack == nil && req.IPLookup == nil {
-		writeSettingsError(w, http.StatusBadRequest, "live_conntrack or ip_lookup is required")
+	if req.LiveConntrack == nil && req.IPLookup == nil && req.VPNDiagnose == nil {
+		writeSettingsError(w, http.StatusBadRequest, "live_conntrack, ip_lookup or vpn_diagnose is required")
 		return
 	}
 	prefs := ReadPrefs(s.prefsFile())
@@ -137,6 +194,9 @@ func (s *Server) savePrefs(w http.ResponseWriter, req settingsRequest) {
 	if req.IPLookup != nil {
 		prefs.IPLookup = *req.IPLookup
 	}
+	if req.VPNDiagnose != nil {
+		prefs.VPNDiagnose = *req.VPNDiagnose
+	}
 	if err := WritePrefs(s.prefsFile(), prefs); err != nil {
 		writeSettingsError(w, http.StatusInternalServerError, "could not save settings: "+err.Error())
 		return
@@ -145,6 +205,7 @@ func (s *Server) savePrefs(w http.ResponseWriter, req settingsRequest) {
 		"ok":             true,
 		"live_conntrack": prefs.LiveConntrack,
 		"ip_lookup":      prefs.IPLookup,
+		"vpn_diagnose":   prefs.VPNDiagnose,
 	})
 }
 

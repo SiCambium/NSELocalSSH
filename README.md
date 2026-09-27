@@ -14,6 +14,8 @@ This is a personal tool, not an official Cambium product.
 
 **Advanced overrides**: a free-text CLI box for settings that have no control of their own — the equivalent of cnMaestro's user-defined overrides. The text is sent to the device verbatim, line by line, because the device tracks command context itself exactly as it does when you paste into the CLI; nothing here tries to interpret it. A preview shows the precise lines that will be sent, the config stanzas that will be snapshotted for the undo, and any entries that are new and therefore cannot be undone automatically. The text is stored per connection as a record of what was last sent — not of what is currently on the device. `no management ssh` is refused: everything else an override can do is recoverable by power-cycling, since a lockout-risk change is not saved until confirmed, but disabling SSH takes away the channel the undo itself travels over.
 
+**Site-to-site VPN diagnosis**: the VPN tab lists configured IPsec tunnels with their SA state, traffic counters and peer, and can gather a tunnel's full IKE log plus SA snapshot into one diagnostic bundle. That part is entirely local — 4,000 log lines collapse to a handful of distinct events, which is usually enough to read the cause directly. Optionally the bundle can be sent to OpenRouter, which returns a probability for each step of a troubleshooting playbook and names a likely cause with a suggested fix, how to confirm it, and what to rule out first. That is **off by default and needs your own API key**; it is the only feature that sends device output off the box, configuration secrets are stripped first, and it costs around US$0.0001 per diagnosis. The verdict is advisory — the evidence it reasoned over is always shown alongside.
+
 **License-aware UI**: reads `show feature-license` and greys out (rather than hides) any control gated behind NSE Security Plus, matching cnMaestro's own convention.
 
 **Multi-site connections**: saved connections for every site you manage, each with its own label, address, username and SSH port. The header always shows which device you are looking at and drops down to switch; **Connections** is a top-level tab for adding, renaming and deleting them. One connection is live at a time — opening a site closes the previous SSH session — and a switch is refused while a configuration change on the current device is still awaiting confirmation, since the snapshot that would undo it belongs to that device and must not be replayed onto another. See [Where it keeps your data](#where-it-keeps-your-data) for where connections are stored and what that file contains.
@@ -92,7 +94,7 @@ In a per-user directory, the same set of files on every platform:
 | `profiles.json` | your saved connections, **including their passwords in cleartext** (file mode `0600`) |
 | `overrides.json` | the Advanced CLI text last applied, per connection |
 | `known_hosts.json` | the SSH host keys pinned on first connect |
-| `prefs.json` | your own UI preferences |
+| `prefs.json` | your own UI preferences, including whether VPN diagnosis may call out |
 
 Treat that directory the way you would treat a password manager's data.
 

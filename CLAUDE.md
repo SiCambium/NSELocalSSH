@@ -57,6 +57,22 @@ The result is cached for `configTTL` and dropped by every `RunSequence` (i.e. ev
 
 **The four NAT rule contexts.** `interface eth N` holds four numbered (`{1-64}`) rule sub-contexts: `port-forward-rule`, `source-nat-rule`, `nat-one-one` and `nat-one-many`. All four are in `blockOpeners`; `natrules.go` models all four. **Their leaf spellings are irregular and differ between siblings** — `lan-IP <addr>` under port-forward-rule and nat-one-one, but `lan-IP address <subnet>` under source-nat-rule. Quote what the device prints; never reconstruct it from the keyword. Two device-stated rules are easy to get wrong: an absent `overload` leaf means *enabled* (only `disable` is ever printed), and `rule-name` accepts **letters, digits and underscores only** — a hyphen is rejected, so the generic no-whitespace guard used for other free-text leaves is not enough. `nat-one-many` takes `nat-one-one`'s argument forms plus `port`/`lan-port`, and drops `any` from its protocol set. `description` is modelled nowhere: its argument form was never probed, and this CLI has already proved a leaf's shape cannot be inferred from its name.
 
+### VPN diagnosis (`internal/vpndiag` + `vpndiag_source.go`)
+
+`internal/vpndiag` interprets the playbook JSON in `internal/vpndiag/playbooks/` — load, validate, assemble evidence, walk the tree. It has **no dependency on the device packages and never reads a credential from the environment**, so the logic is testable with no device and no egress; `Client.APIKey` is passed in. The playbooks are byte-identical copies of `jev-vpn-debug-onbox/playbooks/` and `TestPlaybooksMatchUpstream` fails if they drift — that tree is shared with an upstream Python implementation, so **device-specific changes belong in the EvidenceSource, never in the JSON**.
+
+`internal/nse/vpndiag_source.go` is the only environment-specific piece. It maps the playbook's swanctl-named logical sources onto what this CLI can actually produce: `swanctl_list_sas`/`swanctl_counters` → `show site-to-site-vpn statistics <name>`, `swanctl_list_conns` → the `vpn ipsec N` stanza, `s2s_vpn_log` → `service show debug-logs vpn`.
+
+**`SourceResult.Available` is not a nicety.** Three declared sources do not exist here. If they returned blank text, a missing SA table would read as a confident "no Child SA installed" and send the walk down the wrong branch — so the assembled state says "not available on this platform — this is not evidence of absence". The converse matters equally: this device prints *nothing* when a tunnel has no SA, so empty output is a real finding and is rendered as an explicit no-SA line, never as unavailable.
+
+**`SourceResult.PreScoped`** suppresses re-scoping for a source the device already narrowed by argument; applying the playbook's swanctl-shaped block regex on top reports a misleading "no block found".
+
+**Staleness is stated in the evidence.** The SA view is a ~5 minute snapshot while the log is live, so the two can disagree by minutes; every source carries a note saying which it is and that the log wins. Same trap as cloud-json-config.
+
+**`Answer.Noul` is a `*float64`.** An unanswered node takes the same branch as a confident 0.0 but must *also* set `escalate`; a value type takes the branch while silently claiming certainty. **`candidate.fix` is polymorphic** — an array in the s2s tree, a string in the WireGuard one — hence `FlexStrings`.
+
+Egress is opt-in: `Prefs.VPNDiagnose` defaults false and no key means no request. With neither, the endpoint still returns the evidence. `show config` is an evidence source carrying cleartext PSKs, so everything routes through `SanitizeCLIOutput` and `TestEvidenceNoSecretsReachTheAssembledState` pins it — **that test must never be weakened.**
+
 **A failed automatic undo is surfaced, not just recorded.** `recordFailedUndo` fed a slice nothing read for the life of the feature. `GET /api/config/failed-undos` now reports it and the config page shows a banner until dismissed (`POST` clears). Keep it that way: the expiry loop has no request to answer, so this is the only channel a background rollback failure has.
 
 **Port counts are model-specific** — six on an NSE3000, ten on an NSE4000 — so never loop a fixed `eth1..eth6` range; walk `ethInterfaceBlocks(tree)` instead.

@@ -32,6 +32,27 @@ button {
 button:hover { border-color: var(--accent); }
 button:disabled { opacity: 0.6; cursor: default; }
 
+/* Same defect as the button rule above, and it has now bitten three times:
+   `color: inherit` on line 17 makes a bare input light-on-white — the UA's
+   default background with this app's text colour, i.e. invisible. Giving text
+   inputs a background here fixes the class rather than each instance; the
+   styled contexts (.settings-form, .panel-search) set their own and still win.
+   Checkboxes and radios are excluded deliberately: they render via
+   accent-color and a background would square them off. */
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  background: var(--bg-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+input:not([type="checkbox"]):not([type="radio"]):focus,
+select:focus,
+textarea:focus { border-color: var(--accent); outline: none; }
+input::placeholder, textarea::placeholder { color: var(--muted); }
+
 .top {
   display: grid;
   grid-template-columns: minmax(340px, 1fr) auto minmax(280px, 1fr);
