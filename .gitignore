@@ -10,6 +10,12 @@ __pycache__/
 /nse-app
 /cmd/nse-status/nse-status
 /cmd/nse-app/nse-app
+# The dev probes build to the repo root by default (`go build ./cmd/nse-probe`
+# writes ./nse-probe), and a 6.8MB arm64 binary was committed that way once.
+/nse-probe
+/nse-statsprobe
+/cmd/nse-probe/nse-probe
+/cmd/nse-statsprobe/nse-statsprobe
 /dist/
 /build/
 dist.zip
